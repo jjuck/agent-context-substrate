@@ -1,5 +1,7 @@
 # Hermes LLM Wiki Harness 사용자 가이드
 
+[English User Guide](./USER_GUIDE.en.md) · [한국어 README](../README.ko.md) · [English README](../README.md)
+
 이 문서는 `hermes-llm-wiki-harness`를 실제 사용자 관점에서 설명합니다. 핵심은 **무엇이 어디에 저장되는지**, **Obsidian과 어떻게 분리되는지**, **언어 설정을 어떻게 쓰는지**, **Hermes에서 어떻게 켜고 끄는지**입니다.
 
 ## 1. 무엇을 해주는가

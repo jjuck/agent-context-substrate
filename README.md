@@ -4,7 +4,7 @@
 
 **Turn Hermes sessions into reusable context packets, recovery briefs, and request-time retrieval — while keeping Obsidian as a human-facing wiki.**
 
-[Quick Start](#quick-start) · [Hermes Install](#install-into-hermes) · [CLI](#cli-commands) · [Privacy](#privacy-and-safety) · [User Guide](./docs/USER_GUIDE.md) · [Operations](./docs/OPERATIONS.md)
+[한국어 README](./README.ko.md) · [Quick Start](#quick-start) · [Hermes Install](#install-into-hermes) · [CLI](#cli-commands) · [Privacy](#privacy-and-safety) · [User Guide EN](./docs/USER_GUIDE.en.md) · [User Guide KO](./docs/USER_GUIDE.md)
 
 </div>
 
@@ -14,6 +14,16 @@
 It reads Hermes `state.db`, exports raw sessions, builds context packets, writes recovery briefs, and exposes read-only retrieval tools to Hermes.
 
 The default session-finalize policy is **`packet-only`**: generated session artifacts stay in `data/exports/` and `data/index/session_ledger.json`; Obsidian is reserved for curated, human-written wiki pages.
+
+## Why this helps
+
+Long AI-agent sessions often contain decisions, file paths, test results, and next steps that are hard to recover after a reset or context compression. This harness makes that work reusable:
+
+- **Resume interrupted work** with a compact recovery brief instead of rereading the whole transcript.
+- **Search prior project knowledge** while Hermes is handling a new request.
+- **Keep Obsidian readable** by separating generated artifacts from human-written wiki pages.
+- **Audit release readiness** with lint reports for wiki links, provenance, language metadata, and internal packet consistency.
+- **Avoid duplicate processing** through a ledger that records completed, failed, retried, and reused session artifacts.
 
 ```text
 Hermes state.db
@@ -356,7 +366,9 @@ This project works with sensitive local data. Treat exports as private unless de
 
 ## Documentation
 
-- [User Guide](./docs/USER_GUIDE.md) — storage layers, Hermes install, plugin/context-engine use, Telegram commands.
+- [한국어 README](./README.ko.md) — Korean overview, benefits, install path, and common usage.
+- [User Guide EN](./docs/USER_GUIDE.en.md) — English storage layers, Hermes install, plugin/context-engine use, Telegram commands.
+- [User Guide KO](./docs/USER_GUIDE.md) — Korean storage layers, Hermes install, plugin/context-engine use, Telegram commands.
 - [Operations Guide](./docs/OPERATIONS.md) — runbooks, validation, troubleshooting, privacy and rollback notes.
 - [Pipeline Reference](./docs/PIPELINE.md) — data flow, module responsibilities, artifact lifecycle.
 - [Release Checklist](./docs/RELEASE_CHECKLIST.md) — source hygiene, install checks, privacy checks, verification gates.
