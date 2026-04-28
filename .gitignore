@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+.env
+
+# Private/generated harness artifacts
+data/exports/
+data/index/session_ledger.json
+
+# Local Hermes session plans/cache
+.hermes/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
