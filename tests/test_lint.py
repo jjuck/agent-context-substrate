@@ -7,11 +7,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.lint import (  # noqa: E402
+from agent_context_substrate.lint import (  # noqa: E402
     export_lint_report,
     lint_wiki,
 )
-from hermes_llm_wiki_harness.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 
 
 def _write(path: Path, content: str) -> None:

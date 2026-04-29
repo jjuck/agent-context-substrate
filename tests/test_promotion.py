@@ -7,10 +7,10 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.context_packet import build_context_packet  # noqa: E402
-from hermes_llm_wiki_harness.models import MicroSummary, RawSessionReference, UnitSummary  # noqa: E402
-from hermes_llm_wiki_harness.paths import HarnessPaths  # noqa: E402
-from hermes_llm_wiki_harness.promotion import (  # noqa: E402
+from agent_context_substrate.context_packet import build_context_packet  # noqa: E402
+from agent_context_substrate.models import MicroSummary, RawSessionReference, UnitSummary  # noqa: E402
+from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.promotion import (  # noqa: E402
     promote_context_packet_to_plan,
     promote_context_packet_to_query,
     promote_unit_summary_to_architecture,
@@ -65,7 +65,7 @@ def _sample_unit(micro_ids: list[str]) -> UnitSummary:
         progress=["Added query writer", "Added concept writer"],
         open_questions=["Should plans be promoted in the same module?"],
         micro_ids=list(micro_ids),
-        related_pages=["hermes-llm-wiki-harness", "context-packet"],
+        related_pages=["agent-context-substrate", "context-packet"],
         provenance=_sample_reference([1, 2, 3]),
     )
 
@@ -90,19 +90,19 @@ def test_promote_context_packet_to_query_writes_frontmatter_provenance_and_wikil
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
         "# Context Packet\n\n"
-        "Links to [[hermes-llm-wiki-harness]].\n",
+        "Links to [[agent-context-substrate]].\n",
         encoding="utf-8",
     )
-    (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").write_text(
+    (wiki_root / "architectures" / "agent-context-substrate.md").write_text(
         "---\n"
-        "title: Hermes LLM Wiki Harness\n"
+        "title: Agent Context Substrate\n"
         "created: 2026-04-22\n"
         "updated: 2026-04-22\n"
         "type: architecture\n"
         "tags: [implementation]\n"
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
-        "# Hermes LLM Wiki Harness\n\n"
+        "# Agent Context Substrate\n\n"
         "Links to [[context-packet]].\n",
         encoding="utf-8",
     )
@@ -110,7 +110,7 @@ def test_promote_context_packet_to_query_writes_frontmatter_provenance_and_wikil
     micro = _sample_micro(
         micro_id="micro-a",
         message_ids=[1, 2],
-        files=["pyproject.toml", "src/hermes_llm_wiki_harness/promotion.py"],
+        files=["pyproject.toml", "src/agent_context_substrate/promotion.py"],
         concepts=["context-packet", "summarization"],
     )
     unit = _sample_unit(micro_ids=["micro-a"])
@@ -128,7 +128,7 @@ def test_promote_context_packet_to_query_writes_frontmatter_provenance_and_wikil
         slug="resume-harness-work",
         title="Resume Harness Work",
         summary="Reusable recovery note for resuming the harness pipeline.",
-        related_pages=["context-packet", "hermes-llm-wiki-harness"],
+        related_pages=["context-packet", "agent-context-substrate"],
         tags=["question", "context-packet", "implementation"],
     )
 
@@ -147,13 +147,13 @@ def test_promote_context_packet_to_query_writes_frontmatter_provenance_and_wikil
     assert "## Summary" in markdown
     assert "## Related Pages" in markdown
     assert "[[context-packet]]" in markdown
-    assert "[[hermes-llm-wiki-harness]]" in markdown
+    assert "[[agent-context-substrate]]" in markdown
     assert "## Provenance" in markdown
     assert "## Open Questions" in markdown
     assert "Should plans be promoted in the same module?" in markdown
 
     context_packet_page = (wiki_root / "concepts" / "context-packet.md").read_text(encoding="utf-8")
-    architecture_page = (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").read_text(encoding="utf-8")
+    architecture_page = (wiki_root / "architectures" / "agent-context-substrate.md").read_text(encoding="utf-8")
     assert "[[resume-harness-work]]" in context_packet_page
     assert "[[resume-harness-work]]" in architecture_page
     assert f"updated: {today}" in context_packet_page
@@ -180,7 +180,7 @@ def test_promote_unit_summary_to_concept_writes_concept_page_with_micro_context(
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
         "# Context Packet\n\n"
-        "Links to [[hermes-llm-wiki-harness]].\n",
+        "Links to [[agent-context-substrate]].\n",
         encoding="utf-8",
     )
     (wiki_root / "concepts" / "hierarchical-summaries.md").write_text(
@@ -193,19 +193,19 @@ def test_promote_unit_summary_to_concept_writes_concept_page_with_micro_context(
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
         "# Hierarchical Summaries\n\n"
-        "Links to [[hermes-llm-wiki-harness]].\n",
+        "Links to [[agent-context-substrate]].\n",
         encoding="utf-8",
     )
-    (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").write_text(
+    (wiki_root / "architectures" / "agent-context-substrate.md").write_text(
         "---\n"
-        "title: Hermes LLM Wiki Harness\n"
+        "title: Agent Context Substrate\n"
         "created: 2026-04-22\n"
         "updated: 2026-04-22\n"
         "type: architecture\n"
         "tags: [implementation]\n"
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
-        "# Hermes LLM Wiki Harness\n\n"
+        "# Agent Context Substrate\n\n"
         "Links to [[context-packet]].\n",
         encoding="utf-8",
     )
@@ -213,7 +213,7 @@ def test_promote_unit_summary_to_concept_writes_concept_page_with_micro_context(
     micro_a = _sample_micro(
         micro_id="micro-a",
         message_ids=[1, 2],
-        files=["src/hermes_llm_wiki_harness/promotion.py"],
+        files=["src/agent_context_substrate/promotion.py"],
         concepts=["context-packet", "summarization"],
     )
     micro_b = _sample_micro(
@@ -258,7 +258,7 @@ def test_promote_unit_summary_to_concept_writes_concept_page_with_micro_context(
 
     context_packet_page = (wiki_root / "concepts" / "context-packet.md").read_text(encoding="utf-8")
     hierarchical_page = (wiki_root / "concepts" / "hierarchical-summaries.md").read_text(encoding="utf-8")
-    architecture_page = (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").read_text(encoding="utf-8")
+    architecture_page = (wiki_root / "architectures" / "agent-context-substrate.md").read_text(encoding="utf-8")
     assert "[[durable-promotion-layer]]" in context_packet_page
     assert "[[durable-promotion-layer]]" in hierarchical_page
     assert "[[durable-promotion-layer]]" in architecture_page
@@ -289,23 +289,23 @@ def test_promote_context_packet_to_plan_writes_plan_page_with_steps_and_backlink
         "# Context Packet\n",
         encoding="utf-8",
     )
-    (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").write_text(
+    (wiki_root / "architectures" / "agent-context-substrate.md").write_text(
         "---\n"
-        "title: Hermes LLM Wiki Harness\n"
+        "title: Agent Context Substrate\n"
         "created: 2026-04-22\n"
         "updated: 2026-04-22\n"
         "type: architecture\n"
         "tags: [implementation]\n"
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
-        "# Hermes LLM Wiki Harness\n",
+        "# Agent Context Substrate\n",
         encoding="utf-8",
     )
 
     micro = _sample_micro(
         micro_id="micro-a",
         message_ids=[1, 2],
-        files=["pyproject.toml", "src/hermes_llm_wiki_harness/promotion.py"],
+        files=["pyproject.toml", "src/agent_context_substrate/promotion.py"],
         concepts=["context-packet", "summarization"],
     )
     unit = _sample_unit(micro_ids=["micro-a"])
@@ -323,7 +323,7 @@ def test_promote_context_packet_to_plan_writes_plan_page_with_steps_and_backlink
         slug="resume-harness-plan",
         title="Resume Harness Plan",
         summary="Actionable plan page derived from the context packet.",
-        related_pages=["context-packet", "hermes-llm-wiki-harness"],
+        related_pages=["context-packet", "agent-context-substrate"],
         tags=["plan", "implementation", "context-packet"],
     )
 
@@ -340,10 +340,10 @@ def test_promote_context_packet_to_plan_writes_plan_page_with_steps_and_backlink
     assert "## Critical Files" in markdown
     assert "## Provenance" in markdown
     assert "[[context-packet]]" in markdown
-    assert "[[hermes-llm-wiki-harness]]" in markdown
+    assert "[[agent-context-substrate]]" in markdown
 
     context_packet_page = (wiki_root / "concepts" / "context-packet.md").read_text(encoding="utf-8")
-    architecture_page = (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").read_text(encoding="utf-8")
+    architecture_page = (wiki_root / "architectures" / "agent-context-substrate.md").read_text(encoding="utf-8")
     assert "[[resume-harness-plan]]" in context_packet_page
     assert "[[resume-harness-plan]]" in architecture_page
     assert f"updated: {today}" in context_packet_page
@@ -372,23 +372,23 @@ def test_promote_unit_summary_to_architecture_writes_architecture_page_with_deci
         "# Hierarchical Summaries\n",
         encoding="utf-8",
     )
-    (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").write_text(
+    (wiki_root / "architectures" / "agent-context-substrate.md").write_text(
         "---\n"
-        "title: Hermes LLM Wiki Harness\n"
+        "title: Agent Context Substrate\n"
         "created: 2026-04-22\n"
         "updated: 2026-04-22\n"
         "type: architecture\n"
         "tags: [implementation]\n"
         "sources: [\"raw/articles/example.md\"]\n"
         "---\n\n"
-        "# Hermes LLM Wiki Harness\n",
+        "# Agent Context Substrate\n",
         encoding="utf-8",
     )
 
     micro_a = _sample_micro(
         micro_id="micro-a",
         message_ids=[1, 2],
-        files=["src/hermes_llm_wiki_harness/promotion.py"],
+        files=["src/agent_context_substrate/promotion.py"],
         concepts=["context-packet", "summarization"],
     )
     micro_b = _sample_micro(
@@ -406,7 +406,7 @@ def test_promote_unit_summary_to_architecture_writes_architecture_page_with_deci
         slug="promotion-system-architecture",
         title="Promotion System Architecture",
         summary="Architecture page for how packet outputs become durable wiki pages.",
-        related_pages=["hierarchical-summaries", "hermes-llm-wiki-harness"],
+        related_pages=["hierarchical-summaries", "agent-context-substrate"],
         tags=["implementation", "architecture", "summarization"],
     )
 
@@ -421,16 +421,16 @@ def test_promote_unit_summary_to_architecture_writes_architecture_page_with_deci
     assert "## Architectural Decisions" in markdown
     assert "Keep promotion pages typed and provenance-rich" in markdown
     assert "## Key Artifacts" in markdown
-    assert "`src/hermes_llm_wiki_harness/promotion.py`" in markdown
+    assert "`src/agent_context_substrate/promotion.py`" in markdown
     assert "`tests/test_promotion.py`" in markdown
     assert "## Evidence" in markdown
     assert "Outcome for micro-a" in markdown
     assert "Request for micro-b" in markdown
     assert "[[hierarchical-summaries]]" in markdown
-    assert "[[hermes-llm-wiki-harness]]" in markdown
+    assert "[[agent-context-substrate]]" in markdown
 
     hierarchical_page = (wiki_root / "concepts" / "hierarchical-summaries.md").read_text(encoding="utf-8")
-    architecture_page = (wiki_root / "architectures" / "hermes-llm-wiki-harness.md").read_text(encoding="utf-8")
+    architecture_page = (wiki_root / "architectures" / "agent-context-substrate.md").read_text(encoding="utf-8")
     assert "[[promotion-system-architecture]]" in hierarchical_page
     assert "[[promotion-system-architecture]]" in architecture_page
     assert f"updated: {today}" in hierarchical_page

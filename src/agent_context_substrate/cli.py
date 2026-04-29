@@ -179,7 +179,7 @@ def _lint_issue_count(report) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hermes-llm-wiki-harness")
+    parser = argparse.ArgumentParser(prog="agent-context-substrate")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     extract = subparsers.add_parser("extract-session", help="Export one Hermes session to JSON")
@@ -457,14 +457,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     install_engine = subparsers.add_parser(
         "install-context-engine",
-        help="Install the Hermes wiki_harness context engine from packaged assets",
+        help="Install the Hermes agent_context_substrate context engine from packaged assets",
     )
     install_engine.add_argument("--hermes-agent-root", required=True, help="Hermes Agent source/root directory")
     install_engine.add_argument("--project-root", help="Optional harness project root for context-engine local_config.py")
     install_engine.add_argument("--wiki-root", help="Optional Obsidian/LLM Wiki root for context-engine local_config.py")
     install_engine.add_argument("--overwrite", action="store_true", help="Backup and replace an existing context engine install")
 
-    doctor_parser = subparsers.add_parser("doctor", help="Check wiki-harness installation health")
+    doctor_parser = subparsers.add_parser("doctor", help="Check agent-context-substrate installation health")
     doctor_parser.add_argument("--hermes-home", required=True, help="Hermes home directory, usually ~/.hermes")
     doctor_parser.add_argument("--project-root", required=True, help="Harness project root")
     doctor_parser.add_argument("--wiki-root", required=True, help="Obsidian/LLM Wiki root")

@@ -6,22 +6,22 @@ import tomllib
 
 
 REQUIRED_ASSET_FILES = [
-    "user_plugin/wiki_harness/plugin.yaml",
-    "user_plugin/wiki_harness/__init__.py",
-    "user_plugin/wiki_harness/config.py",
-    "user_plugin/wiki_harness/runtime.py",
-    "context_engine/wiki_harness/plugin.yaml",
-    "context_engine/wiki_harness/__init__.py",
-    "context_engine/wiki_harness/config.py",
-    "context_engine/wiki_harness/engine.py",
-    "context_engine/wiki_harness/formatting.py",
-    "context_engine/wiki_harness/recovery_loader.py",
-    "context_engine/wiki_harness/retrieval_tools.py",
+    "user_plugin/agent_context_substrate/plugin.yaml",
+    "user_plugin/agent_context_substrate/__init__.py",
+    "user_plugin/agent_context_substrate/config.py",
+    "user_plugin/agent_context_substrate/runtime.py",
+    "context_engine/agent_context_substrate/plugin.yaml",
+    "context_engine/agent_context_substrate/__init__.py",
+    "context_engine/agent_context_substrate/config.py",
+    "context_engine/agent_context_substrate/engine.py",
+    "context_engine/agent_context_substrate/formatting.py",
+    "context_engine/agent_context_substrate/recovery_loader.py",
+    "context_engine/agent_context_substrate/retrieval_tools.py",
 ]
 
 
 def test_distribution_assets_are_packaged_without_user_paths() -> None:
-    asset_root = files("hermes_llm_wiki_harness") / "assets"
+    asset_root = files("agent_context_substrate") / "assets"
 
     for relative_path in REQUIRED_ASSET_FILES:
         asset = asset_root / relative_path
@@ -32,18 +32,18 @@ def test_distribution_assets_are_packaged_without_user_paths() -> None:
 
 
 def test_distribution_assets_keep_expected_generic_defaults() -> None:
-    asset_root = files("hermes_llm_wiki_harness") / "assets"
+    asset_root = files("agent_context_substrate") / "assets"
 
-    plugin_config = (asset_root / "user_plugin/wiki_harness/config.py").read_text(encoding="utf-8")
-    context_config = (asset_root / "context_engine/wiki_harness/config.py").read_text(encoding="utf-8")
+    plugin_config = (asset_root / "user_plugin/agent_context_substrate/config.py").read_text(encoding="utf-8")
+    context_config = (asset_root / "context_engine/agent_context_substrate/config.py").read_text(encoding="utf-8")
 
-    assert "HERMES_WIKI_HARNESS_PROJECT_ROOT" in plugin_config
-    assert "HERMES_WIKI_HARNESS_WIKI_ROOT" in plugin_config
-    assert "~/.hermes/llm-wiki-harness" in plugin_config
+    assert "AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT" in plugin_config
+    assert "AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT" in plugin_config
+    assert "~/.hermes/agent-context-substrate" in plugin_config
     assert "~/LLM Wiki" in plugin_config
     assert "local_config" in context_config
-    assert "HERMES_WIKI_HARNESS_PROJECT_ROOT" in context_config
-    assert "~/.hermes/llm-wiki-harness" in context_config
+    assert "AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT" in context_config
+    assert "~/.hermes/agent-context-substrate" in context_config
     assert "~/LLM Wiki" in context_config
 
 

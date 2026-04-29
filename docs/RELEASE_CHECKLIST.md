@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist before distributing Hermes LLM Wiki Harness to other Hermes Agent users.
+Use this checklist before distributing Agent Context Substrate to other Hermes Agent users.
 
 ## 1. Source hygiene
 
@@ -51,7 +51,7 @@ Use temp roots so no durable Obsidian vault is mutated:
 TMP_PROJECT=$(mktemp -d)
 TMP_WIKI=$(mktemp -d)
 TMP_AGENT=$(mktemp -d)
-hermes-llm-wiki-harness fresh-install-smoke \
+agent-context-substrate fresh-install-smoke \
   --session-id <known-session-id> \
   --hermes-home ~/.hermes \
   --project-root "$TMP_PROJECT" \
@@ -73,21 +73,21 @@ Back up before overwrite:
 
 ```bash
 TS=$(date +%Y%m%d-%H%M%S)
-cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-wiki-harness-release-$TS
-cp -a ~/.hermes/plugins/wiki-harness ~/.hermes/plugins/wiki-harness.bak-release-$TS 2>/dev/null || true
-cp -a ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness.bak-release-$TS 2>/dev/null || true
+cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-agent-context-substrate-release-$TS
+cp -a ~/.hermes/plugins/agent-context-substrate ~/.hermes/plugins/agent-context-substrate.bak-release-$TS 2>/dev/null || true
+cp -a ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate.bak-release-$TS 2>/dev/null || true
 ```
 
 Install:
 
 ```bash
-hermes-llm-wiki-harness install-plugin \
+agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root <project-root> \
   --wiki-root <wiki-root> \
   --overwrite
 
-hermes-llm-wiki-harness install-context-engine \
+agent-context-substrate install-context-engine \
   --hermes-agent-root ~/.hermes/hermes-agent \
   --project-root <project-root> \
   --wiki-root <wiki-root> \
@@ -97,7 +97,7 @@ hermes-llm-wiki-harness install-context-engine \
 Verify:
 
 ```bash
-hermes-llm-wiki-harness doctor \
+agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root <project-root> \
   --wiki-root <wiki-root> \
@@ -113,7 +113,7 @@ cd ~/.hermes/hermes-agent
 hermes plugins list
 python - <<'PY'
 from plugins.context_engine import load_context_engine
-engine = load_context_engine('wiki_harness')
+engine = load_context_engine('agent_context_substrate')
 print('engine', getattr(engine, 'name', None))
 print('tools', [schema['name'] for schema in engine.get_tool_schemas()] if engine else [])
 PY
@@ -121,8 +121,8 @@ PY
 
 Expected:
 
-- `wiki-harness` plugin is enabled.
-- engine is `wiki_harness`.
+- `agent-context-substrate` plugin is enabled.
+- engine is `agent_context_substrate`.
 - tools include `wiki_recovery_context`, `wiki_knowledge_search`, and `wiki_knowledge_expand`.
 
 ## 7. Privacy review

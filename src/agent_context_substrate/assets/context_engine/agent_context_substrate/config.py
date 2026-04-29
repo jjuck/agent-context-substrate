@@ -1,4 +1,4 @@
-"""Configuration constants for the Hermes LLM Wiki Harness context engine."""
+"""Configuration constants for the Agent Context Substrate context engine."""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ except Exception:  # local_config.py is installer-generated and optional.
     LOCAL_WIKI_ROOT = None
 
 DEFAULT_PROJECT_ROOT = Path(
-    os.environ.get("HERMES_WIKI_HARNESS_PROJECT_ROOT", "")
+    os.environ.get("AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT", "")
     or LOCAL_PROJECT_ROOT
-    or "~/.hermes/llm-wiki-harness"
+    or "~/.hermes/agent-context-substrate"
 ).expanduser()
 DEFAULT_WIKI_ROOT = Path(
-    os.environ.get("HERMES_WIKI_HARNESS_WIKI_ROOT", "")
+    os.environ.get("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", "")
     or os.environ.get("WIKI_PATH", "")
     or LOCAL_WIKI_ROOT
     or "~/LLM Wiki"

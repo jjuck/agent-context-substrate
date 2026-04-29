@@ -8,8 +8,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.integration import run_session_finalize_pipeline  # noqa: E402
-from hermes_llm_wiki_harness.ledger import SessionLedger  # noqa: E402
+from agent_context_substrate.integration import run_session_finalize_pipeline  # noqa: E402
+from agent_context_substrate.ledger import SessionLedger  # noqa: E402
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -73,7 +73,7 @@ def _build_sample_state_db(db_path: Path) -> None:
     cur.executemany(
         "INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
         [
-            (1, "session-1", "user", "Attach hermes-llm-wiki-harness to Hermes Agent.", 1776395278.0),
+            (1, "session-1", "user", "Attach agent-context-substrate to Hermes Agent.", 1776395278.0),
             (2, "session-1", "assistant", "I will inspect plugin hooks and state.db.", 1776395280.0),
             (3, "session-1", "assistant", "Key files: hermes_state.py, gateway/run.py, hermes_cli/plugins.py", 1776395282.0),
             (4, "session-1", "user", "Add a ledger so finalize hooks do not reprocess sessions twice.", 1776395284.0),

@@ -56,7 +56,7 @@ def _timestamp() -> str:
 
 
 def _asset_root():
-    return files("hermes_llm_wiki_harness") / "assets"
+    return files("agent_context_substrate") / "assets"
 
 
 def _copy_resource_tree(source, destination: Path) -> None:
@@ -82,7 +82,7 @@ def _backup_existing(path: Path, *, backup_parent: Path | None = None) -> Path |
     return backup_path
 
 
-def _move_legacy_context_engine_backups(context_engine_root: Path, engine_name: str = "wiki_harness") -> None:
+def _move_legacy_context_engine_backups(context_engine_root: Path, engine_name: str = "agent_context_substrate") -> None:
     backup_parent = context_engine_root / "_backups"
     for child in context_engine_root.glob(f"{engine_name}.bak-*"):
         if not child.is_dir():
@@ -188,7 +188,7 @@ def install_user_plugin(
     hermes_home = Path(hermes_home).expanduser()
     project_root = Path(project_root).expanduser()
     wiki_root = Path(wiki_root).expanduser()
-    plugin_dir = hermes_home / "plugins" / "wiki-harness"
+    plugin_dir = hermes_home / "plugins" / "agent-context-substrate"
     if plugin_dir.exists() and not overwrite:
         return InstallResult(
             status="skipped",
@@ -199,7 +199,7 @@ def install_user_plugin(
     backup_path = _backup_existing(plugin_dir) if overwrite else None
     if plugin_dir.exists():
         shutil.rmtree(plugin_dir)
-    _copy_resource_tree(_asset_root() / "user_plugin" / "wiki_harness", plugin_dir)
+    _copy_resource_tree(_asset_root() / "user_plugin" / "agent_context_substrate", plugin_dir)
     local_config_path = _write_local_config(plugin_dir, project_root=project_root, wiki_root=wiki_root)
 
     paths = {"plugin_dir": plugin_dir, "local_config_path": local_config_path}
@@ -219,7 +219,7 @@ def install_context_engine(
     project_root_path = Path(project_root).expanduser() if project_root is not None else None
     wiki_root_path = Path(wiki_root).expanduser() if wiki_root is not None else None
     context_engine_root = hermes_agent_root / "plugins" / "context_engine"
-    engine_dir = context_engine_root / "wiki_harness"
+    engine_dir = context_engine_root / "agent_context_substrate"
     if engine_dir.exists() and not overwrite:
         return InstallResult(
             status="skipped",
@@ -231,7 +231,7 @@ def install_context_engine(
     backup_path = _backup_existing(engine_dir, backup_parent=context_engine_root / "_backups") if overwrite else None
     if engine_dir.exists():
         shutil.rmtree(engine_dir)
-    _copy_resource_tree(_asset_root() / "context_engine" / "wiki_harness", engine_dir)
+    _copy_resource_tree(_asset_root() / "context_engine" / "agent_context_substrate", engine_dir)
 
     paths = {"engine_dir": engine_dir}
     if project_root_path is not None and wiki_root_path is not None:
@@ -262,7 +262,7 @@ def _temporary_env(**updates: str):
 
 def _ensure_project_import_shim(project_root: Path) -> None:
     package_dir = Path(__file__).resolve().parent
-    target = project_root / "src" / "hermes_llm_wiki_harness"
+    target = project_root / "src" / "agent_context_substrate"
     if target.exists():
         return
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -364,13 +364,13 @@ def doctor(
     project_root = Path(project_root).expanduser()
     wiki_root = Path(wiki_root).expanduser()
     hermes_agent_root = Path(hermes_agent_root).expanduser()
-    plugin_dir = hermes_home / "plugins" / "wiki-harness"
-    engine_dir = hermes_agent_root / "plugins" / "context_engine" / "wiki_harness"
+    plugin_dir = hermes_home / "plugins" / "agent-context-substrate"
+    engine_dir = hermes_agent_root / "plugins" / "context_engine" / "agent_context_substrate"
 
     checks = {
         "package_importable": True,
         "project_root_exists": project_root.exists(),
-        "project_src_exists": (project_root / "src" / "hermes_llm_wiki_harness").exists(),
+        "project_src_exists": (project_root / "src" / "agent_context_substrate").exists(),
         "hermes_home_exists": hermes_home.exists(),
         "state_db_exists": (hermes_home / "state.db").exists(),
         "wiki_root_exists": wiki_root.exists(),

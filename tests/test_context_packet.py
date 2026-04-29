@@ -7,12 +7,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.context_packet import (  # noqa: E402
+from agent_context_substrate.context_packet import (  # noqa: E402
     build_context_packet,
     export_context_packet,
 )
-from hermes_llm_wiki_harness.models import MicroSummary, RawSessionReference, UnitSummary  # noqa: E402
-from hermes_llm_wiki_harness.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.models import MicroSummary, RawSessionReference, UnitSummary  # noqa: E402
+from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 
 
 def _sample_reference(message_ids: list[int]) -> RawSessionReference:
@@ -58,7 +58,7 @@ def test_build_context_packet_filters_to_relevant_micro_summaries() -> None:
     micro_b = _sample_micro(
         micro_id="micro-b",
         message_ids=[3],
-        files=["src/hermes_llm_wiki_harness/context_packet.py"],
+        files=["src/agent_context_substrate/context_packet.py"],
         concepts=["summarization"],
     )
     unrelated = _sample_micro(
@@ -77,7 +77,7 @@ def test_build_context_packet_filters_to_relevant_micro_summaries() -> None:
         progress=[micro_a.summary, micro_b.summary],
         open_questions=["Should Markdown exports include raw message ids?"],
         micro_ids=["micro-a", "micro-b"],
-        related_pages=["architectures/hermes-llm-wiki-harness.md"],
+        related_pages=["architectures/agent-context-substrate.md"],
         provenance=_sample_reference([1, 2, 3]),
     )
 
@@ -95,7 +95,7 @@ def test_build_context_packet_filters_to_relevant_micro_summaries() -> None:
     assert packet.critical_files == [
         "README.md",
         "pyproject.toml",
-        "src/hermes_llm_wiki_harness/context_packet.py",
+        "src/agent_context_substrate/context_packet.py",
     ]
     assert [pointer.message_ids for pointer in packet.raw_pointers] == [[1, 2], [3]]
     assert packet.open_questions == ["Should Markdown exports include raw message ids?"]
@@ -124,7 +124,7 @@ def test_export_context_packet_writes_json_and_markdown(tmp_path, monkeypatch) -
         progress=[micro.summary],
         open_questions=["Should Markdown exports include raw message ids?"],
         micro_ids=["micro-a"],
-        related_pages=["architectures/hermes-llm-wiki-harness.md"],
+        related_pages=["architectures/agent-context-substrate.md"],
         provenance=_sample_reference([1, 2]),
     )
     packet = build_context_packet(

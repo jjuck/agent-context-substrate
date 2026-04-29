@@ -1,10 +1,10 @@
-# Hermes LLM Wiki Harness Distribution Hardening Implementation Plan
+# Agent Context Substrate Distribution Hardening Implementation Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Turn the current user-local alpha into a distributable Hermes Agent extension that a fresh user can install, initialize, attach to Hermes, and verify without Korean/Windows path assumptions.
 
-**Architecture:** Keep `hermes-llm-wiki-harness` as the standalone Python package and move installable Hermes integration assets into that package. The package owns fresh-user bootstrap, plugin/context-engine installation, health checks, and smoke validation; Hermes user plugin and context engine remain thin adapters.
+**Architecture:** Keep `agent-context-substrate` as the standalone Python package and move installable Hermes integration assets into that package. The package owns fresh-user bootstrap, plugin/context-engine installation, health checks, and smoke validation; Hermes user plugin and context engine remain thin adapters.
 
 **Tech Stack:** Python 3.11+, setuptools editable/installable package, argparse CLI, Hermes user plugin API, Hermes context-engine plugin API, pytest, temporary `HERMES_HOME`/`WIKI_PATH` smoke environments.
 
@@ -15,13 +15,13 @@
 - Harness package exists and is editable-installed in the project venv.
 - Harness full test suite passes: `50 passed`.
 - Hermes user plugin is enabled in the live Hermes config.
-- `context.engine: wiki_harness` is active in `~/.hermes/config.yaml`.
+- `context.engine: agent_context_substrate` is active in `~/.hermes/config.yaml`.
 - Context engine exposes `wiki_recovery_context`, `wiki_knowledge_search`, `wiki_knowledge_expand`.
 - Recent compression bug has been fixed: `WikiHarnessContextEngine.compress(...)` accepts `focus_topic` and delegates large-context compaction to built-in `ContextCompressor`.
 - Remaining distribution blockers:
   - user-specific defaults still exist in live plugin/context-engine files:
-    - `~/.hermes/plugins/wiki-harness/config.py`
-    - `<HERMES_AGENT_ROOT>/plugins/context_engine/wiki_harness/config.py`
+    - `~/.hermes/plugins/agent-context-substrate/config.py`
+    - `<HERMES_AGENT_ROOT>/plugins/context_engine/agent_context_substrate/config.py`
   - project itself is not currently a git repository.
   - integration assets are installed manually, not from package-managed templates.
   - no fresh-user `init`, `install-plugin`, `install-context-engine`, or `doctor` command exists yet.
@@ -35,10 +35,10 @@ A release candidate is ready when all are true:
 2. A new user can run a package CLI flow:
    ```bash
    pip install -e .
-   hermes-llm-wiki-harness init-wiki --wiki-root <wiki>
-   hermes-llm-wiki-harness install-plugin --hermes-home <home> --project-root <project> --wiki-root <wiki>
-   hermes-llm-wiki-harness install-context-engine --hermes-agent-root <hermes-agent> --project-root <project> --wiki-root <wiki>
-   hermes-llm-wiki-harness doctor --hermes-home <home> --project-root <project> --wiki-root <wiki>
+   agent-context-substrate init-wiki --wiki-root <wiki>
+   agent-context-substrate install-plugin --hermes-home <home> --project-root <project> --wiki-root <wiki>
+   agent-context-substrate install-context-engine --hermes-agent-root <hermes-agent> --project-root <project> --wiki-root <wiki>
+   agent-context-substrate doctor --hermes-home <home> --project-root <project> --wiki-root <wiki>
    ```
 3. A fresh temp install smoke proves: init → plugin install → context-engine install → finalize packet-only → recovery → retrieval/expand → lint.
 4. Live user environment is verified after install with the user's real Hermes home and Obsidian vault.
@@ -52,17 +52,17 @@ A release candidate is ready when all are true:
 **Objective:** Put the user plugin and context-engine files under the harness package so installers can copy from package resources instead of the current live `~/.hermes/...` locations.
 
 **Files:**
-- Create: `src/hermes_llm_wiki_harness/assets/user_plugin/wiki_harness/plugin.yaml`
-- Create: `src/hermes_llm_wiki_harness/assets/user_plugin/wiki_harness/__init__.py`
-- Create: `src/hermes_llm_wiki_harness/assets/user_plugin/wiki_harness/config.py`
-- Create: `src/hermes_llm_wiki_harness/assets/user_plugin/wiki_harness/runtime.py`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/plugin.yaml`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/__init__.py`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/config.py`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/engine.py`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/formatting.py`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/recovery_loader.py`
-- Create: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/retrieval_tools.py`
+- Create: `src/agent_context_substrate/assets/user_plugin/agent_context_substrate/plugin.yaml`
+- Create: `src/agent_context_substrate/assets/user_plugin/agent_context_substrate/__init__.py`
+- Create: `src/agent_context_substrate/assets/user_plugin/agent_context_substrate/config.py`
+- Create: `src/agent_context_substrate/assets/user_plugin/agent_context_substrate/runtime.py`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/plugin.yaml`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/__init__.py`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/config.py`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/engine.py`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/formatting.py`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/recovery_loader.py`
+- Create: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/retrieval_tools.py`
 - Modify: `pyproject.toml`
 - Test: `tests/test_distribution_assets.py`
 
@@ -75,19 +75,19 @@ from importlib.resources import files
 
 
 def test_distribution_assets_are_packaged_without_user_paths():
-    root = files("hermes_llm_wiki_harness") / "assets"
+    root = files("agent_context_substrate") / "assets"
     required = [
-        "user_plugin/wiki_harness/plugin.yaml",
-        "user_plugin/wiki_harness/__init__.py",
-        "user_plugin/wiki_harness/config.py",
-        "user_plugin/wiki_harness/runtime.py",
-        "context_engine/wiki_harness/plugin.yaml",
-        "context_engine/wiki_harness/__init__.py",
-        "context_engine/wiki_harness/config.py",
-        "context_engine/wiki_harness/engine.py",
-        "context_engine/wiki_harness/formatting.py",
-        "context_engine/wiki_harness/recovery_loader.py",
-        "context_engine/wiki_harness/retrieval_tools.py",
+        "user_plugin/agent_context_substrate/plugin.yaml",
+        "user_plugin/agent_context_substrate/__init__.py",
+        "user_plugin/agent_context_substrate/config.py",
+        "user_plugin/agent_context_substrate/runtime.py",
+        "context_engine/agent_context_substrate/plugin.yaml",
+        "context_engine/agent_context_substrate/__init__.py",
+        "context_engine/agent_context_substrate/config.py",
+        "context_engine/agent_context_substrate/engine.py",
+        "context_engine/agent_context_substrate/formatting.py",
+        "context_engine/agent_context_substrate/recovery_loader.py",
+        "context_engine/agent_context_substrate/retrieval_tools.py",
     ]
     for rel in required:
         text = (root / rel).read_text(encoding="utf-8")
@@ -105,15 +105,15 @@ Expected: FAIL because `assets/` does not exist.
 
 **Step 3: Implement minimum code**
 
-- Copy current live plugin/context-engine files into `src/hermes_llm_wiki_harness/assets/...`.
+- Copy current live plugin/context-engine files into `src/agent_context_substrate/assets/...`.
 - Replace local path defaults with generic env/config defaults:
-  - project root: `HERMES_WIKI_HARNESS_PROJECT_ROOT` or `~/.hermes/llm-wiki-harness`
-  - wiki root: `HERMES_WIKI_HARNESS_WIKI_ROOT`, `WIKI_PATH`, or `~/LLM Wiki`
+  - project root: `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT` or `~/.hermes/agent-context-substrate`
+  - wiki root: `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT`, `WIKI_PATH`, or `~/LLM Wiki`
 - Update `pyproject.toml`:
 
 ```toml
 [tool.setuptools.package-data]
-hermes_llm_wiki_harness = ["assets/**/*"]
+agent_context_substrate = ["assets/**/*"]
 ```
 
 **Step 4: Verify GREEN**
@@ -131,8 +131,8 @@ Expected: PASS.
 **Objective:** Provide Python functions that initialize a wiki, copy plugin/context-engine assets, write `.env`-style integration defaults, and run diagnostics.
 
 **Files:**
-- Create: `src/hermes_llm_wiki_harness/distribution.py`
-- Modify: `src/hermes_llm_wiki_harness/__init__.py`
+- Create: `src/agent_context_substrate/distribution.py`
+- Modify: `src/agent_context_substrate/__init__.py`
 - Test: `tests/test_distribution.py`
 
 **Step 1: Write failing tests**
@@ -140,14 +140,14 @@ Expected: PASS.
 Create tests for:
 
 - `init_wiki(wiki_root)` creates human-facing folders and `_system/config.yaml`.
-- `install_user_plugin(hermes_home, project_root, wiki_root)` copies `wiki-harness` into `<hermes_home>/plugins/wiki-harness` and writes generic defaults.
-- `install_context_engine(hermes_agent_root)` copies engine files into `<hermes_agent_root>/plugins/context_engine/wiki_harness`.
+- `install_user_plugin(hermes_home, project_root, wiki_root)` copies `agent-context-substrate` into `<hermes_home>/plugins/agent-context-substrate` and writes generic defaults.
+- `install_context_engine(hermes_agent_root)` copies engine files into `<hermes_agent_root>/plugins/context_engine/agent_context_substrate`.
 - `doctor(...)` reports structured checks.
 
 Expected API skeleton:
 
 ```python
-from hermes_llm_wiki_harness.distribution import (
+from agent_context_substrate.distribution import (
     init_wiki,
     install_user_plugin,
     install_context_engine,
@@ -183,16 +183,16 @@ class DoctorReport:
 
 Implementation rules:
 
-- Use `importlib.resources.files("hermes_llm_wiki_harness") / "assets"` to locate templates.
+- Use `importlib.resources.files("agent_context_substrate") / "assets"` to locate templates.
 - Never mutate live Hermes config in this module except when an explicit `enable` flag is later added.
 - Copy files idempotently.
 - Do not overwrite user-modified plugin files unless `overwrite=True`.
 - Create backups before overwrite:
-  - `wiki-harness.bak-<timestamp>`
-  - `wiki_harness.bak-<timestamp>`
+  - `agent-context-substrate.bak-<timestamp>`
+  - `agent_context_substrate.bak-<timestamp>`
 - `doctor` should check:
   - package importable
-  - `project_root/src/hermes_llm_wiki_harness` exists or package is installed
+  - `project_root/src/agent_context_substrate` exists or package is installed
   - `hermes_home/state.db` exists
   - `wiki_root` exists and has `_system/config.yaml`
   - user plugin files exist
@@ -211,10 +211,10 @@ Expected: PASS.
 
 ## Task 3: Add CLI commands for fresh install and diagnostics
 
-**Objective:** Expose the distribution module through the existing `hermes-llm-wiki-harness` CLI.
+**Objective:** Expose the distribution module through the existing `agent-context-substrate` CLI.
 
 **Files:**
-- Modify: `src/hermes_llm_wiki_harness/cli.py`
+- Modify: `src/agent_context_substrate/cli.py`
 - Test: `tests/test_cli.py`
 
 **New commands:**
@@ -230,11 +230,11 @@ fresh-install-smoke
 **Command contracts:**
 
 ```bash
-hermes-llm-wiki-harness init-wiki --wiki-root <path>
-hermes-llm-wiki-harness install-plugin --hermes-home <path> --project-root <path> --wiki-root <path> [--overwrite]
-hermes-llm-wiki-harness install-context-engine --hermes-agent-root <path> --project-root <path> --wiki-root <path> [--overwrite]
-hermes-llm-wiki-harness doctor --hermes-home <path> --project-root <path> --wiki-root <path> --hermes-agent-root <path>
-hermes-llm-wiki-harness fresh-install-smoke --session-id <id> --hermes-home <path> --project-root <path> --wiki-root <path> --hermes-agent-root <path>
+agent-context-substrate init-wiki --wiki-root <path>
+agent-context-substrate install-plugin --hermes-home <path> --project-root <path> --wiki-root <path> [--overwrite]
+agent-context-substrate install-context-engine --hermes-agent-root <path> --project-root <path> --wiki-root <path> [--overwrite]
+agent-context-substrate doctor --hermes-home <path> --project-root <path> --wiki-root <path> --hermes-agent-root <path>
+agent-context-substrate fresh-install-smoke --session-id <id> --hermes-home <path> --project-root <path> --wiki-root <path> --hermes-agent-root <path>
 ```
 
 **Step 1: Write failing tests**
@@ -270,7 +270,7 @@ Expected: PASS.
 **Objective:** Prove distribution works from empty/temp roots without using the real Obsidian vault or existing project ledger.
 
 **Files:**
-- Modify: `src/hermes_llm_wiki_harness/distribution.py`
+- Modify: `src/agent_context_substrate/distribution.py`
 - Test: `tests/test_fresh_install_smoke.py`
 
 **Smoke flow:**
@@ -341,17 +341,17 @@ Expected: PASS.
 **Objective:** Remove user-specific defaults from distributable code and installed live adapter files.
 
 **Files:**
-- Modify: `src/hermes_llm_wiki_harness/assets/user_plugin/wiki_harness/config.py`
-- Modify: `src/hermes_llm_wiki_harness/assets/context_engine/wiki_harness/config.py`
+- Modify: `src/agent_context_substrate/assets/user_plugin/agent_context_substrate/config.py`
+- Modify: `src/agent_context_substrate/assets/context_engine/agent_context_substrate/config.py`
 - Later installed copy targets:
-  - `~/.hermes/plugins/wiki-harness/config.py`
-  - `<hermes-agent-root>/plugins/context_engine/wiki_harness/config.py`
+  - `~/.hermes/plugins/agent-context-substrate/config.py`
+  - `<hermes-agent-root>/plugins/context_engine/agent_context_substrate/config.py`
 - Test: `tests/test_distribution_assets.py`
 
 **Policy:**
 
 - For public templates:
-  - project root default: `~/.hermes/llm-wiki-harness`
+  - project root default: `~/.hermes/agent-context-substrate`
   - wiki root default: `~/LLM Wiki`
 - For this user's live installation, explicit env/config can still point to:
   - `<PROJECT_ROOT>`
@@ -471,7 +471,7 @@ Do not commit private generated artifacts.
 ```bash
 cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
 
-cd '<PROJECT_ROOT>' && . .venv/bin/activate && .venv/bin/hermes-llm-wiki-harness fresh-install-smoke \
+cd '<PROJECT_ROOT>' && . .venv/bin/activate && .venv/bin/agent-context-substrate fresh-install-smoke \
   --session-id 20260420_100039_36789dfa \
   --hermes-home "$(mktemp -d)" \
   --project-root "$(mktemp -d)" \
@@ -479,9 +479,9 @@ cd '<PROJECT_ROOT>' && . .venv/bin/activate && .venv/bin/hermes-llm-wiki-harness
   --hermes-agent-root '<HERMES_AGENT_ROOT>'
 
 cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && python -m pytest \
-  tests/plugins/test_wiki_harness_plugin.py \
-  tests/agent/test_wiki_harness_context_engine.py \
-  tests/run_agent/test_wiki_harness_context_engine_active.py \
+  tests/plugins/test_agent_context_substrate_plugin.py \
+  tests/agent/test_agent_context_substrate_context_engine.py \
+  tests/run_agent/test_agent_context_substrate_context_engine_active.py \
   tests/run_agent/test_plugin_context_engine_init.py \
   tests/agent/test_context_engine.py \
   tests/gateway/test_session_boundary_hooks.py \
@@ -503,9 +503,9 @@ Expected:
 **Pre-flight backup:**
 
 ```bash
-cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-wiki-harness-release-$(date +%Y%m%d-%H%M%S)
-cp -a ~/.hermes/plugins/wiki-harness ~/.hermes/plugins/wiki-harness.bak-release-$(date +%Y%m%d-%H%M%S) 2>/dev/null || true
-cp -a ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness.bak-release-$(date +%Y%m%d-%H%M%S) 2>/dev/null || true
+cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-agent-context-substrate-release-$(date +%Y%m%d-%H%M%S)
+cp -a ~/.hermes/plugins/agent-context-substrate ~/.hermes/plugins/agent-context-substrate.bak-release-$(date +%Y%m%d-%H%M%S) 2>/dev/null || true
+cp -a ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate.bak-release-$(date +%Y%m%d-%H%M%S) 2>/dev/null || true
 ```
 
 **Install package into both envs:**
@@ -519,14 +519,14 @@ cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && pip install -e '<PROJECT_ROOT
 
 ```bash
 cd '<PROJECT_ROOT>' && . .venv/bin/activate && \
-hermes-llm-wiki-harness install-plugin \
+agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
 cd '<PROJECT_ROOT>' && . .venv/bin/activate && \
-hermes-llm-wiki-harness install-context-engine \
+agent-context-substrate install-context-engine \
   --hermes-agent-root ~/.hermes/hermes-agent \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -537,7 +537,7 @@ hermes-llm-wiki-harness install-context-engine \
 
 ```bash
 cd '<PROJECT_ROOT>' && . .venv/bin/activate && \
-hermes-llm-wiki-harness doctor \
+agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -549,8 +549,8 @@ hermes-llm-wiki-harness doctor \
 
 ```bash
 cd '<PROJECT_ROOT>' && . .venv/bin/activate && \
-HERMES_WIKI_HARNESS_PROMOTION_MODE=packet-only \
-hermes-llm-wiki-harness lint-wiki \
+AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only \
+agent-context-substrate lint-wiki \
   --project-root '<PROJECT_ROOT>' \
   --report-id release-live-wiki-check \
   --fail-on-issues
@@ -562,7 +562,7 @@ hermes-llm-wiki-harness lint-wiki \
 cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && hermes plugins list
 cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && python - <<'PY'
 from plugins.context_engine import load_context_engine
-engine = load_context_engine('wiki_harness')
+engine = load_context_engine('agent_context_substrate')
 print('engine', getattr(engine, 'name', None))
 print('tools', [schema['name'] for schema in engine.get_tool_schemas()] if engine else [])
 PY
@@ -570,8 +570,8 @@ PY
 
 Expected:
 
-- plugin status: `wiki-harness enabled`
-- context engine: `wiki_harness`
+- plugin status: `agent-context-substrate enabled`
+- context engine: `agent_context_substrate`
 - tools include:
   - `wiki_recovery_context`
   - `wiki_knowledge_search`
@@ -614,10 +614,10 @@ Only run this after confirming the user is okay with the Telegram gateway restar
 ## Rollback commands
 
 ```bash
-cp ~/.hermes/config.yaml.bak-wiki-harness-release-<timestamp> ~/.hermes/config.yaml
-rm -rf ~/.hermes/plugins/wiki-harness
-cp -a ~/.hermes/plugins/wiki-harness.bak-release-<timestamp> ~/.hermes/plugins/wiki-harness
-rm -rf ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness
-cp -a ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness.bak-release-<timestamp> ~/.hermes/hermes-agent/plugins/context_engine/wiki_harness
+cp ~/.hermes/config.yaml.bak-agent-context-substrate-release-<timestamp> ~/.hermes/config.yaml
+rm -rf ~/.hermes/plugins/agent-context-substrate
+cp -a ~/.hermes/plugins/agent-context-substrate.bak-release-<timestamp> ~/.hermes/plugins/agent-context-substrate
+rm -rf ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate
+cp -a ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate.bak-release-<timestamp> ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate
 cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && hermes gateway restart
 ```

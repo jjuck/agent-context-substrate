@@ -1,6 +1,6 @@
 <div align="center">
 
-# Hermes LLM Wiki Harness
+# Agent Context Substrate
 
 **Hermes 대화 기록을 다시 찾고, 이어서 작업하고, 필요할 때 검색할 수 있는 개인 지식층으로 바꾸는 도구입니다.**
 
@@ -10,7 +10,9 @@
 
 ## 한 줄로 말하면
 
-`hermes-llm-wiki-harness`는 Hermes Agent가 나눈 긴 대화를 그냥 흘려보내지 않고, 나중에 다시 쓸 수 있는 **요약 파일, 복구 브리프, 검색 가능한 지식 자료**로 정리해주는 Python CLI 도구입니다.
+`agent-context-substrate`는 Hermes Agent가 나눈 긴 대화를 그냥 흘려보내지 않고, 나중에 다시 쓸 수 있는 **요약 파일, 복구 브리프, 검색 가능한 지식 자료**로 정리해주는 Python CLI 도구입니다.
+
+현재 packaged adapter는 **Hermes Agent만 지원**합니다. 이름을 `Agent Context Substrate`로 바꾼 이유는 장기적으로 Claude Code, Codex, OpenCode, Gemini 같은 다른 agent adapter도 붙일 수 있는 구조로 확장하기 위해서입니다. 이 프로젝트의 이전 이름은 `hermes-llm-wiki-harness`였습니다.
 
 Hermes는 `~/.hermes/state.db`에 대화 기록을 저장합니다. 이 하네스는 그 기록을 읽어서 다음을 만듭니다.
 
@@ -64,8 +66,10 @@ Obsidian은 사람이 직접 정리하는 지식 베이스로 남겨둡니다.
 | --- | --- |
 | 상태 | Private alpha / release hardening baseline |
 | 실행 환경 | Python 3.11+ |
-| 주 인터페이스 | CLI: `hermes-llm-wiki-harness` |
-| Hermes 연동 | user plugin `wiki-harness` + context engine `wiki_harness` |
+| 주 인터페이스 | CLI: `agent-context-substrate` |
+| 현재 agent 지원 | Hermes Agent only |
+| Hermes 연동 | user plugin `agent-context-substrate` + context engine `agent_context_substrate` |
+| 장기 확장 방향 | Claude Code, Codex, OpenCode, Gemini 등은 추후 adapter로 추가 가능하나 아직 packaged support는 없음 |
 | 기본 산출물 | `data/exports/`, `data/index/session_ledger.json` |
 | 기본 promotion mode | `packet-only` |
 | Obsidian 역할 | 사람이 읽는 semantic wiki |
@@ -75,13 +79,13 @@ Obsidian은 사람이 직접 정리하는 지식 베이스로 남겨둡니다.
 ## 빠른 시작
 
 ```bash
-git clone <repo-url> hermes-llm-wiki-harness
-cd hermes-llm-wiki-harness
+git clone <repo-url> agent-context-substrate
+cd agent-context-substrate
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 python -m pytest -q
-.venv/bin/hermes-llm-wiki-harness --help
+.venv/bin/agent-context-substrate --help
 ```
 
 기대 결과:
@@ -118,25 +122,25 @@ cd '<PROJECT_ROOT>'
 . .venv/bin/activate
 
 # 1) Obsidian LLM Wiki 기본 구조 생성 또는 보강
-.venv/bin/hermes-llm-wiki-harness init-wiki \
+.venv/bin/agent-context-substrate init-wiki \
   --wiki-root '<WIKI_ROOT>'
 
 # 2) Hermes user plugin 설치
-.venv/bin/hermes-llm-wiki-harness install-plugin \
+.venv/bin/agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
 # 3) Hermes context engine 설치
-.venv/bin/hermes-llm-wiki-harness install-context-engine \
+.venv/bin/agent-context-substrate install-context-engine \
   --hermes-agent-root '<HERMES_AGENT_ROOT>' \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
 # 4) 설치 상태 점검
-.venv/bin/hermes-llm-wiki-harness doctor \
+.venv/bin/agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -149,7 +153,7 @@ Hermes plugin을 켭니다.
 ```bash
 cd '<HERMES_AGENT_ROOT>'
 . venv/bin/activate
-hermes plugins enable wiki-harness
+hermes plugins enable agent-context-substrate
 ```
 
 `~/.hermes/config.yaml`에서 context engine을 선택합니다.
@@ -157,10 +161,10 @@ hermes plugins enable wiki-harness
 ```yaml
 plugins:
   enabled:
-    - wiki-harness
+    - agent-context-substrate
 
 context:
-  engine: wiki_harness
+  engine: agent_context_substrate
 ```
 
 Telegram gateway가 이미 실행 중이었다면 설정 반영을 위해 재시작하세요.
@@ -180,7 +184,7 @@ TMP_PROJECT=$(mktemp -d)
 TMP_WIKI=$(mktemp -d)
 TMP_AGENT=$(mktemp -d)
 
-.venv/bin/hermes-llm-wiki-harness fresh-install-smoke \
+.venv/bin/agent-context-substrate fresh-install-smoke \
   --session-id '<SESSION_ID>' \
   --hermes-home ~/.hermes \
   --project-root "$TMP_PROJECT" \
@@ -221,7 +225,7 @@ lint_issue_count=0
 
 ## Hermes가 자동으로 검색하는 방식
 
-`context.engine: wiki_harness`가 켜져 있으면 Hermes Agent는 작업 중 과거 지식이 필요할 때 read-only 검색 도구를 사용할 수 있습니다.
+`context.engine: agent_context_substrate`가 켜져 있으면 Hermes Agent는 작업 중 과거 지식이 필요할 때 read-only 검색 도구를 사용할 수 있습니다.
 
 검색 순서:
 

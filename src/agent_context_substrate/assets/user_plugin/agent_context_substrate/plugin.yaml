@@ -1,0 +1,7 @@
+name: agent-context-substrate
+version: 0.1.0
+description: Attach agent-context-substrate session-finalize automation to Hermes.
+author: Hermes Agent
+provides_hooks:
+  - on_session_finalize
+  - on_session_reset

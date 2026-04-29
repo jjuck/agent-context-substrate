@@ -1,4 +1,4 @@
-"""Recovery brief loading helpers for the wiki_harness context engine."""
+"""Recovery brief loading helpers for the agent_context_substrate context engine."""
 
 from __future__ import annotations
 

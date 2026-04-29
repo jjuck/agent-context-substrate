@@ -1,4 +1,4 @@
-"""ContextEngine implementation for Hermes LLM Wiki Harness."""
+"""ContextEngine implementation for Agent Context Substrate."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .recovery_loader import (
 from .retrieval_tools import handle_knowledge_expand, handle_knowledge_search, retrieval_tool_schemas
 
 
-class WikiHarnessContextEngine(ContextEngine):
+class AgentContextSubstrateContextEngine(ContextEngine):
     """Prototype engine that surfaces durable wiki recovery briefs."""
 
     threshold_percent = 0.75
@@ -33,11 +33,11 @@ class WikiHarnessContextEngine(ContextEngine):
     def __init__(self, project_root: Path | None = None) -> None:
         self.project_root = Path(
             project_root
-            or os.environ.get("HERMES_WIKI_HARNESS_PROJECT_ROOT", "")
+            or os.environ.get("AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT", "")
             or DEFAULT_PROJECT_ROOT
         )
         self.wiki_root = Path(
-            os.environ.get("HERMES_WIKI_HARNESS_WIKI_ROOT", "")
+            os.environ.get("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", "")
             or os.environ.get("WIKI_PATH", "")
             or DEFAULT_WIKI_ROOT
         )
@@ -59,7 +59,7 @@ class WikiHarnessContextEngine(ContextEngine):
 
     @property
     def name(self) -> str:
-        return "wiki_harness"
+        return "agent_context_substrate"
 
     def update_from_response(self, usage: Dict[str, Any]) -> None:
         self.last_prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
@@ -165,7 +165,7 @@ class WikiHarnessContextEngine(ContextEngine):
 
     def on_session_start(self, session_id: str, **kwargs) -> None:
         self.current_session_id = session_id or ""
-        override_session_id = os.environ.get("HERMES_WIKI_HARNESS_RECOVERY_SESSION_ID")
+        override_session_id = os.environ.get("AGENT_CONTEXT_SUBSTRATE_RECOVERY_SESSION_ID")
         brief, source_path = self._load_recovery_brief(
             requested_session_id=override_session_id or self.current_session_id
         )
@@ -189,7 +189,7 @@ class WikiHarnessContextEngine(ContextEngine):
                 "name": "wiki_recovery_context",
                 "description": (
                     "Return the durable recovery brief loaded from "
-                    "hermes-llm-wiki-harness packet/wiki artifacts."
+                    "agent-context-substrate packet/wiki artifacts."
                 ),
                 "parameters": {
                     "type": "object",
@@ -226,7 +226,7 @@ class WikiHarnessContextEngine(ContextEngine):
             return json.dumps(
                 {
                     "ok": False,
-                    "error": "No wiki-harness recovery brief found.",
+                    "error": "No agent-context-substrate recovery brief found.",
                     "project_root": str(self.project_root),
                 },
                 ensure_ascii=False,

@@ -8,7 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.cli import main  # noqa: E402
+from agent_context_substrate.cli import main  # noqa: E402
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -76,7 +76,7 @@ def _build_sample_state_db(db_path: Path) -> None:
                 1,
                 "session-1",
                 "user",
-                "Create the project scaffold with pyproject.toml and src/hermes_llm_wiki_harness/models.py",
+                "Create the project scaffold with pyproject.toml and src/agent_context_substrate/models.py",
                 1776395278.0,
             ),
             (
@@ -204,7 +204,7 @@ def test_cli_build_context_packet_exports_raw_and_packet_artifacts(tmp_path, mon
             "--goal",
             "Create the first usable harness substrate.",
             "--related-page",
-            "architectures/hermes-llm-wiki-harness.md",
+            "architectures/agent-context-substrate.md",
             "--project-root",
             str(project_root),
         ]
@@ -259,7 +259,7 @@ def test_cli_promote_packet_query_and_unit_concept_from_packet_json(tmp_path, mo
             "--goal",
             "Create the first usable harness substrate.",
             "--related-page",
-            "architectures/hermes-llm-wiki-harness.md",
+            "architectures/agent-context-substrate.md",
             "--project-root",
             str(project_root),
         ]
@@ -364,7 +364,7 @@ def test_cli_promote_packet_plan_and_unit_architecture_from_packet_json(tmp_path
             "--goal",
             "Create the first usable harness substrate.",
             "--related-page",
-            "architectures/hermes-llm-wiki-harness.md",
+            "architectures/agent-context-substrate.md",
             "--project-root",
             str(project_root),
         ]
@@ -455,13 +455,13 @@ def test_cli_promotion_commands_auto_register_index_and_log(tmp_path, monkeypatc
     )
     _write(
         wiki_root / "index.md",
-        "# Wiki Index\n\n## Architectures\n- [[hermes-llm-wiki-harness]] — Existing architecture page\n\n## Concepts\n- [[context-packet]] — Existing concept page\n- [[hierarchical-summaries]] — Existing concept page\n\n## Queries\n<!-- empty -->\n\n## Plans\n<!-- empty -->\n",
+        "# Wiki Index\n\n## Architectures\n- [[agent-context-substrate]] — Existing architecture page\n\n## Concepts\n- [[context-packet]] — Existing concept page\n- [[hierarchical-summaries]] — Existing concept page\n\n## Queries\n<!-- empty -->\n\n## Plans\n<!-- empty -->\n",
     )
     _write(wiki_root / "log.md", "# Wiki Log\n")
     _write(
-        wiki_root / "architectures" / "hermes-llm-wiki-harness.md",
+        wiki_root / "architectures" / "agent-context-substrate.md",
         """---
-title: Hermes LLM Wiki Harness
+title: Agent Context Substrate
 created: 2026-04-22
 updated: 2026-04-22
 type: architecture
@@ -469,7 +469,7 @@ tags: [implementation]
 sources: [\"raw/articles/example.md\"]
 ---
 
-# Hermes LLM Wiki Harness
+# Agent Context Substrate
 """,
     )
     _write(
@@ -521,7 +521,7 @@ sources: [\"raw/articles/example.md\"]
             "--goal",
             "Create the first usable harness substrate.",
             "--related-page",
-            "architectures/hermes-llm-wiki-harness.md",
+            "architectures/agent-context-substrate.md",
             "--project-root",
             str(project_root),
         ]
@@ -663,13 +663,13 @@ def test_cli_run_e2e_pipeline_creates_packet_promotions_and_lint_report(tmp_path
     _write(wiki_root / "SCHEMA.md", "# Wiki Schema\n\n## Tag Taxonomy\n- question\n- implementation\n- knowledge-base\n- plan\n- architecture\n\n")
     _write(
         wiki_root / "index.md",
-        "# Wiki Index\n\n## Architectures\n- [[hermes-llm-wiki-harness]] — Existing architecture page\n\n## Concepts\n- [[context-packet]] — Existing concept page\n- [[hierarchical-summaries]] — Existing concept page\n\n## Queries\n<!-- empty -->\n\n## Plans\n<!-- empty -->\n",
+        "# Wiki Index\n\n## Architectures\n- [[agent-context-substrate]] — Existing architecture page\n\n## Concepts\n- [[context-packet]] — Existing concept page\n- [[hierarchical-summaries]] — Existing concept page\n\n## Queries\n<!-- empty -->\n\n## Plans\n<!-- empty -->\n",
     )
     _write(wiki_root / "log.md", "# Wiki Log\n")
     _write(
-        wiki_root / "architectures" / "hermes-llm-wiki-harness.md",
+        wiki_root / "architectures" / "agent-context-substrate.md",
         """---
-title: Hermes LLM Wiki Harness
+title: Agent Context Substrate
 created: 2026-04-22
 updated: 2026-04-22
 type: architecture
@@ -677,7 +677,7 @@ tags: [implementation]
 sources: [\"raw/articles/example.md\"]
 ---
 
-# Hermes LLM Wiki Harness
+# Agent Context Substrate
 
 Links to [[context-packet]] and [[hierarchical-summaries]].
 """,
@@ -695,7 +695,7 @@ sources: [\"raw/articles/example.md\"]
 
 # Context Packet
 
-Links to [[hermes-llm-wiki-harness]].
+Links to [[agent-context-substrate]].
 """,
     )
     _write(
@@ -711,7 +711,7 @@ sources: [\"raw/articles/example.md\"]
 
 # Hierarchical Summaries
 
-Links to [[hermes-llm-wiki-harness]].
+Links to [[agent-context-substrate]].
 """,
     )
 
@@ -735,7 +735,7 @@ Links to [[hermes-llm-wiki-harness]].
             "--goal",
             "Create the first usable harness substrate.",
             "--packet-related-page",
-            "architectures/hermes-llm-wiki-harness.md",
+            "architectures/agent-context-substrate.md",
             "--query-related-page",
             "context-packet",
             "--query-tag",
@@ -824,7 +824,7 @@ def test_cli_distribution_install_and_doctor_commands(tmp_path, capsys) -> None:
     wiki_root = tmp_path / "wiki"
     (hermes_home).mkdir()
     (hermes_home / "state.db").write_bytes(b"")
-    (project_root / "src" / "hermes_llm_wiki_harness").mkdir(parents=True)
+    (project_root / "src" / "agent_context_substrate").mkdir(parents=True)
 
     init_exit = main(["init-wiki", "--wiki-root", str(wiki_root)])
     plugin_exit = main(
@@ -871,9 +871,9 @@ def test_cli_distribution_install_and_doctor_commands(tmp_path, capsys) -> None:
     assert "context engine installed" in captured.out
     assert "doctor ok=True" in captured.out
     assert (wiki_root / "_system" / "config.yaml").exists()
-    assert (hermes_home / "plugins" / "wiki-harness" / "plugin.yaml").exists()
+    assert (hermes_home / "plugins" / "agent-context-substrate" / "plugin.yaml").exists()
     assert (
-        hermes_agent_root / "plugins" / "context_engine" / "wiki_harness" / "engine.py"
+        hermes_agent_root / "plugins" / "context_engine" / "agent_context_substrate" / "engine.py"
     ).exists()
 
 

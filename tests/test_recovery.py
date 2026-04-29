@@ -8,8 +8,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.integration import run_session_finalize_pipeline  # noqa: E402
-from hermes_llm_wiki_harness.recovery import build_recovery_brief  # noqa: E402
+from agent_context_substrate.integration import run_session_finalize_pipeline  # noqa: E402
+from agent_context_substrate.recovery import build_recovery_brief  # noqa: E402
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -73,9 +73,9 @@ def _build_sample_state_db(db_path: Path) -> None:
     cur.executemany(
         "INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
         [
-            (1, "session-1", "user", "Attach hermes-llm-wiki-harness to Hermes Agent and recover previous work quickly.", 1776395278.0),
+            (1, "session-1", "user", "Attach agent-context-substrate to Hermes Agent and recover previous work quickly.", 1776395278.0),
             (2, "session-1", "assistant", "I will inspect state.db and the plugin/context-engine extension points.", 1776395280.0),
-            (3, "session-1", "assistant", "Key files: /home/juwan/.hermes/hermes-agent/hermes_state.py, gateway/run.py, hermes_cli/plugins.py", 1776395282.0),
+            (3, "session-1", "assistant", "Key files: /home/example/.hermes/hermes-agent/hermes_state.py, gateway/run.py, hermes_cli/plugins.py", 1776395282.0),
             (4, "session-1", "assistant", "Next step: build recovery.py so /wiki-resume can show a compact packet summary.", 1776395283.0),
             (5, "session-1", "user", "Export a short recovery brief after finalize.", 1776395284.0),
         ],

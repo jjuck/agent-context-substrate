@@ -8,20 +8,20 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import hermes_llm_wiki_harness.integration as integration_module  # noqa: E402
-from hermes_llm_wiki_harness.integration import (  # noqa: E402
+import agent_context_substrate.integration as integration_module  # noqa: E402
+from agent_context_substrate.integration import (  # noqa: E402
     PipelineRetryExhaustedError,
     run_session_finalize_pipeline,
     should_process_session,
 )
-from hermes_llm_wiki_harness.ledger import SessionLedger  # noqa: E402
-from hermes_llm_wiki_harness.naming import (  # noqa: E402
+from agent_context_substrate.ledger import SessionLedger  # noqa: E402
+from agent_context_substrate.naming import (  # noqa: E402
     derive_goal,
     derive_task_title,
     derive_unit_title,
 )
-from hermes_llm_wiki_harness.policy import should_process_bundle  # noqa: E402
-from hermes_llm_wiki_harness.summarizer import build_micro_summary  # noqa: E402
+from agent_context_substrate.policy import should_process_bundle  # noqa: E402
+from agent_context_substrate.summarizer import build_micro_summary  # noqa: E402
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -85,9 +85,9 @@ def _build_sample_state_db(db_path: Path) -> None:
     cur.executemany(
         "INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
         [
-            (1, "session-1", "user", "Attach hermes-llm-wiki-harness to Hermes Agent and design the integration path.", 1776395278.0),
+            (1, "session-1", "user", "Attach agent-context-substrate to Hermes Agent and design the integration path.", 1776395278.0),
             (2, "session-1", "assistant", "I will inspect state.db, gateway hooks, and plugin/context-engine extension points.", 1776395280.0),
-            (3, "session-1", "assistant", "Key files: /home/juwan/.hermes/hermes-agent/hermes_state.py, gateway/run.py, hermes_cli/plugins.py, agent/context_engine.py", 1776395282.0),
+            (3, "session-1", "assistant", "Key files: /home/example/.hermes/hermes-agent/hermes_state.py, gateway/run.py, hermes_cli/plugins.py, agent/context_engine.py", 1776395282.0),
             (4, "session-1", "user", "Create docs/plans/2026-04-23-hermes-agent-integration-plan.md and wire integration.py next.", 1776395284.0),
         ],
     )
@@ -212,8 +212,8 @@ def test_run_session_finalize_pipeline_links_default_promotions_to_avoid_orphans
         promotion_mode="full",
     )
 
-    from hermes_llm_wiki_harness.lint import lint_wiki  # noqa: E402
-    from hermes_llm_wiki_harness.paths import HarnessPaths  # noqa: E402
+    from agent_context_substrate.lint import lint_wiki  # noqa: E402
+    from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 
     report = lint_wiki(HarnessPaths(project_root=project_root))
     assert report.checked_pages == sorted(
@@ -434,8 +434,8 @@ def test_naming_helpers_derive_titles_goal_and_policy_from_raw_bundle(tmp_path, 
     hermes_home.mkdir()
     _build_sample_state_db(hermes_home / "state.db")
 
-    from hermes_llm_wiki_harness.paths import HarnessPaths  # noqa: E402
-    from hermes_llm_wiki_harness.raw_extract import build_session_bundle  # noqa: E402
+    from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+    from agent_context_substrate.raw_extract import build_session_bundle  # noqa: E402
 
     paths = HarnessPaths(project_root=project_root)
     raw_bundle = build_session_bundle("session-1", paths=paths)
@@ -449,8 +449,8 @@ def test_naming_helpers_derive_titles_goal_and_policy_from_raw_bundle(tmp_path, 
     goal = derive_goal(task_title, micro_summary)
 
     assert task_title == "Harness integration planning"
-    assert unit_title.startswith("Attach hermes-llm-wiki-harness to Hermes Agent")
-    assert "Attach hermes-llm-wiki-harness to Hermes Agent" in goal
+    assert unit_title.startswith("Attach agent-context-substrate to Hermes Agent")
+    assert "Attach agent-context-substrate to Hermes Agent" in goal
     assert should_process_bundle(
         raw_bundle,
         min_message_count=3,

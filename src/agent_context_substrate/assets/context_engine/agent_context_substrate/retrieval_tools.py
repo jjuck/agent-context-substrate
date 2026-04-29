@@ -1,4 +1,4 @@
-"""Request-time retrieval tool schemas and handlers for wiki_harness."""
+"""Request-time retrieval tool schemas and handlers for agent_context_substrate."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def retrieval_tool_schemas() -> List[Dict[str, Any]]:
         {
             "name": "wiki_knowledge_search",
             "description": (
-                "Search the Hermes LLM Wiki Harness knowledge layer while solving the "
+                "Search the Agent Context Substrate knowledge layer while solving the "
                 "current request. Use this when prior project decisions, wiki pages, "
                 "context packets, summaries, or raw evidence may be relevant."
             ),
@@ -96,6 +96,6 @@ def load_retrieval_api(project_root: Path):
     for src_path in (project_root / "src", DEFAULT_PROJECT_ROOT / "src"):
         if src_path.exists() and str(src_path) not in sys.path:
             sys.path.insert(0, str(src_path))
-    from hermes_llm_wiki_harness.retrieval import expand_hit, search_knowledge
+    from agent_context_substrate.retrieval import expand_hit, search_knowledge
 
     return search_knowledge, expand_hit

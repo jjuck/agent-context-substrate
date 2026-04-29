@@ -3,16 +3,16 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hermes-llm-wiki-harness"
+name = "agent-context-substrate"
 version = "0.1.0"
-description = "Hermes-specific layered context recovery harness backed by session exports and an Obsidian wiki."
+description = "A multi-layer context and retrieval substrate for AI agents; currently packaged with Hermes Agent integration."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
   { name = "주완 이 + Hermes Agent" }
 ]
-keywords = ["hermes-agent", "obsidian", "context", "rag", "wiki"]
+keywords = ["ai-agent", "context", "memory", "rag", "obsidian", "hermes-agent"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -28,13 +28,13 @@ dev = [
 ]
 
 [project.scripts]
-hermes-llm-wiki-harness = "hermes_llm_wiki_harness.cli:main"
+agent-context-substrate = "agent_context_substrate.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-hermes_llm_wiki_harness = ["assets/**/*"]
+agent_context_substrate = ["assets/**/*"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

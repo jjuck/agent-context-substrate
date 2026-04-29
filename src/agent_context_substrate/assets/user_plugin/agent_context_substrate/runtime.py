@@ -12,12 +12,12 @@ _PLUGIN_DIR = Path(__file__).resolve().parent
 if str(_PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_DIR))
 
-from config import WikiHarnessPluginConfig, load_plugin_config
+from config import AgentContextSubstratePluginConfig, load_plugin_config
 
 logger = logging.getLogger(__name__)
 
 
-def _ensure_harness_on_path(config: WikiHarnessPluginConfig) -> None:
+def _ensure_harness_on_path(config: AgentContextSubstratePluginConfig) -> None:
     src_path = config.project_root / "src"
     if src_path.exists() and str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
@@ -39,25 +39,25 @@ def _temporary_wiki_root(wiki_root: Path):
 def _load_harness_api():
     config = load_plugin_config()
     _ensure_harness_on_path(config)
-    integration = importlib.import_module("hermes_llm_wiki_harness.integration")
+    integration = importlib.import_module("agent_context_substrate.integration")
     return integration.should_process_session, integration.run_session_finalize_pipeline
 
 
 def _load_recovery_api():
     config = load_plugin_config()
     _ensure_harness_on_path(config)
-    recovery = importlib.import_module("hermes_llm_wiki_harness.recovery")
+    recovery = importlib.import_module("agent_context_substrate.recovery")
     return recovery.build_recovery_brief
 
 
 def _load_lint_api():
     config = load_plugin_config()
     _ensure_harness_on_path(config)
-    lint = importlib.import_module("hermes_llm_wiki_harness.lint")
+    lint = importlib.import_module("agent_context_substrate.lint")
     return lint.lint_wiki, lint.export_lint_report
 
 
-def _diagnose_config(config: WikiHarnessPluginConfig) -> dict[str, object]:
+def _diagnose_config(config: AgentContextSubstratePluginConfig) -> dict[str, object]:
     project_exists = config.project_root.exists()
     wiki_exists = config.wiki_root.exists()
     harness_importable = False
@@ -67,7 +67,7 @@ def _diagnose_config(config: WikiHarnessPluginConfig) -> dict[str, object]:
         if not src_path.exists():
             raise ModuleNotFoundError(f"configured harness src path does not exist: {src_path}")
         _ensure_harness_on_path(config)
-        harness_module = importlib.import_module("hermes_llm_wiki_harness")
+        harness_module = importlib.import_module("agent_context_substrate")
         module_file = getattr(harness_module, "__file__", "")
         if module_file:
             module_path = Path(module_file).resolve()
@@ -88,14 +88,14 @@ def _diagnose_config(config: WikiHarnessPluginConfig) -> dict[str, object]:
     }
 
 
-def _status_lines(config: WikiHarnessPluginConfig) -> list[str]:
+def _status_lines(config: AgentContextSubstratePluginConfig) -> list[str]:
     diagnostics = _diagnose_config(config)
     allowed_sources = list(getattr(config, "allowed_sources", []))
     gateway_policy = getattr(config, "gateway_policy", "trigger-only")
     promotion_mode = getattr(config, "promotion_mode", "packet-only")
     gateway_source_status = "enabled" if "gateway" in set(allowed_sources) else "disabled"
     lines = [
-        "Wiki-Harness plugin status",
+        "Agent Context Substrate plugin status",
         f"- health: {diagnostics['health']}",
         f"- project_root: {config.project_root}",
         f"- project_root exists: {diagnostics['project_root_exists']}",
@@ -119,7 +119,7 @@ def handle_harness_command(raw_args: str = "") -> str:
     return "\n".join(_status_lines(config))
 
 
-def _wiki_config_path(config: WikiHarnessPluginConfig) -> Path:
+def _wiki_config_path(config: AgentContextSubstratePluginConfig) -> Path:
     return Path(config.wiki_root) / "_system" / "config.yaml"
 
 
@@ -276,10 +276,10 @@ def handle_packet_command(raw_args: str = "") -> str:
             promotion_mode=getattr(config, "promotion_mode", "packet-only"),
         )
     except Exception as exc:
-        logger.exception("wiki-harness packet command failed for session_id=%s", session_id)
+        logger.exception("agent-context-substrate packet command failed for session_id=%s", session_id)
         return "\n".join(
             [
-                "Wiki-Harness packet failed",
+                "Agent Context Substrate packet failed",
                 f"- session_id: {session_id}",
                 f"- error: {type(exc).__name__}: {exc}",
             ]
@@ -287,7 +287,7 @@ def handle_packet_command(raw_args: str = "") -> str:
     status = "reused" if result.skipped else "processed"
     return "\n".join(
         [
-            f"Wiki-Harness packet {status}",
+            f"Agent Context Substrate packet {status}",
             f"- session_id: {session_id}",
             f"- packet_id: {result.packet_id}",
             f"- recovery_json_path: {getattr(result, 'recovery_json_path', '')}",
@@ -310,7 +310,7 @@ def handle_wiki_resume_command(raw_args: str = "") -> str:
             max_items=5,
         )
     except Exception as exc:
-        logger.exception("wiki-harness resume command failed for session_id=%s", session_id)
+        logger.exception("agent-context-substrate resume command failed for session_id=%s", session_id)
         return "\n".join(
             [
                 "Wiki resume failed",
@@ -374,7 +374,7 @@ def handle_wiki_lint_command(raw_args: str = "") -> str:
 
         with _temporary_wiki_root(config.wiki_root):
             try:
-                from hermes_llm_wiki_harness.paths import HarnessPaths
+                from agent_context_substrate.paths import HarnessPaths
 
                 paths = HarnessPaths(project_root=config.project_root)
             except Exception:
@@ -382,9 +382,9 @@ def handle_wiki_lint_command(raw_args: str = "") -> str:
 
                 paths = SimpleNamespace(project_root=config.project_root, wiki_root=config.wiki_root)
             report = lint_wiki(paths)
-            json_path, markdown_path = export_lint_report(report, paths, report_id="wiki-harness-cli")
+            json_path, markdown_path = export_lint_report(report, paths, report_id="agent-context-substrate-cli")
     except Exception as exc:
-        logger.exception("wiki-harness lint command failed")
+        logger.exception("agent-context-substrate lint command failed")
         return "\n".join(
             [
                 "Wiki lint failed",
@@ -438,7 +438,7 @@ def handle_session_finalize(*, session_id: str | None = None, platform: str | No
             "platform": platform or "unknown",
         }
     except Exception as exc:
-        logger.exception("wiki-harness session finalize failed for session_id=%s", session_id)
+        logger.exception("agent-context-substrate session finalize failed for session_id=%s", session_id)
         return {
             "status": "error",
             "session_id": session_id,

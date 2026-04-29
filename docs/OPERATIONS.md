@@ -1,6 +1,6 @@
-# Hermes LLM Wiki Harness 운영 가이드
+# Agent Context Substrate 운영 가이드
 
-이 문서는 `hermes-llm-wiki-harness`를 실제로 돌릴 때 필요한 운영 기준과 런북입니다.
+이 문서는 `agent-context-substrate`를 실제로 돌릴 때 필요한 운영 기준과 런북입니다.
 
 ## 1. 운영 목표
 
@@ -43,22 +43,22 @@ python -m pytest -q
 cd '<PROJECT_ROOT>'
 . .venv/bin/activate
 
-.venv/bin/hermes-llm-wiki-harness init-wiki \
+.venv/bin/agent-context-substrate init-wiki \
   --wiki-root '<WIKI_ROOT>'
 
-.venv/bin/hermes-llm-wiki-harness install-plugin \
+.venv/bin/agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
-.venv/bin/hermes-llm-wiki-harness install-context-engine \
+.venv/bin/agent-context-substrate install-context-engine \
   --hermes-agent-root '<HERMES_AGENT_ROOT>' \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
-.venv/bin/hermes-llm-wiki-harness doctor \
+.venv/bin/agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -66,7 +66,7 @@ cd '<PROJECT_ROOT>'
   --fail-on-issues
 ```
 
-설치 후 Hermes에서 `wiki-harness` plugin을 enable하고 `context.engine: wiki_harness`를 선택합니다. 이미 실행 중인 Telegram gateway는 module cache 때문에 restart가 필요할 수 있습니다.
+설치 후 Hermes에서 `agent-context-substrate` plugin을 enable하고 `context.engine: agent_context_substrate`를 선택합니다. 이미 실행 중인 Telegram gateway는 module cache 때문에 restart가 필요할 수 있습니다.
 
 ### fresh install smoke
 
@@ -77,7 +77,7 @@ TMP_PROJECT=$(mktemp -d)
 TMP_WIKI=$(mktemp -d)
 TMP_AGENT=$(mktemp -d)
 
-.venv/bin/hermes-llm-wiki-harness fresh-install-smoke \
+.venv/bin/agent-context-substrate fresh-install-smoke \
   --session-id '<SESSION_ID>' \
   --hermes-home ~/.hermes \
   --project-root "$TMP_PROJECT" \
@@ -99,7 +99,7 @@ expanded_content_length>0
 ```bash
 echo "$HERMES_HOME"
 echo "$WIKI_PATH"
-echo "$HERMES_WIKI_HARNESS_PROMOTION_MODE"
+echo "$AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE"
 ```
 
 기본값:
@@ -107,7 +107,7 @@ echo "$HERMES_WIKI_HARNESS_PROMOTION_MODE"
 ```text
 HERMES_HOME=~/.hermes
 WIKI_PATH=~/wiki
-HERMES_WIKI_HARNESS_PROMOTION_MODE=packet-only
+AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only
 ```
 
 ## 3. 경로 기준
@@ -161,7 +161,7 @@ _system/
 ### 4.1 Raw export만 필요한 경우
 
 ```bash
-hermes-llm-wiki-harness extract-session \
+agent-context-substrate extract-session \
   --session-id <session_id> \
   --project-root .
 ```
@@ -174,7 +174,7 @@ hermes-llm-wiki-harness extract-session \
 ### 4.2 Context packet까지만 만드는 경우
 
 ```bash
-hermes-llm-wiki-harness build-context-packet \
+agent-context-substrate build-context-packet \
   --session-id <session_id> \
   --packet-id <packet_id> \
   --task-title "<task title>" \
@@ -217,7 +217,7 @@ Hermes plugin의 `/new` 또는 `/packet <session_id>` 경로는 기본적으로 
 TMP_WIKI=$(mktemp -d)
 export WIKI_PATH="$TMP_WIKI"
 
-hermes-llm-wiki-harness run-e2e-pipeline \
+agent-context-substrate run-e2e-pipeline \
   --session-id <session_id> \
   --packet-id <packet_id> \
   --task-title "<task title>" \
@@ -281,7 +281,7 @@ _system/templates/en/<type>.md
 ### 5.4 언어 lint
 
 ```bash
-hermes-llm-wiki-harness lint-wiki \
+agent-context-substrate lint-wiki \
   --project-root . \
   --report-id language-check
 ```
@@ -336,7 +336,7 @@ python -m pytest -q
 ```bash
 cd '<PROJECT_ROOT>'
 . .venv/bin/activate
-.venv/bin/hermes-llm-wiki-harness lint-wiki \
+.venv/bin/agent-context-substrate lint-wiki \
   --project-root '<PROJECT_ROOT>' \
   --report-id real-wiki-smoke
 ```
@@ -357,12 +357,12 @@ Internal graph issues=0
 Hermes tool이 활성화되어 있으면:
 
 ```text
-wiki_knowledge_search("Hermes LLM Wiki Harness Context Packet")
+wiki_knowledge_search("Agent Context Substrate Context Packet")
 ```
 
 기대:
 
-- `04 프로젝트/Hermes LLM Wiki Harness.md` 같은 human-facing wiki hit
+- `04 프로젝트/Agent Context Substrate.md` 같은 human-facing wiki hit
 - context packet artifact hit
 
 ## 8. privacy / release 운영 기준
@@ -399,7 +399,7 @@ test -f "$HERMES_HOME/state.db" && echo ok || echo missing
 cd '<PROJECT_ROOT>'
 . .venv/bin/activate
 pip install -e '.[dev]'
-.venv/bin/hermes-llm-wiki-harness --help
+.venv/bin/agent-context-substrate --help
 ```
 
 ### 9.3 `/harness`가 `degraded`
@@ -413,8 +413,8 @@ pip install -e '.[dev]'
 
 대응:
 
-- `HERMES_WIKI_HARNESS_PROJECT_ROOT`가 실제 project root인지 확인
-- `src/hermes_llm_wiki_harness`가 존재하는지 확인
+- `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT`가 실제 project root인지 확인
+- `src/agent_context_substrate`가 존재하는지 확인
 - gateway 재시작 필요 여부 확인
 
 ### 9.4 언어 lint 실패

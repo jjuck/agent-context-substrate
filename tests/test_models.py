@@ -6,7 +6,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.models import (  # noqa: E402
+from agent_context_substrate.models import (  # noqa: E402
     ContextPacket,
     MicroSummary,
     RawSessionReference,
@@ -66,7 +66,7 @@ def test_context_packet_preserves_nested_summary_ids() -> None:
         progress=["Created MVP plan"],
         open_questions=["How should context packets be exported?"],
         micro_ids=["micro-1"],
-        related_pages=["architectures/hermes-llm-wiki-harness.md"],
+        related_pages=["architectures/agent-context-substrate.md"],
         provenance=reference,
     )
     packet = ContextPacket(
@@ -76,7 +76,7 @@ def test_context_packet_preserves_nested_summary_ids() -> None:
         unit_summaries=[unit],
         micro_summaries=[micro],
         raw_pointers=[reference],
-        critical_files=["pyproject.toml", "src/hermes_llm_wiki_harness/models.py"],
+        critical_files=["pyproject.toml", "src/agent_context_substrate/models.py"],
         open_questions=["What should raw extraction export format be?"],
     )
 

@@ -1,12 +1,14 @@
-# Hermes LLM Wiki Harness User Guide
+# Agent Context Substrate User Guide
 
-This guide explains `hermes-llm-wiki-harness` from a user point of view: what it does, when it helps, where data is stored, how to install it into Hermes Agent, and how to use the CLI and Telegram commands.
+This guide explains `agent-context-substrate` from a user point of view: what it does, when it helps, where data is stored, how to install it into Hermes Agent, and how to use the CLI and Telegram commands.
+
+The current release packages **Hermes Agent integration only**. The project name reflects the longer-term goal of supporting additional agent adapters, but Claude Code/Codex/OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
 
 [한국어 사용자 가이드](./USER_GUIDE.md) · [English README](../README.md) · [한국어 README](../README.ko.md)
 
 ## 1. What this tool does
 
-`Hermes LLM Wiki Harness` turns Hermes Agent conversations into reusable local knowledge artifacts.
+`Agent Context Substrate` turns Hermes Agent conversations into reusable local knowledge artifacts.
 
 Instead of relying only on the live chat context, it can export a Hermes session, summarize it into a context packet, generate a recovery brief, and make the result searchable by Hermes later.
 
@@ -151,7 +153,7 @@ When creating a new page:
 ```bash
 cd '<PROJECT_ROOT>'
 . .venv/bin/activate
-.venv/bin/hermes-llm-wiki-harness lint-wiki \
+.venv/bin/agent-context-substrate lint-wiki \
   --project-root '<PROJECT_ROOT>' \
   --report-id language-check
 ```
@@ -165,8 +167,8 @@ Language issues appear in the `Human-Facing Quality` section as:
 
 Hermes integration has two parts:
 
-1. `wiki-harness` user plugin: session-finalize hooks and Telegram commands such as `/harness`, `/packet`, `/wiki-resume`, and `/wiki-lint`.
-2. `wiki_harness` context engine: retrieval tools such as `wiki_recovery_context`, `wiki_knowledge_search`, and `wiki_knowledge_expand`.
+1. `agent-context-substrate` user plugin: session-finalize hooks and Telegram commands such as `/harness`, `/packet`, `/wiki-resume`, and `/wiki-lint`.
+2. `agent_context_substrate` context engine: retrieval tools such as `wiki_recovery_context`, `wiki_knowledge_search`, and `wiki_knowledge_expand`.
 
 Replace these placeholders before running commands.
 
@@ -182,22 +184,22 @@ Replace these placeholders before running commands.
 cd '<PROJECT_ROOT>'
 . .venv/bin/activate
 
-.venv/bin/hermes-llm-wiki-harness init-wiki \
+.venv/bin/agent-context-substrate init-wiki \
   --wiki-root '<WIKI_ROOT>'
 
-.venv/bin/hermes-llm-wiki-harness install-plugin \
+.venv/bin/agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
-.venv/bin/hermes-llm-wiki-harness install-context-engine \
+.venv/bin/agent-context-substrate install-context-engine \
   --hermes-agent-root '<HERMES_AGENT_ROOT>' \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
-.venv/bin/hermes-llm-wiki-harness doctor \
+.venv/bin/agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -205,14 +207,14 @@ cd '<PROJECT_ROOT>'
   --fail-on-issues
 ```
 
-`install-plugin` writes `<PROJECT_ROOT>` and `<WIKI_ROOT>` into `~/.hermes/plugins/wiki-harness/local_config.py`. `install-context-engine` also writes a local config beside the installed context engine. These files are local machine configuration, not public templates.
+`install-plugin` writes `<PROJECT_ROOT>` and `<WIKI_ROOT>` into `~/.hermes/plugins/agent-context-substrate/local_config.py`. `install-context-engine` also writes a local config beside the installed context engine. These files are local machine configuration, not public templates.
 
 ### 7.2 Enable the plugin
 
 ```bash
 cd '<HERMES_AGENT_ROOT>'
 . venv/bin/activate
-hermes plugins enable wiki-harness
+hermes plugins enable agent-context-substrate
 ```
 
 Expected config shape:
@@ -220,7 +222,7 @@ Expected config shape:
 ```yaml
 plugins:
   enabled:
-    - wiki-harness
+    - agent-context-substrate
 ```
 
 ### 7.3 Select the context engine
@@ -229,7 +231,7 @@ Set Hermes config to use the wiki harness context engine.
 
 ```yaml
 context:
-  engine: wiki_harness
+  engine: agent_context_substrate
 ```
 
 This enables these tools inside Hermes:
@@ -260,21 +262,21 @@ hermes gateway restart
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `HERMES_WIKI_HARNESS_PROJECT_ROOT` | installed `local_config.py` or `~/.hermes/llm-wiki-harness` | Harness package and `data/` root |
-| `HERMES_WIKI_HARNESS_WIKI_ROOT` | installed `local_config.py` or `~/LLM Wiki` | Obsidian wiki root |
-| `HERMES_WIKI_HARNESS_AUTO_FINALIZE` | `true` | Enable automatic session finalize |
-| `HERMES_WIKI_HARNESS_MIN_MESSAGE_COUNT` | `3` | Skip sessions that are too short |
-| `HERMES_WIKI_HARNESS_ALLOWED_SOURCES` | `telegram,cli` | Raw session sources eligible for automation |
-| `HERMES_WIKI_HARNESS_GATEWAY_POLICY` | `trigger-only` | Treat gateway hooks as non-blocking triggers/backstops |
-| `HERMES_WIKI_HARNESS_PROMOTION_MODE` | `packet-only` | `packet-only` or legacy `full` |
-| `HERMES_WIKI_HARNESS_SKIP_TITLE_PATTERNS` | empty | Comma-separated title patterns to skip |
+| `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT` | installed `local_config.py` or `~/.hermes/agent-context-substrate` | Harness package and `data/` root |
+| `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT` | installed `local_config.py` or `~/LLM Wiki` | Obsidian wiki root |
+| `AGENT_CONTEXT_SUBSTRATE_AUTO_FINALIZE` | `true` | Enable automatic session finalize |
+| `AGENT_CONTEXT_SUBSTRATE_MIN_MESSAGE_COUNT` | `3` | Skip sessions that are too short |
+| `AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES` | `telegram,cli` | Raw session sources eligible for automation |
+| `AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY` | `trigger-only` | Treat gateway hooks as non-blocking triggers/backstops |
+| `AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE` | `packet-only` | `packet-only` or legacy `full` |
+| `AGENT_CONTEXT_SUBSTRATE_SKIP_TITLE_PATTERNS` | empty | Comma-separated title patterns to skip |
 
 Recommended defaults:
 
 ```text
-HERMES_WIKI_HARNESS_PROMOTION_MODE=packet-only
-HERMES_WIKI_HARNESS_ALLOWED_SOURCES=telegram,cli
-HERMES_WIKI_HARNESS_GATEWAY_POLICY=trigger-only
+AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only
+AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES=telegram,cli
+AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY=trigger-only
 ```
 
 ## 9. Telegram commands
@@ -290,7 +292,7 @@ Shows plugin health and configuration.
 Healthy output includes:
 
 ```text
-Wiki-Harness plugin status
+Agent Context Substrate plugin status
 - health: ok
 - project_root exists: True
 - wiki_root exists: True
@@ -329,7 +331,7 @@ Checks the Obsidian human-facing wiki and packet artifact graph.
 
 ## 10. Request-time retrieval
 
-When `context.engine: wiki_harness` is active, Hermes can use read-only retrieval while solving a user request.
+When `context.engine: agent_context_substrate` is active, Hermes can use read-only retrieval while solving a user request.
 
 Search order:
 
@@ -351,7 +353,7 @@ Retrieval is read-only. Searching and expanding hits does not edit Obsidian.
 ### Export a raw session
 
 ```bash
-hermes-llm-wiki-harness extract-session \
+agent-context-substrate extract-session \
   --session-id <session_id> \
   --project-root .
 ```
@@ -359,7 +361,7 @@ hermes-llm-wiki-harness extract-session \
 ### Build a context packet
 
 ```bash
-hermes-llm-wiki-harness build-context-packet \
+agent-context-substrate build-context-packet \
   --session-id <session_id> \
   --packet-id <packet_id> \
   --task-title "<task title>" \
@@ -374,7 +376,7 @@ hermes-llm-wiki-harness build-context-packet \
 ```bash
 export WIKI_PATH='<WIKI_ROOT>'
 
-hermes-llm-wiki-harness lint-wiki \
+agent-context-substrate lint-wiki \
   --project-root . \
   --report-id wiki-lint
 ```

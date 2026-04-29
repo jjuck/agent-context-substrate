@@ -3,16 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from hermes_llm_wiki_harness.retrieval import expand_hit, search_knowledge
+from agent_context_substrate.retrieval import expand_hit, search_knowledge
 
 
 def test_search_knowledge_returns_wiki_hits_with_provenance(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"
     (wiki_root / "architectures").mkdir(parents=True)
-    page = wiki_root / "architectures" / "hermes-llm-wiki-harness.md"
+    page = wiki_root / "architectures" / "agent-context-substrate.md"
     page.write_text(
-        "# Hermes LLM Wiki Harness\n\n"
+        "# Agent Context Substrate\n\n"
         "The retrieval layer should search durable wiki pages before raw evidence.\n"
         "It supports RAG-like knowledge lookup during user requests.\n",
         encoding="utf-8",
@@ -27,9 +27,9 @@ def test_search_knowledge_returns_wiki_hits_with_provenance(tmp_path: Path) -> N
 
     assert hits
     assert hits[0].source_type == "wiki"
-    assert hits[0].title == "Hermes LLM Wiki Harness"
+    assert hits[0].title == "Agent Context Substrate"
     assert "durable wiki" in hits[0].snippet
-    assert hits[0].provenance == ["wiki:architectures/hermes-llm-wiki-harness.md"]
+    assert hits[0].provenance == ["wiki:architectures/agent-context-substrate.md"]
     assert hits[0].score > 0
 
 
@@ -97,7 +97,7 @@ def test_search_knowledge_includes_packet_and_micro_summary_hits(tmp_path: Path)
                         "key_points": ["Retrieval should be read-only by default."],
                         "follow_up_questions": [],
                         "artifacts": [],
-                        "files": ["src/hermes_llm_wiki_harness/retrieval.py"],
+                        "files": ["src/agent_context_substrate/retrieval.py"],
                         "entities": [],
                         "concepts": ["RAG-like retrieval"],
                         "parent_unit_id": "unit-1",
@@ -121,7 +121,7 @@ def test_search_knowledge_includes_packet_and_micro_summary_hits(tmp_path: Path)
                         "title": "Retrieval planning",
                     }
                 ],
-                "critical_files": ["src/hermes_llm_wiki_harness/retrieval.py"],
+                "critical_files": ["src/agent_context_substrate/retrieval.py"],
                 "open_questions": [],
             },
             ensure_ascii=False,

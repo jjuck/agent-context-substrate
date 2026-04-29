@@ -1,9 +1,9 @@
-"""Hermes LLM Wiki Harness context-engine plugin."""
+"""Agent Context Substrate context-engine plugin."""
 
 from __future__ import annotations
 
 from .config import DEFAULT_PROJECT_ROOT, DEFAULT_WIKI_ROOT, LEDGER_PIPELINE
-from .engine import WikiHarnessContextEngine
+from .engine import AgentContextSubstrateContextEngine
 from .formatting import RECOVERY_MARKER, already_injected, format_recovery_context
 from .recovery_loader import (
     ledger_path,
@@ -33,7 +33,7 @@ _resolve_artifact_path = resolve_artifact_path
 
 def register(ctx) -> None:
     """Plugin-style entrypoint used by context-engine discovery."""
-    ctx.register_context_engine(WikiHarnessContextEngine())
+    ctx.register_context_engine(AgentContextSubstrateContextEngine())
 
 
 __all__ = [
@@ -41,7 +41,7 @@ __all__ = [
     "DEFAULT_WIKI_ROOT",
     "LEDGER_PIPELINE",
     "RECOVERY_MARKER",
-    "WikiHarnessContextEngine",
+    "AgentContextSubstrateContextEngine",
     "already_injected",
     "format_recovery_context",
     "handle_knowledge_expand",

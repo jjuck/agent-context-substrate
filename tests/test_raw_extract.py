@@ -8,12 +8,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.paths import HarnessPaths  # noqa: E402
-from hermes_llm_wiki_harness.raw_extract import (  # noqa: E402
+from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.raw_extract import (  # noqa: E402
     build_session_bundle,
     export_session_bundle,
 )
-from hermes_llm_wiki_harness.session_store import SessionStore  # noqa: E402
+from agent_context_substrate.session_store import SessionStore  # noqa: E402
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_build_session_bundle_can_slice_by_message_id_range(tmp_path, monkeypatc
     cur.executemany(
         "INSERT INTO messages (id, session_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
         [
-            (3, "session-1", "user", "Focus on pyproject.toml and src/hermes_llm_wiki_harness/models.py", 1776395282.0),
+            (3, "session-1", "user", "Focus on pyproject.toml and src/agent_context_substrate/models.py", 1776395282.0),
             (4, "session-1", "assistant", "I also created tests/test_models.py for the scaffold", 1776395284.0),
         ],
     )

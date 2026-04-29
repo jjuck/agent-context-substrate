@@ -1,6 +1,6 @@
 <div align="center">
 
-# Hermes LLM Wiki Harness
+# Agent Context Substrate
 
 **Turn Hermes sessions into reusable context packets, recovery briefs, and request-time retrieval — while keeping Obsidian as a human-facing wiki.**
 
@@ -10,8 +10,10 @@
 
 ## Overview
 
-`hermes-llm-wiki-harness` is a Python package and CLI for building a durable knowledge layer from Hermes Agent sessions.
-It reads Hermes `state.db`, exports raw sessions, builds context packets, writes recovery briefs, and exposes read-only retrieval tools to Hermes.
+`agent-context-substrate` is a Python package and CLI for building a durable context and retrieval substrate from AI-agent sessions.
+The current packaged adapter supports **Hermes Agent only**: it reads Hermes `state.db`, exports raw sessions, builds context packets, writes recovery briefs, and exposes read-only retrieval tools back to Hermes.
+
+This project was formerly named `hermes-llm-wiki-harness`. The rename reflects the longer-term goal: support more agents through additional adapters while keeping Hermes Agent as the first working reference integration.
 
 The default session-finalize policy is **`packet-only`**: generated session artifacts stay in `data/exports/` and `data/index/session_ledger.json`; Obsidian is reserved for curated, human-written wiki pages.
 
@@ -41,8 +43,10 @@ Hermes state.db
 | --- | --- |
 | Status | Private alpha / distribution hardening in progress |
 | Runtime | Python 3.11+ |
-| Main interface | CLI: `hermes-llm-wiki-harness` |
-| Hermes integration | user plugin `wiki-harness` + context engine `wiki_harness` |
+| Main interface | CLI: `agent-context-substrate` |
+| Current agent support | Hermes Agent only |
+| Hermes integration | user plugin `agent-context-substrate` + context engine `agent_context_substrate` |
+| Planned adapter direction | Additional agents such as Claude Code, Codex, OpenCode, or Gemini can be added later; they are not packaged yet. |
 | Default output | `data/exports/`, `data/index/session_ledger.json` |
 | Default promotion mode | `packet-only` |
 | Legacy wiki promotion | Explicit `promotion_mode="full"` or `promote-*` CLI only |
@@ -68,13 +72,13 @@ Hermes state.db
 ## Quick start
 
 ```bash
-git clone <repo-url> hermes-llm-wiki-harness
-cd hermes-llm-wiki-harness
+git clone <repo-url> agent-context-substrate
+cd agent-context-substrate
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 python -m pytest -q
-.venv/bin/hermes-llm-wiki-harness --help
+.venv/bin/agent-context-substrate --help
 ```
 
 Expected: tests pass and `--help` shows the distribution commands (`init-wiki`, `install-plugin`, `install-context-engine`, `doctor`, `fresh-install-smoke`) as well as the packet/promotion/lint commands.
@@ -93,25 +97,25 @@ cd '<PROJECT_ROOT>'
 . .venv/bin/activate
 
 # 1) Create or refresh the human-facing wiki skeleton.
-.venv/bin/hermes-llm-wiki-harness init-wiki \
+.venv/bin/agent-context-substrate init-wiki \
   --wiki-root '<WIKI_ROOT>'
 
 # 2) Install the Hermes user plugin from packaged assets.
-.venv/bin/hermes-llm-wiki-harness install-plugin \
+.venv/bin/agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
 # 3) Install the Hermes context engine from packaged assets.
-.venv/bin/hermes-llm-wiki-harness install-context-engine \
+.venv/bin/agent-context-substrate install-context-engine \
   --hermes-agent-root '<HERMES_AGENT_ROOT>' \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
 # 4) Verify installation health.
-.venv/bin/hermes-llm-wiki-harness doctor \
+.venv/bin/agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -124,17 +128,17 @@ Then enable the Hermes plugin and select the context engine in Hermes config:
 ```bash
 cd '<HERMES_AGENT_ROOT>'
 . venv/bin/activate
-hermes plugins enable wiki-harness
+hermes plugins enable agent-context-substrate
 ```
 
 ```yaml
 # ~/.hermes/config.yaml
 plugins:
   enabled:
-    - wiki-harness
+    - agent-context-substrate
 
 context:
-  engine: wiki_harness
+  engine: agent_context_substrate
 ```
 
 If a Telegram gateway is already running, restart it after changing plugin or context-engine files so it reloads Python modules and config.
@@ -150,7 +154,7 @@ TMP_PROJECT=$(mktemp -d)
 TMP_WIKI=$(mktemp -d)
 TMP_AGENT=$(mktemp -d)
 
-.venv/bin/hermes-llm-wiki-harness fresh-install-smoke \
+.venv/bin/agent-context-substrate fresh-install-smoke \
   --session-id '<SESSION_ID>' \
   --hermes-home ~/.hermes \
   --project-root "$TMP_PROJECT" \
@@ -180,8 +184,8 @@ lint_issue_count=0
 | `run-e2e-pipeline` | Legacy full pipeline: packet + four durable pages + lint. Use temp wiki first. |
 | `lint-wiki` | Lint human-facing wiki and internal packet graph. |
 | `init-wiki` | Initialize human-facing wiki folders/config/templates. |
-| `install-plugin` | Install `~/.hermes/plugins/wiki-harness` from packaged assets. |
-| `install-context-engine` | Install `plugins/context_engine/wiki_harness` under Hermes Agent. |
+| `install-plugin` | Install `~/.hermes/plugins/agent-context-substrate` from packaged assets. |
+| `install-context-engine` | Install `plugins/context_engine/agent_context_substrate` under Hermes Agent. |
 | `doctor` | Check installed plugin/context-engine/wiki/project health. |
 | `fresh-install-smoke` | End-to-end distribution smoke test. |
 
@@ -190,7 +194,7 @@ lint_issue_count=0
 ### Export one session
 
 ```bash
-hermes-llm-wiki-harness extract-session \
+agent-context-substrate extract-session \
   --session-id '<SESSION_ID>' \
   --project-root '<PROJECT_ROOT>'
 ```
@@ -204,7 +208,7 @@ data/exports/<SESSION_ID>.json
 ### Build a context packet
 
 ```bash
-hermes-llm-wiki-harness build-context-packet \
+agent-context-substrate build-context-packet \
   --session-id '<SESSION_ID>' \
   --packet-id '<PACKET_ID>' \
   --task-title 'Resume harness work' \
@@ -227,7 +231,7 @@ data/exports/context_packets/<PACKET_ID>.md
 ```bash
 export WIKI_PATH='<WIKI_ROOT>'
 
-hermes-llm-wiki-harness lint-wiki \
+agent-context-substrate lint-wiki \
   --project-root '<PROJECT_ROOT>' \
   --report-id real-wiki-check \
   --fail-on-issues
@@ -249,7 +253,7 @@ By default, `run_session_finalize_pipeline(...)` is `packet-only` and does not c
 TMP_WIKI=$(mktemp -d)
 export WIKI_PATH="$TMP_WIKI"
 
-hermes-llm-wiki-harness run-e2e-pipeline \
+agent-context-substrate run-e2e-pipeline \
   --session-id '<SESSION_ID>' \
   --packet-id '<PACKET_ID>' \
   --task-title '<task title>' \
@@ -275,14 +279,14 @@ hermes-llm-wiki-harness run-e2e-pipeline \
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `HERMES_WIKI_HARNESS_PROJECT_ROOT` | installed `local_config.py` or `~/.hermes/llm-wiki-harness` | Harness project/data root. |
-| `HERMES_WIKI_HARNESS_WIKI_ROOT` | installed `local_config.py` or `~/LLM Wiki` | Obsidian LLM Wiki root. |
-| `HERMES_WIKI_HARNESS_AUTO_FINALIZE` | `true` | Enable session-finalize automation. |
-| `HERMES_WIKI_HARNESS_MIN_MESSAGE_COUNT` | `3` | Skip short sessions. |
-| `HERMES_WIKI_HARNESS_ALLOWED_SOURCES` | `telegram,cli` | Raw session sources eligible for auto-finalize. |
-| `HERMES_WIKI_HARNESS_GATEWAY_POLICY` | `trigger-only` | Treat gateway hooks as non-blocking triggers/backstops. |
-| `HERMES_WIKI_HARNESS_PROMOTION_MODE` | `packet-only` | `packet-only` or legacy `full`. |
-| `HERMES_WIKI_HARNESS_SKIP_TITLE_PATTERNS` | empty | Comma-separated title patterns to skip. |
+| `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT` | installed `local_config.py` or `~/.hermes/agent-context-substrate` | Harness project/data root. |
+| `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT` | installed `local_config.py` or `~/LLM Wiki` | Obsidian LLM Wiki root. |
+| `AGENT_CONTEXT_SUBSTRATE_AUTO_FINALIZE` | `true` | Enable session-finalize automation. |
+| `AGENT_CONTEXT_SUBSTRATE_MIN_MESSAGE_COUNT` | `3` | Skip short sessions. |
+| `AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES` | `telegram,cli` | Raw session sources eligible for auto-finalize. |
+| `AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY` | `trigger-only` | Treat gateway hooks as non-blocking triggers/backstops. |
+| `AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE` | `packet-only` | `packet-only` or legacy `full`. |
+| `AGENT_CONTEXT_SUBSTRATE_SKIP_TITLE_PATTERNS` | empty | Comma-separated title patterns to skip. |
 
 ## Obsidian wiki policy
 
@@ -318,7 +322,7 @@ Active durable pages should include `lang: ko` or `lang: en`, provenance/sources
 │   ├── PIPELINE.md
 │   └── RELEASE_CHECKLIST.md
 ├── pyproject.toml
-├── src/hermes_llm_wiki_harness/
+├── src/agent_context_substrate/
 │   ├── assets/
 │   ├── cli.py
 │   ├── distribution.py
@@ -345,7 +349,7 @@ Real wiki smoke:
 ```bash
 cd '<PROJECT_ROOT>'
 . .venv/bin/activate
-WIKI_PATH='<WIKI_ROOT>' .venv/bin/hermes-llm-wiki-harness lint-wiki \
+WIKI_PATH='<WIKI_ROOT>' .venv/bin/agent-context-substrate lint-wiki \
   --project-root '<PROJECT_ROOT>' \
   --report-id real-wiki-smoke \
   --fail-on-issues

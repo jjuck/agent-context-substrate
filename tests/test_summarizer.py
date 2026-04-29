@@ -6,8 +6,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from hermes_llm_wiki_harness.models import MicroSummary, RawSessionReference  # noqa: E402
-from hermes_llm_wiki_harness.summarizer import (  # noqa: E402
+from agent_context_substrate.models import MicroSummary, RawSessionReference  # noqa: E402
+from agent_context_substrate.summarizer import (  # noqa: E402
     build_micro_summary,
     build_unit_summary,
 )
@@ -26,7 +26,7 @@ def test_build_micro_summary_from_raw_bundle_extracts_basic_artifacts() -> None:
             {
                 "id": 10,
                 "role": "user",
-                "content": "Use Hermes state.db and create pyproject.toml plus src/hermes_llm_wiki_harness/models.py",
+                "content": "Use Hermes state.db and create pyproject.toml plus src/agent_context_substrate/models.py",
             },
             {
                 "id": 11,
@@ -246,13 +246,13 @@ def test_build_unit_summary_aggregates_multiple_micro_summaries() -> None:
         title="Bootstrap project scaffold",
         goal="Create the first usable harness substrate",
         micro_summaries=[micro_a, micro_b],
-        related_pages=["architectures/hermes-llm-wiki-harness.md"],
+        related_pages=["architectures/agent-context-substrate.md"],
     )
 
     assert unit.unit_id == "unit-1"
     assert unit.session_id == "session-1"
     assert unit.micro_ids == ["micro-a", "micro-b"]
-    assert unit.related_pages == ["architectures/hermes-llm-wiki-harness.md"]
+    assert unit.related_pages == ["architectures/agent-context-substrate.md"]
     assert unit.provenance == provenance
     assert unit.decisions == [
         "Created pyproject.toml",

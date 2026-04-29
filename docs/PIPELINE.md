@@ -1,6 +1,6 @@
-# Hermes LLM Wiki Harness 파이프라인 문서
+# Agent Context Substrate 파이프라인 문서
 
-이 문서는 `hermes-llm-wiki-harness`의 실제 데이터 흐름, module 책임, artifact lifecycle을 정리한 참조 문서입니다.
+이 문서는 `agent-context-substrate`의 실제 데이터 흐름, module 책임, artifact lifecycle을 정리한 참조 문서입니다.
 
 핵심 변화:
 
@@ -319,7 +319,7 @@ wiki:
 
 ```yaml
 ---
-title: Hermes LLM Wiki Harness
+title: Agent Context Substrate
 lang: ko
 type: project
 category: project

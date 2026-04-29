@@ -24,7 +24,7 @@ def register(ctx) -> None:
     ctx.register_command(
         "harness",
         handle_harness_command,
-        description="Show wiki-harness plugin status",
+        description="Show agent-context-substrate plugin status",
     )
     ctx.register_command(
         "packet",
@@ -39,7 +39,7 @@ def register(ctx) -> None:
     ctx.register_command(
         "wiki-lint",
         handle_wiki_lint_command,
-        description="Run wiki-harness lint and report output paths",
+        description="Run agent-context-substrate lint and report output paths",
     )
     ctx.register_command(
         "wiki-language",

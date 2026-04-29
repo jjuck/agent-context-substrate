@@ -1,10 +1,10 @@
 # Hermes Agent Integration Plan
 
-> Current status document for integrating `hermes-llm-wiki-harness` with Hermes Agent. This file is now a living status/roadmap document, not the original pre-implementation plan.
+> Current status document for integrating `agent-context-substrate` with Hermes Agent. This file is now a living status/roadmap document, not the original pre-implementation plan.
 
 ## Goal
 
-`hermes-llm-wiki-harness`를 standalone CLI에서 끝내지 않고 Hermes Agent의 session boundary, recovery, request-time retrieval 흐름에 붙인다.
+`agent-context-substrate`를 standalone CLI에서 끝내지 않고 Hermes Agent의 session boundary, recovery, request-time retrieval 흐름에 붙인다.
 
 최종 목표는 두 가지다.
 
@@ -15,7 +15,7 @@
 
 ```text
 Hermes state.db
-  -> hermes-llm-wiki-harness package
+  -> agent-context-substrate package
      -> raw export
      -> context packet
      -> lint report
@@ -23,11 +23,11 @@ Hermes state.db
      -> ledger
      -> optional legacy full promotion
 
-Hermes user plugin ~/.hermes/plugins/wiki-harness
+Hermes user plugin ~/.hermes/plugins/agent-context-substrate
   -> on_session_finalize hook
   -> /harness, /packet, /wiki-resume, /wiki-lint
 
-Hermes context engine wiki_harness
+Hermes context engine agent_context_substrate
   -> wiki_recovery_context
   -> wiki_knowledge_search
   -> wiki_knowledge_expand
@@ -43,13 +43,13 @@ Hermes context engine wiki_harness
 - [x] Retry/failure/idempotency handling
 - [x] Recovery brief layer: `recovery.py`
 - [x] Auto naming/policy helpers: `naming.py`, `policy.py`
-- [x] Hermes user plugin: `~/.hermes/plugins/wiki-harness/`
+- [x] Hermes user plugin: `~/.hermes/plugins/agent-context-substrate/`
 - [x] Slash commands: `/harness`, `/packet`, `/wiki-resume`, `/wiki-lint`
-- [x] Context engine prototype: `plugins/context_engine/wiki_harness/`
+- [x] Context engine prototype: `plugins/context_engine/agent_context_substrate/`
 - [x] Request-time retrieval API: `retrieval.py`
 - [x] `wiki_knowledge_search` / `wiki_knowledge_expand` tools
 - [x] Gateway/session-lifecycle smoke with isolated roots
-- [x] Active `context.engine: wiki_harness` config smoke
+- [x] Active `context.engine: agent_context_substrate` config smoke
 - [x] `packet-only` default finalize policy
 - [x] qualitative human-facing lint
 - [x] retrieval exclusion for `_system/`, `90 보관/`, dot folders
@@ -58,10 +58,10 @@ Hermes context engine wiki_harness
 ## Current defaults
 
 ```text
-HERMES_WIKI_HARNESS_PROMOTION_MODE=packet-only
-HERMES_WIKI_HARNESS_ALLOWED_SOURCES=telegram,cli
-HERMES_WIKI_HARNESS_GATEWAY_POLICY=trigger-only
-HERMES_WIKI_HARNESS_MIN_MESSAGE_COUNT=3
+AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only
+AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES=telegram,cli
+AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY=trigger-only
+AGENT_CONTEXT_SUBSTRATE_MIN_MESSAGE_COUNT=3
 ```
 
 ## Promotion policy
@@ -178,13 +178,13 @@ cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
 Hermes targeted suite:
 
 ```bash
-cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && python -m pytest tests/plugins/test_wiki_harness_plugin.py tests/agent/test_wiki_harness_context_engine.py tests/run_agent/test_plugin_context_engine_init.py tests/agent/test_context_engine.py tests/gateway/test_session_boundary_hooks.py tests/cli/test_session_boundary_hooks.py -q
+cd '<HERMES_AGENT_ROOT>' && . venv/bin/activate && python -m pytest tests/plugins/test_agent_context_substrate_plugin.py tests/agent/test_agent_context_substrate_context_engine.py tests/run_agent/test_plugin_context_engine_init.py tests/agent/test_context_engine.py tests/gateway/test_session_boundary_hooks.py tests/cli/test_session_boundary_hooks.py -q
 ```
 
 Real wiki lint:
 
 ```bash
-cd '<PROJECT_ROOT>' && . .venv/bin/activate && .venv/bin/hermes-llm-wiki-harness lint-wiki --project-root '<PROJECT_ROOT>' --report-id real-wiki-smoke
+cd '<PROJECT_ROOT>' && . .venv/bin/activate && .venv/bin/agent-context-substrate lint-wiki --project-root '<PROJECT_ROOT>' --report-id real-wiki-smoke
 ```
 
 Expected real-vault quality after the human-facing rebuild:
@@ -200,7 +200,7 @@ Internal graph issues=0
 
 ## Operational caution
 
-Do not casually add `gateway` to `HERMES_WIKI_HARNESS_ALLOWED_SOURCES`. Gateway hook platform and raw session source are different concepts. Telegram sessions can be processed through gateway hooks while the raw session source remains `telegram`.
+Do not casually add `gateway` to `AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES`. Gateway hook platform and raw session source are different concepts. Telegram sessions can be processed through gateway hooks while the raw session source remains `telegram`.
 
 Keep default:
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 
-from hermes_llm_wiki_harness.distribution import run_fresh_install_smoke
+from agent_context_substrate.distribution import run_fresh_install_smoke
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -71,7 +71,7 @@ def _build_sample_state_db(db_path: Path) -> None:
                 1,
                 "session-1",
                 "user",
-                "Create a context packet and recovery brief for Hermes LLM Wiki Harness distribution.",
+                "Create a context packet and recovery brief for Agent Context Substrate distribution.",
                 1776395278.0,
             ),
             (
@@ -109,7 +109,7 @@ def test_fresh_install_smoke_runs_packet_recovery_retrieval_and_lint(tmp_path: P
     assert result.retrieval_hit_count > 0
     assert result.expanded_content_length > 0
     assert result.lint_issue_count == 0
-    assert (hermes_home / "plugins" / "wiki-harness" / "plugin.yaml").exists()
+    assert (hermes_home / "plugins" / "agent-context-substrate" / "plugin.yaml").exists()
     assert (
-        hermes_agent_root / "plugins" / "context_engine" / "wiki_harness" / "engine.py"
+        hermes_agent_root / "plugins" / "context_engine" / "agent_context_substrate" / "engine.py"
     ).exists()
