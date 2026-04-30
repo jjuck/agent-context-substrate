@@ -50,6 +50,15 @@ def test_distribution_assets_keep_expected_generic_defaults() -> None:
     assert "~/LLM Wiki" in context_config
 
 
+def test_distribution_assets_do_not_include_python_bytecode() -> None:
+    asset_root = files("agent_context_substrate") / "assets"
+    bytecode_files = [str(path) for path in asset_root.rglob("*.pyc")]
+    pycache_dirs = [str(path) for path in asset_root.rglob("__pycache__") if path.is_dir()]
+
+    assert bytecode_files == []
+    assert pycache_dirs == []
+
+
 def test_user_plugin_registers_single_wiki_language_command() -> None:
     asset_root = files("agent_context_substrate") / "assets"
     plugin_init = (asset_root / "user_plugin/agent_context_substrate/__init__.py").read_text(encoding="utf-8")

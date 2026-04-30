@@ -36,6 +36,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.package-data]
 agent_context_substrate = ["assets/**/*"]
 
+[tool.setuptools.exclude-package-data]
+agent_context_substrate = ["assets/**/__pycache__/*", "assets/**/*.pyc"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
