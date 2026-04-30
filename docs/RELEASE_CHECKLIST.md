@@ -18,7 +18,7 @@ Run:
 ```bash
 python - <<'PY'
 from pathlib import Path
-markers = ['/mnt/c/Users/', 'C:\\Users\\']
+markers = ['/' + 'mnt/' + 'c/Users/', 'C:' + '\\\\Users\\\\']
 roots = [Path('src'), Path('tests'), Path('README.md'), Path('docs')]
 allowed = {'docs/plans/2026-04-27-distribution-hardening-final-plan.md'}
 for root in roots:

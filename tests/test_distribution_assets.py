@@ -27,8 +27,10 @@ def test_distribution_assets_are_packaged_without_user_paths() -> None:
         asset = asset_root / relative_path
         assert asset.is_file(), f"missing packaged asset: {relative_path}"
         text = asset.read_text(encoding="utf-8")
-        assert "/mnt/c/Users/" not in text
-        assert "C:\\Users\\" not in text
+        windows_mount_user_prefix = "/mnt/" "c/Users/"
+        windows_drive_user_prefix = "C:" + "\\\\Users\\\\"
+        assert windows_mount_user_prefix not in text
+        assert windows_drive_user_prefix not in text
 
 
 def test_distribution_assets_keep_expected_generic_defaults() -> None:

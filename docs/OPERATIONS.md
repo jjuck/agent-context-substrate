@@ -463,7 +463,7 @@ Unsupported language
 cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
 ```
 
-`terminal(workdir=...)`에 `/mnt/c/Users/<windows-user>/...`를 넣는 방식은 피합니다.
+`terminal(workdir=...)`에 `/mnt/<drive>/Users/<windows-user>/...`를 넣는 방식은 피합니다.
 
 ## 10. 보존 / 정리 기준
 

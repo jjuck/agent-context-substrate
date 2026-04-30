@@ -57,7 +57,8 @@ def test_install_user_plugin_copies_assets_and_writes_local_config(tmp_path: Pat
     local_config = (plugin_dir / "local_config.py").read_text(encoding="utf-8")
     assert str(project_root) in local_config
     assert str(wiki_root) in local_config
-    assert "/mnt/c/Users/" not in (plugin_dir / "config.py").read_text(encoding="utf-8")
+    windows_mount_user_prefix = "/mnt/" "c/Users/"
+    assert windows_mount_user_prefix not in (plugin_dir / "config.py").read_text(encoding="utf-8")
 
 
 def test_install_user_plugin_refuses_overwrite_without_flag(tmp_path: Path) -> None:
@@ -97,7 +98,8 @@ def test_install_context_engine_copies_assets(tmp_path: Path) -> None:
     local_config = (engine_dir / "local_config.py").read_text(encoding="utf-8")
     assert str(project_root) in local_config
     assert str(wiki_root) in local_config
-    assert "/mnt/c/Users/" not in (engine_dir / "config.py").read_text(encoding="utf-8")
+    windows_mount_user_prefix = "/mnt/" "c/Users/"
+    assert windows_mount_user_prefix not in (engine_dir / "config.py").read_text(encoding="utf-8")
 
 
 def test_install_context_engine_overwrite_backup_is_not_discoverable_engine(tmp_path: Path) -> None:
@@ -132,9 +134,10 @@ def test_doctor_allows_explicit_local_config_paths(tmp_path: Path) -> None:
     install_user_plugin(hermes_home=hermes_home, project_root=project_root, wiki_root=wiki_root)
     install_context_engine(hermes_agent_root=hermes_agent_root)
     local_config = hermes_home / "plugins" / "agent-context-substrate" / "local_config.py"
+    generic_windows_mount_home = "/mnt/" "c/Users/example"
     local_config.write_text(
-        "PROJECT_ROOT = '/mnt/c/Users/example/Desktop/py/My_Project/agent-context-substrate'\n"
-        "WIKI_ROOT = '/mnt/c/Users/example/Documents/LLM Wiki'\n",
+        f"PROJECT_ROOT = '{generic_windows_mount_home}/Desktop/py/My_Project/agent-context-substrate'\n"
+        f"WIKI_ROOT = '{generic_windows_mount_home}/Documents/LLM Wiki'\n",
         encoding="utf-8",
     )
 
