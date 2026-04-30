@@ -42,7 +42,7 @@ PY
 python -m pytest -q
 ```
 
-Expected current private baseline: `64 passed`.
+Expected current private baseline: `66 passed`.
 
 ## 4. Fresh-install smoke
 
@@ -151,7 +151,7 @@ Latest verified local baseline after rename, GitHub sync, stale-folder deletion,
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: private
-project tests: 64 passed
+project tests: 66 passed
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=5291 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
 live runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
