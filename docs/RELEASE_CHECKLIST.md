@@ -145,10 +145,10 @@ Do this only when it is acceptable to interrupt active messaging sessions.
 
 ## 9. Current private baseline
 
-Latest verified local baseline after rename, GitHub sync, stale-folder deletion, gateway restart, and fresh-install smoke:
+Latest verified local baseline after rename, GitHub sync, stale-folder deletion, gateway restart, fresh-install smoke, and release-checklist audit:
 
 ```text
-commit: ed2c81c chore: rename project to agent-context-substrate
+commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: private
 project tests: 64 passed
