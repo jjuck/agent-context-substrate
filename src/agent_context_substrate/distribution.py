@@ -82,16 +82,37 @@ def _backup_existing(path: Path, *, backup_parent: Path | None = None) -> Path |
     return backup_path
 
 
+def _move_directory_to_backup(child: Path, backup_parent: Path) -> Path:
+    backup_parent.mkdir(parents=True, exist_ok=True)
+    destination = backup_parent / child.name
+    if destination.exists():
+        destination = backup_parent / f"{child.name}-migrated-{_timestamp()}"
+    shutil.move(str(child), str(destination))
+    return destination
+
+
+def _move_legacy_user_plugin_backups(plugins_root: Path, plugin_name: str = "agent-context-substrate") -> None:
+    backup_parent = plugins_root.parent / "_backups" / "plugins"
+    for child in plugins_root.glob(f"{plugin_name}.bak-*"):
+        if child.is_dir():
+            _move_directory_to_backup(child, backup_parent)
+
+    legacy_backup_namespace = plugins_root / "_backups"
+    if legacy_backup_namespace.is_dir():
+        for child in sorted(legacy_backup_namespace.iterdir()):
+            if child.is_dir():
+                _move_directory_to_backup(child, backup_parent)
+        try:
+            legacy_backup_namespace.rmdir()
+        except OSError:
+            pass
+
+
 def _move_legacy_context_engine_backups(context_engine_root: Path, engine_name: str = "agent_context_substrate") -> None:
     backup_parent = context_engine_root / "_backups"
     for child in context_engine_root.glob(f"{engine_name}.bak-*"):
-        if not child.is_dir():
-            continue
-        backup_parent.mkdir(parents=True, exist_ok=True)
-        destination = backup_parent / child.name
-        if destination.exists():
-            destination = backup_parent / f"{child.name}-migrated-{_timestamp()}"
-        shutil.move(str(child), str(destination))
+        if child.is_dir():
+            _move_directory_to_backup(child, backup_parent)
 
 
 def _contains_personal_path(path: Path) -> bool:
@@ -189,6 +210,7 @@ def install_user_plugin(
     project_root = Path(project_root).expanduser()
     wiki_root = Path(wiki_root).expanduser()
     plugin_dir = hermes_home / "plugins" / "agent-context-substrate"
+    plugins_root = plugin_dir.parent
     if plugin_dir.exists() and not overwrite:
         return InstallResult(
             status="skipped",
@@ -196,7 +218,8 @@ def install_user_plugin(
             messages=["plugin already exists; pass overwrite=True to replace it"],
         )
 
-    backup_path = _backup_existing(plugin_dir) if overwrite else None
+    _move_legacy_user_plugin_backups(plugins_root)
+    backup_path = _backup_existing(plugin_dir, backup_parent=hermes_home / "_backups" / "plugins") if overwrite else None
     if plugin_dir.exists():
         shutil.rmtree(plugin_dir)
     _copy_resource_tree(_asset_root() / "user_plugin" / "agent_context_substrate", plugin_dir)

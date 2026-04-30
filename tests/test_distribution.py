@@ -78,6 +78,40 @@ def test_install_user_plugin_refuses_overwrite_without_flag(tmp_path: Path) -> N
     assert (plugin_dir / "config.py").read_text(encoding="utf-8") == "# user edit\n"
 
 
+def test_install_user_plugin_overwrite_backup_is_not_discoverable_plugin(tmp_path: Path) -> None:
+    hermes_home = tmp_path / "hermes-home"
+    plugins_root = hermes_home / "plugins"
+    install_user_plugin(
+        hermes_home=hermes_home,
+        project_root=tmp_path / "project",
+        wiki_root=tmp_path / "wiki",
+    )
+    legacy_direct_backup = plugins_root / "agent-context-substrate.bak-legacy"
+    legacy_direct_backup.mkdir()
+    (legacy_direct_backup / "plugin.yaml").write_text("name: agent-context-substrate\n", encoding="utf-8")
+    legacy_category_backup = plugins_root / "_backups" / "agent-context-substrate.bak-temp-root"
+    legacy_category_backup.mkdir(parents=True)
+    (legacy_category_backup / "plugin.yaml").write_text("name: agent-context-substrate\n", encoding="utf-8")
+
+    result = install_user_plugin(
+        hermes_home=hermes_home,
+        project_root=tmp_path / "project",
+        wiki_root=tmp_path / "wiki",
+        overwrite=True,
+    )
+
+    backup_path = result.paths["backup_path"]
+    assert backup_path.parent == hermes_home / "_backups" / "plugins"
+    assert not any(
+        child.name.startswith("agent-context-substrate.bak")
+        for child in plugins_root.iterdir()
+        if child.is_dir()
+    )
+    assert not (plugins_root / "_backups").exists()
+    assert (hermes_home / "_backups" / "plugins" / "agent-context-substrate.bak-legacy").is_dir()
+    assert (hermes_home / "_backups" / "plugins" / "agent-context-substrate.bak-temp-root").is_dir()
+
+
 def test_install_context_engine_copies_assets(tmp_path: Path) -> None:
     hermes_agent_root = tmp_path / "hermes-agent"
     project_root = tmp_path / "project"
