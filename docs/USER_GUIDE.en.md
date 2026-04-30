@@ -227,7 +227,7 @@ plugins:
 
 ### 7.3 Select the context engine
 
-Set Hermes config to use the wiki harness context engine.
+Set Hermes config to use the Agent Context Substrate context engine.
 
 ```yaml
 context:
@@ -400,7 +400,7 @@ Obsidian is modified only by:
 
 ## 13. Privacy and release notes
 
-This harness works with local private data.
+Agent Context Substrate works with local private data.
 
 - `HERMES_HOME/state.db` can contain full conversations, tool output, file paths, and operational context.
 - `data/exports/**/*.json` and `data/exports/**/*.md` can contain raw transcripts or detailed summaries.

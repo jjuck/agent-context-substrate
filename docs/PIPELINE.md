@@ -52,6 +52,22 @@ wiki_knowledge_search(query)
 
 retrieval은 read-only입니다. 검색/확장만으로 Obsidian이 수정되지는 않습니다.
 
+
+## 1.4 Distribution/install path
+
+Package-managed installation is part of the pipeline surface now, not an external manual copy step.
+
+```text
+source package assets
+  -> install-plugin
+  -> ~/.hermes/plugins/agent-context-substrate
+  -> install-context-engine
+  -> <HERMES_AGENT_ROOT>/plugins/context_engine/agent_context_substrate
+  -> doctor / fresh-install-smoke
+```
+
+Both installers can write local `local_config.py` files containing the user's project/wiki roots. Public templates stay generic; local config carries machine-specific paths.
+
 ## 2. 단계별 구성
 
 | 단계 | 모듈 | 입력 | 출력 | 핵심 책임 |

@@ -1,13 +1,14 @@
 # Release Checklist
 
-Use this checklist before distributing Agent Context Substrate to other Hermes Agent users.
+Use this checklist before distributing Agent Context Substrate to other Hermes Agent users. The repository currently lives at `https://github.com/jjuck/agent-context-substrate` and is intentionally private until the privacy/release gates below pass.
 
 ## 1. Source hygiene
 
-- [ ] `git status --short` contains no accidental private/generated artifacts.
+- [ ] `git status --short --branch` is clean and tracking `origin/main`.
 - [ ] `data/exports/` and `data/index/session_ledger.json` are ignored or intentionally excluded.
 - [ ] `.hermes/`, `.venv/`, caches, and `*.egg-info/` are ignored.
 - [ ] `LICENSE` exists and matches `pyproject.toml` metadata.
+- [ ] GitHub remote `origin` points to `https://github.com/jjuck/agent-context-substrate.git`.
 - [ ] `pyproject.toml` has name, version, description, license, keywords, classifiers, and CLI entrypoint.
 
 ## 2. Personal path audit
@@ -41,7 +42,7 @@ PY
 python -m pytest -q
 ```
 
-Expected: all tests pass.
+Expected current private baseline: `64 passed`.
 
 ## 4. Fresh-install smoke
 
@@ -63,7 +64,7 @@ Expected:
 
 ```text
 fresh-install-smoke ok=True
-retrieval_hit_count=>0
+retrieval_hit_count=>0  # current baseline: 1
 lint_issue_count=0
 ```
 
@@ -140,3 +141,20 @@ hermes gateway restart
 ```
 
 Do this only when it is acceptable to interrupt active messaging sessions.
+
+
+## 9. Current private baseline
+
+Latest verified local baseline after rename, GitHub sync, stale-folder deletion, gateway restart, and fresh-install smoke:
+
+```text
+commit: ed2c81c chore: rename project to agent-context-substrate
+repo: https://github.com/jjuck/agent-context-substrate
+visibility: private
+project tests: 64 passed
+fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=5291 lint_issue_count=0
+real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
+live runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
+```
+
+Refresh this section whenever a release candidate changes code, docs, installer behavior, or runtime configuration.

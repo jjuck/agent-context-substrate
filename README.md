@@ -4,7 +4,9 @@
 
 **Turn Hermes sessions into reusable context packets, recovery briefs, and request-time retrieval — while keeping Obsidian as a human-facing wiki.**
 
-[한국어 README](./README.ko.md) · [Quick Start](#quick-start) · [Hermes Install](#install-into-hermes) · [CLI](#cli-commands) · [Privacy](#privacy-and-safety) · [User Guide EN](./docs/USER_GUIDE.en.md) · [User Guide KO](./docs/USER_GUIDE.md)
+![Status](https://img.shields.io/badge/status-private%20alpha-orange) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
+[한국어 README](./README.ko.md) · [Quick Start](#quick-start) · [Hermes Install](#install-into-hermes) · [Verified Baseline](#verified-baseline) · [CLI](#cli-commands) · [Privacy](#privacy-and-safety) · [User Guide EN](./docs/USER_GUIDE.en.md) · [User Guide KO](./docs/USER_GUIDE.md)
 
 </div>
 
@@ -41,7 +43,7 @@ Hermes state.db
 
 | Item | Value |
 | --- | --- |
-| Status | Private alpha / distribution hardening in progress |
+| Status | Private alpha; GitHub private repo synced; public release checklist still pending |
 | Runtime | Python 3.11+ |
 | Main interface | CLI: `agent-context-substrate` |
 | Current agent support | Hermes Agent only |
@@ -72,7 +74,7 @@ Hermes state.db
 ## Quick start
 
 ```bash
-git clone <repo-url> agent-context-substrate
+git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
 cd agent-context-substrate
 python3 -m venv .venv
 . .venv/bin/activate
@@ -171,6 +173,20 @@ expanded_content_length=...
 lint_issue_count=0
 ```
 
+## Verified baseline
+
+The current private baseline has been verified from the renamed repository and package-managed integration path.
+
+| Check | Current result |
+| --- | --- |
+| Project tests | `64 passed` |
+| Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=5291`, `lint_issue_count=0` |
+| Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
+| Live Hermes attachment | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools loaded |
+| GitHub sync | `main` pushed to `jjuck/agent-context-substrate` |
+
+Keep this table current when cutting a release or changing installer/runtime behavior.
+
 ## CLI commands
 
 | Command | Purpose |
@@ -211,7 +227,7 @@ data/exports/<SESSION_ID>.json
 agent-context-substrate build-context-packet \
   --session-id '<SESSION_ID>' \
   --packet-id '<PACKET_ID>' \
-  --task-title 'Resume harness work' \
+  --task-title 'Resume context-substrate work' \
   --macro-context 'Recover the main context without replaying the full session.' \
   --unit-title 'Inspect packet-only finalize policy' \
   --goal 'Capture the current implementation state and next actions.' \
@@ -379,7 +395,7 @@ This project works with sensitive local data. Treat exports as private unless de
 
 ## Current limitations
 
-- The project is still a private alpha; distribution hardening is underway.
+- The project is still a private alpha; keep the repository private until the release checklist and privacy review are complete.
 - Curated promotion into the new human-facing folders (`01 지식`, `04 프로젝트`, etc.) is not yet automated.
 - Legacy full promotion still writes old `queries/`, `concepts/`, `plans/`, and `architectures/` paths.
 - Long-running Hermes gateway processes need restart after plugin/context-engine deployment.
