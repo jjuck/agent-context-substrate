@@ -4,7 +4,7 @@
 
 **Turn Hermes sessions into reusable context packets, recovery briefs, and request-time retrieval — while keeping Obsidian as a human-facing wiki.**
 
-![Status](https://img.shields.io/badge/status-private%20alpha-orange) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+![Status](https://img.shields.io/badge/status-public%20alpha-orange) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 [한국어 README](./README.ko.md) · [Quick Start](#quick-start) · [Hermes Install](#install-into-hermes) · [Verified Baseline](#verified-baseline) · [CLI](#cli-commands) · [Privacy](#privacy-and-safety) · [User Guide EN](./docs/USER_GUIDE.en.md) · [User Guide KO](./docs/USER_GUIDE.md)
 
@@ -43,7 +43,7 @@ Hermes state.db
 
 | Item | Value |
 | --- | --- |
-| Status | Private alpha; GitHub private repo synced; public release checklist still pending |
+| Status | Public alpha; v0.1.0 release published; Hermes Agent is the only packaged adapter |
 | Runtime | Python 3.11+ |
 | Main interface | CLI: `agent-context-substrate` |
 | Current agent support | Hermes Agent only |
@@ -175,11 +175,11 @@ lint_issue_count=0
 
 ## Verified baseline
 
-The current private baseline has been verified from the renamed repository and package-managed integration path.
+The current public alpha baseline has been verified from the published repository and package-managed integration path.
 
 | Check | Current result |
 | --- | --- |
-| Project tests | `64 passed` |
+| Project tests | `67 passed` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=5291`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Hermes attachment | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools loaded |
@@ -395,7 +395,7 @@ This project works with sensitive local data. Treat exports as private unless de
 
 ## Current limitations
 
-- The project is still a private alpha; keep the repository private until the release checklist and privacy review are complete.
+- The project is a public alpha: APIs, docs, and installer behavior may still change before beta/stable releases.
 - Curated promotion into the new human-facing folders (`01 지식`, `04 프로젝트`, etc.) is not yet automated.
 - Legacy full promotion still writes old `queries/`, `concepts/`, `plans/`, and `architectures/` paths.
 - Long-running Hermes gateway processes need restart after plugin/context-engine deployment.

@@ -1,6 +1,6 @@
 # Release Checklist
 
-Use this checklist before distributing Agent Context Substrate to other Hermes Agent users. The repository currently lives at `https://github.com/jjuck/agent-context-substrate` and is intentionally private until the privacy/release gates below pass.
+Use this checklist before publishing or updating Agent Context Substrate releases. The repository lives at `https://github.com/jjuck/agent-context-substrate` and is public as of `v0.1.0`; keep generated/private local artifacts out of tracked source and release assets.
 
 ## 1. Source hygiene
 
@@ -42,7 +42,7 @@ PY
 python -m pytest -q
 ```
 
-Expected current private baseline: `67 passed`.
+Expected current public alpha baseline: `67 passed`.
 
 ## 4. Fresh-install smoke
 
@@ -143,14 +143,14 @@ hermes gateway restart
 Do this only when it is acceptable to interrupt active messaging sessions.
 
 
-## 9. Current private baseline
+## 9. Current public alpha baseline
 
 Latest verified local baseline after rename, GitHub sync, stale-folder deletion, gateway restart, fresh-install smoke, and release-checklist audit:
 
 ```text
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
-visibility: private
+visibility: public
 project tests: 67 passed
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=5291 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
