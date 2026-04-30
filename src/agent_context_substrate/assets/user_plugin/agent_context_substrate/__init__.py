@@ -47,9 +47,3 @@ def register(ctx) -> None:
         description="Show or change LLM Wiki language settings",
         args_hint="[ko|en|status]",
     )
-    ctx.register_command(
-        "wiki-lang",
-        handle_wiki_language_command,
-        description="Alias for /wiki-language",
-        args_hint="[ko|en|status]",
-    )

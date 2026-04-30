@@ -31,7 +31,7 @@
 
 A release candidate is ready when all are true:
 
-1. No source/plugin/context-engine default requires `/mnt/c/Users/<windows-user>/...`.
+1. No source/plugin/context-engine default requires a user-specific Windows mount path.
 2. A new user can run a package CLI flow:
    ```bash
    pip install -e .
@@ -91,8 +91,10 @@ def test_distribution_assets_are_packaged_without_user_paths():
     ]
     for rel in required:
         text = (root / rel).read_text(encoding="utf-8")
-        assert "/mnt/c/Users/" not in text
-        assert "C:\\Users\\" not in text
+        windows_mount_user_prefix = "/mnt/" "c/Users/"
+        windows_drive_user_prefix = "C:" + "\\\\Users\\\\"
+        assert windows_mount_user_prefix not in text
+        assert windows_drive_user_prefix not in text
 ```
 
 **Step 2: Verify RED**
@@ -368,7 +370,8 @@ for base in [Path('src'), Path('docs'), Path('README.md')]:
     for path in files:
         if path.is_file() and path.suffix in {'.py', '.md', '.toml', '.yaml', '.yml'}:
             text = path.read_text(encoding='utf-8', errors='ignore')
-            assert '/mnt/c/Users/<windows-user>' not in text, path
+            windows_mount_user_prefix = '/mnt/' 'c/Users/'
+            assert windows_mount_user_prefix not in text, path
 PY
 ```
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 from pathlib import Path
+import re
 import tomllib
 
 
@@ -47,6 +48,16 @@ def test_distribution_assets_keep_expected_generic_defaults() -> None:
     assert "AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT" in context_config
     assert "~/.hermes/agent-context-substrate" in context_config
     assert "~/LLM Wiki" in context_config
+
+
+def test_user_plugin_registers_single_wiki_language_command() -> None:
+    asset_root = files("agent_context_substrate") / "assets"
+    plugin_init = (asset_root / "user_plugin/agent_context_substrate/__init__.py").read_text(encoding="utf-8")
+    registered_commands = re.findall(r'ctx\.register_command\(\s*\n\s*"([^"]+)"', plugin_init)
+
+    assert "wiki-language" in registered_commands
+    assert "wiki-lang" not in registered_commands
+    assert len(registered_commands) == len(set(registered_commands))
 
 
 def test_pyproject_uses_pep639_license_expression_without_deprecated_license_classifier() -> None:
