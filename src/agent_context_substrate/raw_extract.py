@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .paths import HarnessPaths
+from .safe_paths import safe_child_path
 from .session_store import SessionStore
 
 
@@ -50,7 +51,7 @@ def export_session_bundle(
         start_message_id=start_message_id,
         end_message_id=end_message_id,
     )
-    export_path = paths.exports_dir / f"{session_id}.json"
+    export_path = safe_child_path(paths.exports_dir, session_id, ".json", label="session id")
     export_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",

@@ -1,11 +1,11 @@
 # Release Checklist
 
-Use this checklist before publishing or updating Agent Context Substrate releases. The repository lives at `https://github.com/jjuck/agent-context-substrate` and is public as of `v0.1.0`; keep generated/private local artifacts out of tracked source and release assets.
+Use this checklist before publishing or updating Agent Context Substrate releases. The repository lives at `https://github.com/jjuck/agent-context-substrate` and is public as of `v0.1.0`; the current local release candidate is `v0.2.0`. Keep generated/private local artifacts out of tracked source and release assets.
 
 ## 1. Source hygiene
 
 - [ ] `git status --short --branch` is clean and tracking `origin/main`.
-- [ ] `data/exports/` and `data/index/session_ledger.json` are ignored or intentionally excluded.
+- [ ] `data/exports/`, `data/atoms/`, `data/promotions/`, `data/wiki_patches/`, `data/lint/`, `data/cache/`, and generated `data/index/` artifacts are ignored or intentionally excluded.
 - [ ] `.hermes/`, `.venv/`, caches, and `*.egg-info/` are ignored.
 - [ ] `LICENSE` exists and matches `pyproject.toml` metadata.
 - [ ] GitHub remote `origin` points to `https://github.com/jjuck/agent-context-substrate.git`.
@@ -19,7 +19,7 @@ Run:
 python - <<'PY'
 from pathlib import Path
 markers = ['/' + 'mnt/' + 'c/Users/', 'C:' + '\\\\Users\\\\']
-roots = [Path('src'), Path('tests'), Path('README.md'), Path('docs')]
+roots = [Path('src'), Path('tests'), Path('README.md'), Path('README.ko.md'), Path('docs'), Path('spec.md'), Path('CHANGELOG.md'), Path('pyproject.toml')]
 allowed = {'docs/plans/2026-04-27-distribution-hardening-final-plan.md'}
 for root in roots:
     files = [root] if root.is_file() else root.rglob('*')
@@ -42,7 +42,7 @@ PY
 python -m pytest -q
 ```
 
-Expected current public alpha baseline: `67 passed`.
+Expected current public alpha baseline: `158 passed`.
 
 ## 4. Fresh-install smoke
 
@@ -64,7 +64,7 @@ Expected:
 
 ```text
 fresh-install-smoke ok=True
-retrieval_hit_count=>0  # current baseline: 1
+retrieval_hit_count>0  # current baseline: 1
 lint_issue_count=0
 ```
 
@@ -128,7 +128,7 @@ Expected:
 
 ## 7. Privacy review
 
-- [ ] Do not publish `data/exports/` from a real Hermes home.
+- [ ] Do not publish generated/private substrate artifact directories such as `data/exports/`, `data/atoms/`, `data/promotions/`, `data/wiki_patches/`, `data/lint/`, or `data/cache/`.
 - [ ] Do not publish raw `state.db` exports.
 - [ ] Confirm docs warn that raw session exports may include private conversation content, local paths, commands, and sensitive operational context.
 
@@ -145,14 +145,14 @@ Do this only when it is acceptable to interrupt active messaging sessions.
 
 ## 9. Current public alpha baseline
 
-Latest verified local baseline after rename, GitHub sync, stale-folder deletion, gateway restart, fresh-install smoke, and release-checklist audit:
+Latest verified local baseline for the v0.2.0 release candidate after spec pipeline implementation, real-wiki dry-run validation, semantic atom/lint/patch expansion, and release cleanup:
 
 ```text
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: public
-project tests: 67 passed
-fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=5291 lint_issue_count=0
+project tests: 158 passed
+fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
 live runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
 ```

@@ -15,9 +15,16 @@ htmlcov/
 venv/
 .env
 
-# Private/generated harness artifacts
+# Private/generated substrate artifacts
 data/exports/
+data/atoms/
+data/promotions/
+data/wiki_patches/
+data/lint/
+data/cache/
 data/index/session_ledger.json
+data/index/topic_map.json
+data/index/topic_map.md
 
 # Local Hermes session plans/cache
 .hermes/

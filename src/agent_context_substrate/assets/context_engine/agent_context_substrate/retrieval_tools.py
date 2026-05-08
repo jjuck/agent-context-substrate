@@ -17,7 +17,8 @@ def retrieval_tool_schemas() -> List[Dict[str, Any]]:
             "description": (
                 "Search the Agent Context Substrate knowledge layer while solving the "
                 "current request. Use this when prior project decisions, wiki pages, "
-                "context packets, summaries, or raw evidence may be relevant."
+                "context packets, summaries, topic maps, promotion candidates, "
+                "wiki patch proposals, applied patch logs, or raw evidence may be relevant."
             ),
             "parameters": {
                 "type": "object",
@@ -27,6 +28,15 @@ def retrieval_tool_schemas() -> List[Dict[str, Any]]:
                     "include_raw": {
                         "type": "boolean",
                         "description": "Include raw state.db message hits when summaries/wiki are insufficient.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["knowledge", "graph"],
+                        "description": "Retrieval mode. Use graph to search topic-map nodes, edges, and readable paths only.",
+                    },
+                    "graph_depth": {
+                        "type": "integer",
+                        "description": "When mode=graph, include neighboring topic-map nodes/edges up to this depth.",
                     },
                 },
                 "required": ["query"],
@@ -57,6 +67,11 @@ def handle_knowledge_search(args: Dict[str, Any], *, project_root: Path, wiki_ro
     except (TypeError, ValueError):
         limit = 5
     include_raw = bool(args.get("include_raw") or False)
+    mode = str(args.get("mode") or "knowledge").strip() or "knowledge"
+    try:
+        graph_depth = int(args.get("graph_depth") or 0)
+    except (TypeError, ValueError):
+        graph_depth = 0
     try:
         search_knowledge, _ = load_retrieval_api(project_root)
         hits = search_knowledge(
@@ -65,11 +80,15 @@ def handle_knowledge_search(args: Dict[str, Any], *, project_root: Path, wiki_ro
             wiki_root=wiki_root,
             limit=limit,
             include_raw=include_raw,
+            mode=mode,
+            graph_depth=graph_depth,
         )
         return json.dumps(
             {
                 "ok": True,
                 "query": query,
+                "mode": mode,
+                "graph_depth": graph_depth,
                 "hits": [hit.to_dict() for hit in hits],
                 "project_root": str(project_root),
                 "wiki_root": str(wiki_root),

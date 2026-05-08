@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .models import ContextPacket, MicroSummary, UnitSummary
 from .paths import HarnessPaths
+from .safe_paths import safe_child_path
 
 
 def build_context_packet(
@@ -95,8 +96,8 @@ def export_context_packet(packet: ContextPacket, paths: HarnessPaths) -> tuple[P
     export_dir = paths.exports_dir / "context_packets"
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = export_dir / f"{packet.packet_id}.json"
-    markdown_path = export_dir / f"{packet.packet_id}.md"
+    json_path = safe_child_path(export_dir, packet.packet_id, ".json", label="packet id")
+    markdown_path = safe_child_path(export_dir, packet.packet_id, ".md", label="packet id")
 
     json_path.write_text(
         json.dumps(packet.to_dict(), ensure_ascii=False, indent=2),

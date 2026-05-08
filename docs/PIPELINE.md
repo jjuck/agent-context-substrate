@@ -25,7 +25,36 @@ Hermes state.db
 
 기본 실행은 Obsidian에 query/concept/plan/architecture page를 생성하지 않습니다.
 
-### 1.2 Legacy full promotion
+### 1.2 선택 v2 summary + review-first wiki growth
+
+`build-context-packet --summary-mode ...`를 사용하면 기존 packet artifact는 유지하면서 evidence-backed v2 summary artifact를 추가로 만듭니다.
+
+```text
+raw session bundle
+  -> MicroEvidenceBundle
+  -> SummarizerBackend
+       ├── heuristic
+       ├── agent-llm
+       ├── hybrid
+       └── custom-command
+  -> Summary lint / fallback
+  -> MicroSummaryV2 / UnitSummaryV2
+  -> ClaimAtom JSONL
+  -> PromotionCandidate JSON/Markdown
+  -> WikiPatchProposal JSON/Markdown
+  -> dry-run review
+  -> optional --apply managed-block write
+```
+
+핵심 정책:
+
+- `heuristic`이 기본 안전 경로입니다.
+- `agent-llm`과 `hybrid`는 host Agent의 LLM router를 재사용하는 opt-in 경로입니다.
+- direct provider SDK는 core dependency가 아닙니다.
+- promotion candidate와 wiki patch proposal 생성은 Obsidian을 수정하지 않습니다.
+- `apply-wiki-patch`도 기본은 dry-run이며, 실제 쓰기는 `--apply`가 있을 때만 합니다.
+
+### 1.3 Legacy full promotion
 
 ```text
 Hermes state.db
@@ -40,20 +69,24 @@ Hermes state.db
 
 이 흐름은 `promotion_mode="full"`을 명시했을 때만 사용합니다. temp-root smoke나 legacy behavior 검증에는 유용하지만, live human-facing Obsidian vault의 기본 운영에는 권장하지 않습니다.
 
-### 1.3 Request-time retrieval
+### 1.4 Request-time retrieval
 
 ```text
-wiki_knowledge_search(query)
+wiki_knowledge_search(query, mode="knowledge")
   -> durable wiki markdown pages
   -> context packet JSON artifacts
   -> unit/micro summaries inside packet JSON
+  -> topic map / promotion / wiki patch artifacts
   -> optional raw Hermes state.db messages
+
+wiki_knowledge_search(query, mode="graph")
+  -> topic map nodes / edges / paths
 ```
 
 retrieval은 read-only입니다. 검색/확장만으로 Obsidian이 수정되지는 않습니다.
 
 
-## 1.4 Distribution/install path
+### 1.5 Distribution/install path
 
 Package-managed installation is part of the pipeline surface now, not an external manual copy step.
 
@@ -75,13 +108,21 @@ Both installers can write local `local_config.py` files containing the user's pr
 | 0 | `paths.py` | 환경 변수 + `project_root` | `HarnessPaths` | `HERMES_HOME`, `WIKI_PATH`, `data/` 경로 해석 |
 | 1 | `session_store.py` | `state.db`, `session_id` | session row + messages | raw Hermes 데이터 조회 |
 | 2 | `raw_extract.py` | session + messages | bundle dict / JSON | 세션 단위 export |
-| 3 | `summarizer.py` | raw bundle | `MicroSummary`, `UnitSummary` | request/outcome/key points/files 추출 |
+| 3 | `summarizer.py` | raw bundle | `MicroSummary`, `UnitSummary`, v2 conversion helpers | request/outcome/key points/files 추출 |
 | 4 | `context_packet.py` | unit + micro summaries | `ContextPacket`, JSON/MD | 재개 가능한 작업 packet 생성 |
-| 5 | `integration.py` | session id + policy | `IntegrationResult` | packet-only/full finalize orchestration |
-| 6 | `promotion.py` | packet / unit summary | wiki Markdown pages | legacy page promotion + backlink |
-| 7 | `lint.py` | wiki + packet exports | lint JSON/MD | wiki quality + internal graph 검증 |
-| 8 | `recovery.py` | ledger + packet | recovery JSON | 다음 세션용 compact brief |
-| 9 | `retrieval.py` | query + roots | retrieval hits/details | read-only knowledge search |
+| 5 | `evidence.py` | raw bundle | `MicroEvidenceBundle` JSON | bounded summarizer input + message id 보존 |
+| 6 | `summarizer_backends.py` / `agent_llm_router.py` | evidence + routing hints | `MicroSummaryV2`, `UnitSummaryV2` | heuristic/agent-llm/hybrid/custom-command backend |
+| 7 | `summary_lint.py` | v2 summary + evidence | lint report object | evidence ids, empty summary, invented files 등 검증 |
+| 8 | `atoms.py` | v2 summary | `data/atoms/claims.jsonl` | claim atom 추출 |
+| 9 | `promotions.py` | claim atoms | `data/promotions/<packet_id>.json/.md` | wiki 반영 후보 제안 |
+| 10 | `wiki_patches.py` | promotion candidates + wiki root | `data/wiki_patches/<packet_id>.json/.md` | dry-run patch proposal / managed block apply |
+| 11 | `semantic_lint.py` | promotions + patch logs | semantic lint JSON/MD | promotion/wiki patch consistency 검사 |
+| 12 | `topic_map.py` | wiki + substrate artifacts | `data/index/<report-id>.json/.md` | graph-style topic map 생성 |
+| 13 | `integration.py` | session id + policy | `IntegrationResult` | packet-only/full finalize orchestration |
+| 14 | `promotion.py` | packet / unit summary | wiki Markdown pages | legacy page promotion + backlink |
+| 15 | `lint.py` | wiki + packet exports | lint JSON/MD | wiki quality + internal graph 검증 |
+| 16 | `recovery.py` | ledger + packet | recovery JSON | 다음 세션용 compact brief |
+| 17 | `retrieval.py` | query + roots | retrieval hits/details | read-only knowledge/graph search |
 
 ## 3. 데이터 모델
 
@@ -165,7 +206,73 @@ data/exports/context_packets/<packet_id>.json
 data/exports/context_packets/<packet_id>.md
 ```
 
-### 3.5 `RecoveryBrief`
+### 3.5 v2 evidence and summaries
+
+`MicroEvidenceBundle`은 LLM/custom command에 넘기기 전의 bounded input입니다.
+
+주요 필드:
+
+- `session_id`
+- `micro_id`
+- `message_ids`
+- `user_messages`
+- `assistant_messages`
+- `heuristic_request`
+- `heuristic_outcome`
+- `files`
+- `urls`
+- `explicit_questions`
+
+출력:
+
+```text
+data/exports/evidence/<session_id>/<micro_id>.json
+```
+
+`MicroSummaryV2`는 하나의 summary string을 세 목적별로 분리합니다.
+
+- `recovery_summary`: 다음 세션 재개용
+- `knowledge_summary`: 오래 남길 지식 후보
+- `retrieval_summary`: 검색/index용
+- `decisions`, `claims`, `action_items`: `EvidenceBackedText`로 message id 근거 포함
+- `metadata`: mode, schema version, input hash, confidence, fallback info
+
+`UnitSummaryV2`는 작업 단위의 상태, next actions, risk notes, wiki candidates를 분리합니다.
+
+출력:
+
+```text
+data/exports/summaries/<packet_id>-micro-v2.json
+data/exports/summaries/<packet_id>-unit-v2.json
+data/cache/summaries/<cache_key>.json
+```
+
+### 3.6 Atoms, promotion candidates, wiki patches
+
+Claim atom은 packet과 wiki 사이의 작은 지식 단위입니다.
+
+```text
+data/atoms/claims.jsonl
+```
+
+Promotion candidate는 “이 claim을 wiki에 반영할 가치가 있는가?”라는 검토 항목입니다.
+
+```text
+data/promotions/<packet_id>.json
+data/promotions/<packet_id>.md
+```
+
+Wiki patch proposal은 실제 Obsidian 변경 전의 reviewable diff입니다.
+
+```text
+data/wiki_patches/<packet_id>.json
+data/wiki_patches/<packet_id>.md
+data/wiki_patches/applied.jsonl
+```
+
+현재 apply는 `create_page`와 `insert_claim_block` 중심이며, 기본은 dry-run입니다.
+
+### 3.7 `RecoveryBrief`
 
 agent나 `/wiki-resume`이 소비하는 compact recovery payload입니다.
 
@@ -188,14 +295,14 @@ agent나 `/wiki-resume`이 소비하는 compact recovery payload입니다.
 data/exports/recovery/<session_id>.json
 ```
 
-### 3.6 `RetrievalHit` / `RetrievalHitDetail`
+### 3.8 `RetrievalHit` / `RetrievalHitDetail`
 
 request-time retrieval 결과입니다.
 
 주요 필드:
 
 - `hit_id`
-- `source_type`: `wiki`, `packet`, `unit_summary`, `micro_summary`, `raw_message`
+- `source_type`: `wiki`, `packet`, `unit_summary`, `micro_summary`, `topic_map_node`, `topic_map_edge`, `topic_map_path`, `promotion_candidate`, `wiki_patch`, `applied_patch`, `raw_message`
 - `source_path`
 - `title`
 - `snippet`
@@ -216,9 +323,12 @@ request-time retrieval 결과입니다.
 project root 아래에는 다음이 사용됩니다.
 
 ```text
+data/atoms/
 data/cache/
 data/exports/
 data/index/
+data/promotions/
+data/wiki_patches/
 ```
 
 ## 5. Session finalize orchestration
@@ -355,7 +465,15 @@ status: active
 | CLI 명령 | 범위 | Obsidian write |
 | --- | --- | --- |
 | `extract-session` | raw export | 아니오 |
-| `build-context-packet` | raw export + packet | 아니오 |
+| `build-context-packet` | raw export + packet, optional v2 evidence/summaries | 아니오 |
+| `extract-atoms` | v2 summary -> claim atoms | 아니오 |
+| `propose-promotions` | claim atoms -> promotion candidates | 아니오 |
+| `plan-wiki-patches` | promotion candidates -> patch proposals | 아니오 |
+| `apply-wiki-patch` | patch proposal dry-run or managed-block apply | 기본 아니오, `--apply`면 예 |
+| `list-promotions` | promotion queue 조회 | 아니오 |
+| `list-wiki-patches` | patch proposal/apply log 조회 | 아니오 |
+| `lint-promotions` | promotion/wiki patch semantic lint | report만 project `data/lint`에 씀 |
+| `build-topic-map` | graph report 생성 | report만 project `data/index`에 씀 |
 | `lint-wiki` | wiki + internal graph lint | report만 project `data/exports/lint`에 씀 |
 | `promote-packet-query` | legacy query promotion | 예 |
 | `promote-packet-plan` | legacy plan promotion | 예 |
@@ -373,6 +491,15 @@ status: active
 | lint JSON | `data/exports/lint/<report_id>.json` | lint/finalize/e2e |
 | lint Markdown | `data/exports/lint/<report_id>.md` | lint/finalize/e2e |
 | recovery JSON | `data/exports/recovery/<session_id>.json` | session finalize |
+| v2 evidence JSON | `data/exports/evidence/<session_id>/<micro_id>.json` | packet build with `--summary-mode` |
+| v2 micro summary | `data/exports/summaries/<packet_id>-micro-v2.json` | packet build with `--summary-mode` |
+| v2 unit summary | `data/exports/summaries/<packet_id>-unit-v2.json` | packet build with `--summary-mode` |
+| summary cache | `data/cache/summaries/<cache_key>.json` | `--summary-cache on` |
+| claim atoms | `data/atoms/claims.jsonl` | `extract-atoms` |
+| promotion candidates | `data/promotions/<packet_id>.json/.md` | `propose-promotions` |
+| wiki patch proposal | `data/wiki_patches/<packet_id>.json/.md` | `plan-wiki-patches` |
+| applied patch log | `data/wiki_patches/applied.jsonl` | `apply-wiki-patch --apply` |
+| topic map | `data/index/<report-id>.json/.md` | `build-topic-map` |
 | ledger | `data/index/session_ledger.json` | session finalize |
 | legacy query page | `WIKI_PATH/queries/<slug>.md` | explicit promotion/full/e2e |
 | legacy concept page | `WIKI_PATH/concepts/<slug>.md` | explicit promotion/full/e2e |
@@ -400,11 +527,17 @@ status: active
 
 우선순위가 높은 후속 작업:
 
-1. Curated promotion target model
-   - `01 지식`, `02 내 아이디어`, `04 프로젝트` 같은 human-facing folder에 template 기반 작성
-2. Language-aware template renderer
+1. Atom layer 확장
+   - 현재 claim 중심에서 decision/entity/concept/question JSONL까지 확장
+2. Semantic lint 확장
+   - `claim_without_source`, `duplicate_concept`, `stale_claim`, `contradiction_unresolved`, `promotion_backlog` 등 추가
+3. Wiki patch operation 확장
+   - `append_section`, `replace_section`, `add_link`, `mark_stale`, `merge_pages`, `split_page` 등 review-first로 추가
+4. LLM safety hardening
+   - JSON repair 1회, 입력 길이 제한 CLI, redaction 정책 CLI 옵션, 더 엄격한 summary lint
+5. Language-aware template renderer
    - `ko/en` template 선택과 frontmatter 생성 자동화
-3. Source card ingest
+6. Source card ingest
    - `06 원천 자료` source card와 processed `01 지식` page 연결
-4. Context engine compression compatibility
+7. Context engine compression compatibility
    - recovery/retrieval뿐 아니라 compression path까지 안전 검증

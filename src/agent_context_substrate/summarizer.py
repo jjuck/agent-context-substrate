@@ -1,9 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import hashlib
+import json
 import re
 from typing import Any
 
-from .models import MicroSummary, RawSessionReference, UnitSummary
+from .models import (
+    EvidenceBackedText,
+    MicroSummary,
+    MicroSummaryV2,
+    RawSessionReference,
+    SummaryMetadata,
+    UnitSummary,
+    UnitSummaryV2,
+)
 
 _FILE_PATTERN = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+")
 _ALLOWED_FILE_EXTENSIONS = {
@@ -434,3 +445,162 @@ def build_unit_summary(
         related_pages=list(related_pages or []),
         provenance=(micro_summaries[0].provenance if micro_summaries else None),
     )
+
+
+def _summary_input_hash(payload: dict[str, Any], *, schema_version: str, mode: str) -> str:
+    raw = json.dumps(
+        {"payload": payload, "schema_version": schema_version, "mode": mode},
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(raw).hexdigest()}"
+
+
+def _summary_metadata(*, payload: dict[str, Any], schema_version: str, mode: str = "heuristic", confidence: float | None = None) -> SummaryMetadata:
+    return SummaryMetadata(
+        mode=mode,
+        schema_version=schema_version,
+        prompt_version=None,
+        model=None,
+        input_hash=_summary_input_hash(payload, schema_version=schema_version, mode=mode),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        confidence=confidence,
+    )
+
+
+def _evidence_items_from_points(points: list[str], message_ids: list[int], *, confidence: float = 0.6) -> list[EvidenceBackedText]:
+    return [
+        EvidenceBackedText(
+            text=point,
+            evidence_message_ids=list(message_ids),
+            confidence=confidence,
+        )
+        for point in points
+    ]
+
+
+def _retrieval_summary(*, summary: MicroSummary) -> str:
+    pieces = [
+        summary.request or "",
+        summary.outcome or "",
+        *summary.key_points,
+        *summary.files,
+        *summary.entities,
+        *summary.concepts,
+    ]
+    return " ".join(piece for piece in _dedupe_preserve_order(pieces) if piece)
+
+
+def _knowledge_summary(*, summary: MicroSummary) -> str:
+    if summary.key_points:
+        return "; ".join(summary.key_points)
+    return summary.outcome or summary.summary
+
+
+def build_micro_summary_v2(
+    raw_bundle: dict[str, Any],
+    micro_id: str,
+    parent_unit_id: str | None = None,
+) -> MicroSummaryV2:
+    legacy_summary = build_micro_summary(
+        raw_bundle=raw_bundle,
+        micro_id=micro_id,
+        parent_unit_id=parent_unit_id,
+    )
+    decisions = _evidence_items_from_points(
+        legacy_summary.key_points,
+        legacy_summary.message_ids,
+    )
+    claims = _evidence_items_from_points(
+        legacy_summary.key_points,
+        legacy_summary.message_ids,
+        confidence=0.5,
+    )
+    return MicroSummaryV2(
+        micro_id=legacy_summary.micro_id,
+        session_id=legacy_summary.session_id,
+        message_ids=list(legacy_summary.message_ids),
+        recovery_summary=legacy_summary.summary,
+        knowledge_summary=_knowledge_summary(summary=legacy_summary),
+        retrieval_summary=_retrieval_summary(summary=legacy_summary),
+        user_intent=legacy_summary.request,
+        assistant_outcome=legacy_summary.outcome,
+        decisions=decisions,
+        claims=claims,
+        action_items=[],
+        open_questions=list(legacy_summary.follow_up_questions),
+        files=list(legacy_summary.files),
+        entities=list(legacy_summary.entities),
+        concepts=list(legacy_summary.concepts),
+        metadata=_summary_metadata(
+            payload=raw_bundle,
+            schema_version="micro_summary_v2",
+            confidence=0.6,
+        ),
+        provenance=legacy_summary.provenance,
+    )
+
+
+def build_unit_summary_v2(
+    unit_id: str,
+    session_id: str,
+    title: str,
+    goal: str,
+    micro_summaries: list[MicroSummaryV2],
+    related_pages: list[str] | None = None,
+) -> UnitSummaryV2:
+    decisions = _dedupe_evidence_texts(
+        [item for summary in micro_summaries for item in summary.decisions]
+    )
+    open_questions = _dedupe_preserve_order(
+        [question for summary in micro_summaries for question in summary.open_questions]
+    )
+    progress = [
+        summary.assistant_outcome or summary.recovery_summary
+        for summary in micro_summaries
+        if (summary.assistant_outcome or summary.recovery_summary)
+    ]
+    wiki_candidates = _dedupe_evidence_texts(
+        [item for summary in micro_summaries for item in summary.claims]
+    )
+    payload = {
+        "unit_id": unit_id,
+        "session_id": session_id,
+        "title": title,
+        "goal": goal,
+        "micro_summaries": [summary.to_dict() for summary in micro_summaries],
+    }
+    return UnitSummaryV2(
+        unit_id=unit_id,
+        session_id=session_id,
+        title=title,
+        goal=goal,
+        state="in_progress" if open_questions else "completed",
+        decisions=decisions,
+        progress=progress,
+        next_actions=[
+            item.text for summary in micro_summaries for item in summary.action_items
+        ],
+        open_questions=open_questions,
+        risk_notes=[],
+        wiki_candidates=wiki_candidates,
+        micro_ids=[summary.micro_id for summary in micro_summaries],
+        related_pages=list(related_pages or []),
+        metadata=_summary_metadata(
+            payload=payload,
+            schema_version="unit_summary_v2",
+            confidence=0.6,
+        ),
+        provenance=(micro_summaries[0].provenance if micro_summaries else None),
+    )
+
+
+def _dedupe_evidence_texts(items: list[EvidenceBackedText]) -> list[EvidenceBackedText]:
+    seen: set[str] = set()
+    deduped: list[EvidenceBackedText] = []
+    for item in items:
+        if item.text in seen:
+            continue
+        seen.add(item.text)
+        deduped.append(item)
+    return deduped

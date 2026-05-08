@@ -7,6 +7,7 @@ import re
 
 from .models import ContextPacket
 from .paths import HarnessPaths
+from .safe_paths import safe_child_path
 
 _DURABLE_DIRS = (
     "entities",
@@ -521,8 +522,8 @@ def export_lint_report(
     export_dir = paths.exports_dir / "lint"
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = export_dir / f"{report_id}.json"
-    markdown_path = export_dir / f"{report_id}.md"
+    json_path = safe_child_path(export_dir, report_id, ".json", label="lint report id")
+    markdown_path = safe_child_path(export_dir, report_id, ".md", label="lint report id")
 
     json_path.write_text(
         json.dumps(report.to_dict(), ensure_ascii=False, indent=2),

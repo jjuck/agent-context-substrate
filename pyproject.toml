@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-context-substrate"
-version = "0.1.0"
+version = "0.2.0"
 description = "A multi-layer context and retrieval substrate for AI agents; currently packaged with Hermes Agent integration."
 readme = "README.md"
 requires-python = ">=3.11"

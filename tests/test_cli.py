@@ -126,6 +126,120 @@ def test_cli_extract_session_exports_bundle_and_prints_path(tmp_path, monkeypatc
     assert export_path.exists()
 
 
+def test_cli_build_topic_map_exports_json_and_markdown(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+    _write(wiki_root / "concepts" / "summarization.md", "# Summarization\n\nSee [[agent-context-substrate]].\n")
+    _write(wiki_root / "concepts" / "agent-context-substrate.md", "# Agent Context Substrate\n")
+    _write(
+        project_root / "data" / "atoms" / "claims.jsonl",
+        json.dumps(
+            {
+                "atom_id": "packet-1-claim-1",
+                "text": "Hybrid summarizer keeps heuristic evidence spine.",
+                "type": "design_claim",
+                "subjects": ["summarization"],
+                "source_refs": ["packet:packet-1#packet-1-micro-1"],
+                "confidence": 0.8,
+                "status": "active",
+                "first_seen": "2026-05-07T00:00:00+00:00",
+                "last_seen": "2026-05-07T00:00:00+00:00",
+                "supports": [],
+                "contradicts": [],
+                "supersedes": [],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+    )
+
+    exit_code = main(["build-topic-map", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    json_path = project_root / "data" / "index" / "topic_map.json"
+    md_path = project_root / "data" / "index" / "topic_map.md"
+
+    assert exit_code == 0
+    assert str(json_path) in captured.out
+    assert str(md_path) in captured.out
+    assert "nodes=" in captured.out
+    assert "edges=" in captured.out
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "topic_map_v1"
+    assert any(node["node_id"] == "claim:packet-1-claim-1" for node in payload["nodes"])
+    assert "# Topic Map" in md_path.read_text(encoding="utf-8")
+
+
+def test_cli_extract_atoms_writes_all_atom_files(tmp_path, monkeypatch, capsys) -> None:
+    from dataclasses import replace
+
+    from agent_context_substrate.models import EvidenceBackedText
+    from agent_context_substrate.summarizer import build_micro_summary_v2
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+    raw_bundle = {
+        "session": {"id": "session-atoms", "source": "telegram", "title": "Atoms"},
+        "messages": [
+            {"id": 1, "role": "user", "content": "Decide packet-only and mention Hermes Agent."},
+            {"id": 2, "role": "assistant", "content": "Done.\n- Claims cite evidence"},
+        ],
+    }
+    micro = replace(
+        build_micro_summary_v2(raw_bundle=raw_bundle, micro_id="packet-1-micro-1"),
+        decisions=[EvidenceBackedText("Keep packet-only default", [1], 0.8)],
+        entities=["Hermes Agent"],
+        concepts=["packet-only"],
+        open_questions=["Should semantic lint detect stale claims?"],
+    )
+    summary_dir = project_root / "data" / "exports" / "summaries"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "packet-1-micro-v2.json").write_text(json.dumps(micro.to_dict()), encoding="utf-8")
+
+    exit_code = main(["extract-atoms", "--packet-id", "packet-1", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    for filename in ["claims.jsonl", "decisions.jsonl", "entities.jsonl", "concepts.jsonl", "questions.jsonl"]:
+        atom_path = project_root / "data" / "atoms" / filename
+        assert atom_path.exists()
+        assert str(atom_path) in captured.out
+    assert "packet-1-decision-1" in (project_root / "data" / "atoms" / "decisions.jsonl").read_text(encoding="utf-8")
+    assert "packet-1-entity-1" in (project_root / "data" / "atoms" / "entities.jsonl").read_text(encoding="utf-8")
+    assert "packet-1-concept-1" in (project_root / "data" / "atoms" / "concepts.jsonl").read_text(encoding="utf-8")
+    assert "packet-1-question-1" in (project_root / "data" / "atoms" / "questions.jsonl").read_text(encoding="utf-8")
+
+
+def test_cli_lint_promotions_includes_atom_semantic_checks(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+    _write(
+        project_root / "data" / "atoms" / "claims.jsonl",
+        json.dumps({"atom_id": "claim-1", "text": "No source", "source_refs": []}) + "\n",
+    )
+    _write(
+        project_root / "data" / "atoms" / "concepts.jsonl",
+        json.dumps({"atom_id": "concept-1", "name": "Packet Only", "status": "active"}) + "\n"
+        + json.dumps({"atom_id": "concept-2", "name": "packet only", "status": "active"}) + "\n",
+    )
+
+    exit_code = main(["lint-promotions", "--project-root", str(project_root), "--report-id", "atom-lint"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "claim_without_source" in captured.out
+    assert "duplicate_concept" in captured.out
+    payload = json.loads((project_root / "data" / "lint" / "atom-lint.json").read_text(encoding="utf-8"))
+    assert {issue["code"] for issue in payload["issues"]} == {"claim_without_source", "duplicate_concept"}
+
+
 def test_cli_lint_wiki_exports_report_and_prints_summary(tmp_path, monkeypatch, capsys) -> None:
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"
@@ -175,6 +289,78 @@ sources: [\"hermes-session:session-1#messages=1\"]
     assert "orphan_pages=1" in captured.out
     assert json_path.exists()
     assert md_path.exists()
+
+
+def test_cli_lint_wiki_include_promotions_exports_semantic_lint_report(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+
+    _write(wiki_root / "SCHEMA.md", "# Wiki Schema\n\n## Tag Taxonomy\n- question\n")
+    _write(wiki_root / "index.md", "# Wiki Index\n\n## Queries\n<!-- empty -->\n")
+    _write(wiki_root / "log.md", "# Wiki Log\n")
+    _write(
+        wiki_root / "queries" / "page.md",
+        """---
+title: Page
+created: 2026-04-22
+updated: 2026-04-22
+type: query
+tags: [question]
+sources: [\"hermes-session:session-1#messages=1\"]
+---
+
+# Page
+
+## Provenance
+- `hermes-session:session-1#messages=1`
+""",
+    )
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "",
+                    "reason": "Missing target.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Untriaged change.",
+                    "proposed_action": "review_required",
+                    "confidence": 0.4,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main([
+        "lint-wiki",
+        "--include-promotions",
+        "--project-root",
+        str(project_root),
+        "--report-id",
+        "combined-lint",
+    ])
+
+    captured = capsys.readouterr()
+    wiki_json_path = project_root / "data" / "exports" / "lint" / "combined-lint.json"
+    promotion_json_path = project_root / "data" / "lint" / "promotions-lint.json"
+    promotion_md_path = project_root / "data" / "lint" / "promotions-lint.md"
+
+    assert exit_code == 0
+    assert str(wiki_json_path) in captured.out
+    assert str(promotion_json_path) in captured.out
+    assert str(promotion_md_path) in captured.out
+    assert "semantic_lint ok=False issues=1" in captured.out
+    assert "promotion_issues=1" in captured.out
+    assert promotion_json_path.exists()
+    assert promotion_md_path.exists()
 
 
 def test_cli_build_context_packet_exports_raw_and_packet_artifacts(tmp_path, monkeypatch, capsys) -> None:
@@ -229,6 +415,923 @@ def test_cli_build_context_packet_exports_raw_and_packet_artifacts(tmp_path, mon
     assert payload["unit_summaries"][0]["title"] == "Bootstrap project scaffold"
     assert payload["micro_summaries"][0]["session_id"] == "session-1"
     assert "pyproject.toml" in payload["critical_files"]
+
+
+def test_cli_build_context_packet_summary_mode_exports_v2_summary_artifacts(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+
+    exit_code = main(
+        [
+            "build-context-packet",
+            "--session-id",
+            "session-1",
+            "--packet-id",
+            "packet-1",
+            "--task-title",
+            "Resume harness work",
+            "--macro-context",
+            "Need a durable packet for future session recovery.",
+            "--unit-title",
+            "Bootstrap project scaffold",
+            "--goal",
+            "Create the first usable harness substrate.",
+            "--summary-mode",
+            "heuristic",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    micro_v2_path = project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json"
+    unit_v2_path = project_root / "data" / "exports" / "summaries" / "packet-1-unit-v2.json"
+    evidence_path = project_root / "data" / "exports" / "evidence" / "session-1" / "packet-1-micro-1.json"
+
+    assert exit_code == 0
+    assert str(micro_v2_path) in captured.out
+    assert str(unit_v2_path) in captured.out
+    assert str(evidence_path) in captured.out
+    assert micro_v2_path.exists()
+    assert unit_v2_path.exists()
+    assert evidence_path.exists()
+
+    micro_payload = json.loads(micro_v2_path.read_text(encoding="utf-8"))
+    unit_payload = json.loads(unit_v2_path.read_text(encoding="utf-8"))
+    evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert micro_payload["metadata"]["mode"] == "heuristic"
+    assert micro_payload["metadata"]["schema_version"] == "micro_summary_v2"
+    assert unit_payload["metadata"]["schema_version"] == "unit_summary_v2"
+    assert evidence_payload["session_id"] == "session-1"
+    assert evidence_payload["micro_id"] == "packet-1-micro-1"
+
+
+def test_cli_build_context_packet_summary_cache_reuses_cached_custom_command_result(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+    counter_path = tmp_path / "counter.txt"
+    script_path = tmp_path / "custom_summarizer.py"
+    _write(
+        script_path,
+        f'''
+import json
+from pathlib import Path
+import sys
+counter = Path({str(counter_path)!r})
+count = int(counter.read_text() or "0") if counter.exists() else 0
+counter.write_text(str(count + 1))
+payload = json.loads(sys.stdin.read())
+if payload["kind"] == "micro":
+    message_ids = payload["message_ids"]
+    print(json.dumps({{
+        "micro_id": payload["micro_id"],
+        "session_id": payload["session_id"],
+        "message_ids": message_ids,
+        "recovery_summary": "cached custom recovery",
+        "knowledge_summary": "cached custom knowledge",
+        "retrieval_summary": "cached custom retrieval pyproject.toml",
+        "user_intent": "cached custom intent",
+        "assistant_outcome": "cached custom outcome",
+        "decisions": [{{"text": "cached custom decision", "evidence_message_ids": message_ids, "confidence": 0.9}}],
+        "claims": [],
+        "action_items": [],
+        "open_questions": [],
+        "files": ["pyproject.toml"],
+        "entities": [],
+        "concepts": [],
+        "metadata": {{
+            "mode": "custom-command",
+            "schema_version": "micro_summary_v2",
+            "prompt_version": None,
+            "model": None,
+            "input_hash": "sha256:custom-cache",
+            "created_at": "2026-05-07T00:00:00+00:00",
+            "confidence": 0.9
+        }},
+        "provenance": None,
+    }}, ensure_ascii=False))
+else:
+    micro = payload["micro_summaries"][0]
+    print(json.dumps({{
+        "unit_id": payload["unit_id"],
+        "session_id": payload["session_id"],
+        "title": payload["title"],
+        "goal": payload["goal"],
+        "state": "completed",
+        "decisions": micro["decisions"],
+        "progress": ["cached custom outcome"],
+        "next_actions": [],
+        "open_questions": [],
+        "risk_notes": [],
+        "wiki_candidates": [],
+        "micro_ids": [micro["micro_id"]],
+        "related_pages": [],
+        "metadata": {{
+            "mode": "custom-command",
+            "schema_version": "unit_summary_v2",
+            "prompt_version": None,
+            "model": None,
+            "input_hash": "sha256:custom-cache-unit",
+            "created_at": "2026-05-07T00:00:00+00:00",
+            "confidence": 0.9
+        }},
+        "provenance": None,
+    }}, ensure_ascii=False))
+'''.strip(),
+    )
+
+    args = [
+        "build-context-packet",
+        "--session-id", "session-1",
+        "--packet-id", "packet-cache",
+        "--task-title", "Resume harness work",
+        "--macro-context", "Need a durable packet for future session recovery.",
+        "--unit-title", "Bootstrap project scaffold",
+        "--goal", "Create the first usable harness substrate.",
+        "--summary-mode", "custom-command",
+        "--summarizer-command", f"{sys.executable} {script_path}",
+        "--summary-cache", "on",
+        "--project-root", str(project_root),
+    ]
+
+    assert main(args) == 0
+    capsys.readouterr()
+    assert counter_path.read_text() == "2"
+    assert list((project_root / "data" / "cache" / "summaries").glob("*.json"))
+
+    assert main(args) == 0
+    captured = capsys.readouterr()
+
+    assert counter_path.read_text() == "2"
+    assert "packet-cache-micro-v2.json" in captured.out
+    micro_payload = json.loads((project_root / "data" / "exports" / "summaries" / "packet-cache-micro-v2.json").read_text(encoding="utf-8"))
+    assert micro_payload["recovery_summary"] == "cached custom recovery"
+
+
+def test_cli_build_context_packet_summary_routing_hints_are_stored_in_cache_input(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+
+    exit_code = main(
+        [
+            "build-context-packet",
+            "--session-id", "session-1",
+            "--packet-id", "packet-routing-hints",
+            "--task-title", "Resume harness work",
+            "--macro-context", "Need a durable packet for future session recovery.",
+            "--unit-title", "Bootstrap project scaffold",
+            "--goal", "Create the first usable harness substrate.",
+            "--summary-mode", "heuristic",
+            "--summary-cache", "on",
+            "--summary-model", "claude-sonnet-4",
+            "--summary-budget", "cheap",
+            "--project-root", str(project_root),
+        ]
+    )
+
+    capsys.readouterr()
+    cache_files = list((project_root / "data" / "cache" / "summaries").glob("*.json"))
+
+    assert exit_code == 0
+    assert len(cache_files) == 1
+    payload = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    assert payload["cache_input"]["routing_hints"] == {
+        "model": "claude-sonnet-4",
+        "budget": "cheap",
+    }
+
+
+def test_cli_build_context_packet_agent_llm_mode_requires_host_agent_router(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+
+    try:
+        main(
+            [
+                "build-context-packet",
+                "--session-id",
+                "session-1",
+                "--packet-id",
+                "packet-agent-llm",
+                "--task-title",
+                "Resume harness work",
+                "--macro-context",
+                "Need a durable packet for future session recovery.",
+                "--unit-title",
+                "Bootstrap project scaffold",
+                "--goal",
+                "Create the first usable harness substrate.",
+                "--summary-mode",
+                "agent-llm",
+                "--project-root",
+                str(project_root),
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("standalone CLI should require an injected Agent LLM router")
+
+    captured = capsys.readouterr()
+    assert "requires host Agent integration with an injected Agent LLM router" in captured.err
+
+
+def test_cli_extract_atoms_writes_claims_jsonl_from_v2_summary(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+
+    assert main(
+        [
+            "build-context-packet",
+            "--session-id",
+            "session-1",
+            "--packet-id",
+            "packet-1",
+            "--task-title",
+            "Resume harness work",
+            "--macro-context",
+            "Need a durable packet for future session recovery.",
+            "--unit-title",
+            "Bootstrap project scaffold",
+            "--goal",
+            "Create the first usable harness substrate.",
+            "--summary-mode",
+            "heuristic",
+            "--project-root",
+            str(project_root),
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "extract-atoms",
+            "--packet-id",
+            "packet-1",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    claims_path = project_root / "data" / "atoms" / "claims.jsonl"
+
+    assert exit_code == 0
+    assert str(claims_path) in captured.out
+    assert claims_path.exists()
+    claim_lines = [json.loads(line) for line in claims_path.read_text(encoding="utf-8").splitlines()]
+    assert claim_lines
+    assert claim_lines[0]["atom_id"].startswith("packet-1-claim-")
+    assert claim_lines[0]["source_refs"][0] == "packet:packet-1#packet-1-micro-1"
+
+
+def test_cli_propose_promotions_writes_json_and_markdown_from_claim_atoms(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+
+    assert main(
+        [
+            "build-context-packet",
+            "--session-id",
+            "session-1",
+            "--packet-id",
+            "packet-1",
+            "--task-title",
+            "Resume harness work",
+            "--macro-context",
+            "Need a durable packet for future session recovery.",
+            "--unit-title",
+            "Bootstrap project scaffold",
+            "--goal",
+            "Create the first usable harness substrate.",
+            "--summary-mode",
+            "heuristic",
+            "--project-root",
+            str(project_root),
+        ]
+    ) == 0
+    capsys.readouterr()
+    assert main(["extract-atoms", "--packet-id", "packet-1", "--project-root", str(project_root)]) == 0
+    capsys.readouterr()
+
+    exit_code = main(
+        [
+            "propose-promotions",
+            "--packet-id",
+            "packet-1",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    promotion_json_path = project_root / "data" / "promotions" / "packet-1.json"
+    promotion_md_path = project_root / "data" / "promotions" / "packet-1.md"
+
+    assert exit_code == 0
+    assert str(promotion_json_path) in captured.out
+    assert str(promotion_md_path) in captured.out
+    assert promotion_json_path.exists()
+    assert promotion_md_path.exists()
+
+    candidates = json.loads(promotion_json_path.read_text(encoding="utf-8"))
+    assert candidates
+    assert candidates[0]["candidate_id"].startswith("packet-1-candidate-")
+    assert candidates[0]["status"] == "pending"
+    assert "# Promotion Candidates: packet-1" in promotion_md_path.read_text(encoding="utf-8")
+
+
+def test_cli_plan_wiki_patches_writes_json_and_markdown_from_promotion_file(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+
+    _write(wiki_root / "concepts" / "summarization.md", "# Summarization\n\nExisting human prose.\n")
+    promotion_file = project_root / "data" / "promotions" / "packet-1.json"
+    _write(
+        promotion_file,
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Claim atom packet-1-claim-1 may update durable wiki knowledge.",
+                    "evidence": ["claim:packet-1-claim-1", "packet:packet-1#micro-1"],
+                    "proposed_change": "Heuristic summarizer should remain the default for privacy.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "plan-wiki-patches",
+            "--promotion-file",
+            str(promotion_file),
+            "--project-root",
+            str(project_root),
+            "--wiki-root",
+            str(wiki_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    patch_json_path = project_root / "data" / "wiki_patches" / "packet-1.json"
+    patch_md_path = project_root / "data" / "wiki_patches" / "packet-1.md"
+
+    assert exit_code == 0
+    assert str(patch_json_path) in captured.out
+    assert str(patch_md_path) in captured.out
+    assert patch_json_path.exists()
+    assert patch_md_path.exists()
+
+    proposal = json.loads(patch_json_path.read_text(encoding="utf-8"))
+    assert proposal["proposal_id"] == "packet-1-wiki-patch-proposal"
+    assert proposal["operations"][0]["target"] == "concepts/summarization.md"
+    assert proposal["operations"][0]["operation"] == "insert_claim_block"
+    assert "# Wiki Patch Proposal: packet-1" in patch_md_path.read_text(encoding="utf-8")
+
+
+def test_cli_list_promotions_prints_queue_summary(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Keep heuristic default.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Heuristic summarizer should remain default.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                },
+                {
+                    "candidate_id": "packet-1-candidate-2",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "wiki-patches",
+                    "reason": "Applied patch exists.",
+                    "evidence": ["claim:packet-1-claim-2"],
+                    "proposed_change": "Wiki patch writes are managed block updates.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.8,
+                    "status": "applied",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(["list-promotions", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "promotions total=2 pending=1 applied=1" in captured.out
+    assert "packet-1-candidate-1" in captured.out
+    assert "pending" in captured.out
+    assert "summarization" in captured.out
+    assert "packet-1-candidate-2" in captured.out
+    assert "applied" in captured.out
+
+
+def test_cli_list_promotions_can_filter_status(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Pending candidate.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Pending change.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                },
+                {
+                    "candidate_id": "packet-1-candidate-2",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "wiki-patches",
+                    "reason": "Applied candidate.",
+                    "evidence": ["claim:packet-1-claim-2"],
+                    "proposed_change": "Applied change.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.8,
+                    "status": "applied",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(["list-promotions", "--status", "pending", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "promotions total=1 pending=1" in captured.out
+    assert "packet-1-candidate-1" in captured.out
+    assert "packet-1-candidate-2" not in captured.out
+
+
+def test_cli_list_wiki_patches_prints_proposal_summary(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "wiki_patches" / "packet-1.json",
+        json.dumps(
+            {
+                "proposal_id": "packet-1-wiki-patch-proposal",
+                "packet_id": "packet-1",
+                "status": "proposed",
+                "operations": [
+                    {
+                        "patch_id": "packet-1-patch-1",
+                        "candidate_id": "packet-1-candidate-1",
+                        "target": "concepts/summarization.md",
+                        "operation": "insert_claim_block",
+                        "rationale": "Add generated claim block.",
+                        "evidence": ["claim:packet-1-claim-1"],
+                        "risk": "low",
+                        "diff": {"before": "", "after": "managed block"},
+                        "status": "proposed",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    _write(
+        project_root / "data" / "wiki_patches" / "applied.jsonl",
+        json.dumps(
+            {
+                "created_at": "2026-05-07T00:00:00+00:00",
+                "proposal_id": "packet-0-wiki-patch-proposal",
+                "packet_id": "packet-0",
+                "patch_id": "packet-0-patch-1",
+                "candidate_id": "packet-0-candidate-1",
+                "target": "concepts/context-packet.md",
+                "operation": "insert_claim_block",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+    )
+
+    exit_code = main(["list-wiki-patches", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "wiki_patches proposals=1 operations=1 applied=1" in captured.out
+    assert "packet-1-patch-1" in captured.out
+    assert "proposed" in captured.out
+    assert "concepts/summarization.md" in captured.out
+    assert "packet-0-patch-1" in captured.out
+    assert "applied" in captured.out
+
+
+def test_cli_list_wiki_patches_can_filter_status(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "wiki_patches" / "packet-1.json",
+        json.dumps(
+            {
+                "proposal_id": "packet-1-wiki-patch-proposal",
+                "packet_id": "packet-1",
+                "status": "proposed",
+                "operations": [
+                    {
+                        "patch_id": "packet-1-patch-1",
+                        "candidate_id": "packet-1-candidate-1",
+                        "target": "concepts/summarization.md",
+                        "operation": "insert_claim_block",
+                        "rationale": "Add generated claim block.",
+                        "evidence": ["claim:packet-1-claim-1"],
+                        "risk": "low",
+                        "diff": {"before": "", "after": "managed block"},
+                        "status": "proposed",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    _write(
+        project_root / "data" / "wiki_patches" / "applied.jsonl",
+        json.dumps(
+            {
+                "created_at": "2026-05-07T00:00:00+00:00",
+                "proposal_id": "packet-0-wiki-patch-proposal",
+                "packet_id": "packet-0",
+                "patch_id": "packet-0-patch-1",
+                "candidate_id": "packet-0-candidate-1",
+                "target": "concepts/context-packet.md",
+                "operation": "insert_claim_block",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+    )
+
+    exit_code = main(["list-wiki-patches", "--status", "applied", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "wiki_patches proposals=1 operations=1 applied=1" in captured.out
+    assert "packet-0-patch-1" in captured.out
+    assert "packet-1-patch-1" not in captured.out
+
+
+def test_cli_lint_promotions_reports_semantic_issues(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "",
+                    "reason": "Missing evidence and target.",
+                    "evidence": [],
+                    "proposed_change": "Untriaged change.",
+                    "proposed_action": "review_required",
+                    "confidence": 0.4,
+                    "status": "pending",
+                },
+                {
+                    "candidate_id": "packet-1-candidate-2",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Marked applied without log.",
+                    "evidence": ["claim:packet-1-claim-2"],
+                    "proposed_change": "Applied but not logged.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.8,
+                    "status": "applied",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(["lint-promotions", "--project-root", str(project_root)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "semantic_lint ok=False issues=3" in captured.out
+    json_path = project_root / "data" / "lint" / "promotions-lint.json"
+    md_path = project_root / "data" / "lint" / "promotions-lint.md"
+
+    assert "promotion_missing_evidence" in captured.out
+    assert "promotion_missing_target_page" in captured.out
+    assert "applied_promotion_without_applied_patch" in captured.out
+    assert str(json_path) in captured.out
+    assert str(md_path) in captured.out
+    assert json_path.exists()
+    assert md_path.exists()
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["ok"] is False
+    assert len(payload["issues"]) == 3
+    assert "semantic_lint ok=False issues=3" in md_path.read_text(encoding="utf-8")
+
+
+def test_cli_lint_promotions_report_id_changes_export_filenames(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "",
+                    "reason": "Missing target.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Untriaged change.",
+                    "proposed_action": "review_required",
+                    "confidence": 0.4,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main([
+        "lint-promotions",
+        "--report-id",
+        "nightly-promotions",
+        "--project-root",
+        str(project_root),
+    ])
+
+    captured = capsys.readouterr()
+    json_path = project_root / "data" / "lint" / "nightly-promotions.json"
+    md_path = project_root / "data" / "lint" / "nightly-promotions.md"
+
+    assert exit_code == 0
+    assert str(json_path) in captured.out
+    assert str(md_path) in captured.out
+    assert json_path.exists()
+    assert md_path.exists()
+    assert not (project_root / "data" / "lint" / "promotions-lint.json").exists()
+
+
+def test_cli_lint_promotions_fail_on_issues_returns_nonzero(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "",
+                    "reason": "Missing target.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Untriaged change.",
+                    "proposed_action": "review_required",
+                    "confidence": 0.4,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(["lint-promotions", "--project-root", str(project_root), "--fail-on-issues"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "promotion_missing_target_page" in captured.out
+
+
+def test_cli_apply_wiki_patch_defaults_to_dry_run(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+
+    target = wiki_root / "concepts" / "summarization.md"
+    original = "# Summarization\n\nHuman text.\n"
+    _write(target, original)
+    patch_file = project_root / "data" / "wiki_patches" / "packet-1.json"
+    _write(
+        patch_file,
+        json.dumps(
+            {
+                "proposal_id": "packet-1-wiki-patch-proposal",
+                "packet_id": "packet-1",
+                "status": "proposed",
+                "operations": [
+                    {
+                        "patch_id": "packet-1-patch-1",
+                        "candidate_id": "packet-1-candidate-1",
+                        "target": "concepts/summarization.md",
+                        "operation": "insert_claim_block",
+                        "rationale": "Add generated claim block.",
+                        "evidence": ["claim:packet-1-claim-1"],
+                        "risk": "low",
+                        "diff": {
+                            "before": "",
+                            "after": "<!-- acs:auto:claims:start -->\n- New generated claim. `claim:packet-1-claim-1`\n<!-- acs:auto:claims:end -->",
+                        },
+                        "status": "proposed",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "apply-wiki-patch",
+            "--patch-file",
+            str(patch_file),
+            "--project-root",
+            str(project_root),
+            "--wiki-root",
+            str(wiki_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "dry_run=True" in captured.out
+    assert "planned=1" in captured.out
+    assert "applied=0" in captured.out
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_cli_apply_wiki_patch_with_apply_updates_managed_block(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+
+    target = wiki_root / "concepts" / "summarization.md"
+    _write(target, "# Summarization\n\nHuman text.\n")
+    patch_file = project_root / "data" / "wiki_patches" / "packet-1.json"
+    _write(
+        patch_file,
+        json.dumps(
+            {
+                "proposal_id": "packet-1-wiki-patch-proposal",
+                "packet_id": "packet-1",
+                "status": "proposed",
+                "operations": [
+                    {
+                        "patch_id": "packet-1-patch-1",
+                        "candidate_id": "packet-1-candidate-1",
+                        "target": "concepts/summarization.md",
+                        "operation": "insert_claim_block",
+                        "rationale": "Add generated claim block.",
+                        "evidence": ["claim:packet-1-claim-1"],
+                        "risk": "low",
+                        "diff": {
+                            "before": "",
+                            "after": "<!-- acs:auto:claims:start -->\n- New generated claim. `claim:packet-1-claim-1`\n<!-- acs:auto:claims:end -->",
+                        },
+                        "status": "proposed",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    promotion_file = project_root / "data" / "promotions" / "packet-1.json"
+    _write(
+        promotion_file,
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Add generated claim block.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "New generated claim.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "apply-wiki-patch",
+            "--patch-file",
+            str(patch_file),
+            "--apply",
+            "--project-root",
+            str(project_root),
+            "--wiki-root",
+            str(wiki_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "dry_run=False" in captured.out
+    assert "applied=1" in captured.out
+    updated = target.read_text(encoding="utf-8")
+    assert "Human text." in updated
+    assert "New generated claim." in updated
+
+    applied_log = project_root / "data" / "wiki_patches" / "applied.jsonl"
+    assert applied_log.exists()
+    applied_records = [json.loads(line) for line in applied_log.read_text(encoding="utf-8").splitlines()]
+    assert applied_records[0]["patch_id"] == "packet-1-patch-1"
+    assert applied_records[0]["candidate_id"] == "packet-1-candidate-1"
+    assert applied_records[0]["target"] == "concepts/summarization.md"
+
+    promotions = json.loads(promotion_file.read_text(encoding="utf-8"))
+    assert promotions[0]["status"] == "applied"
 
 
 def test_cli_promote_packet_query_and_unit_concept_from_packet_json(tmp_path, monkeypatch, capsys) -> None:

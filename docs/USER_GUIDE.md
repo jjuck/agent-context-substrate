@@ -24,13 +24,18 @@ Hermes state.db
 
 즉, 기본 자동 처리에서는 Obsidian에 query/concept/plan/architecture page를 만들지 않습니다. Obsidian LLM Wiki는 사람이 읽기 좋은 semantic wiki로 유지하고, agent용 packet/recovery/lint/raw transcript는 Agent Context Substrate project의 `data/exports/`에 둡니다.
 
+지식을 wiki로 키울 때도 바로 쓰지 않습니다. 먼저 evidence-backed summary, claim atom, promotion candidate, wiki patch proposal을 만든 뒤 사람이 검토하고 반영합니다.
+
 ## 2. 저장 계층
 
 | 계층 | 위치 | 형식 | 역할 |
 | --- | --- | --- | --- |
 | Hermes 원본 세션 DB | `HERMES_HOME/state.db` 또는 `~/.hermes/state.db` | SQLite | 원본 대화와 세션 메타데이터 |
-| Harness exports | `data/exports/` | JSON/Markdown | raw export, context packet, lint report, recovery brief |
-| Harness ledger | `data/index/session_ledger.json` | JSON | 처리 상태, artifact 경로, retry/idempotency 기록 |
+| Harness exports | `data/exports/` | JSON/Markdown | raw export, context packet, evidence, v2 summary, lint report, recovery brief |
+| Harness atoms | `data/atoms/` | JSONL | packet에서 추출한 claim atom |
+| Harness promotions | `data/promotions/` | JSON/Markdown | wiki 반영 후보 queue |
+| Harness wiki patches | `data/wiki_patches/` | JSON/Markdown/JSONL | reviewable patch proposal과 apply log |
+| Harness ledger/index | `data/index/` | JSON/Markdown | 처리 상태, topic map, artifact 경로, retry/idempotency 기록 |
 | Obsidian LLM Wiki | `WIKI_PATH` | Markdown | 사람이 읽는 curated wiki |
 
 ## 3. 기본 artifact
@@ -45,6 +50,18 @@ data/exports/lint/<session_id>-lint.json
 data/exports/lint/<session_id>-lint.md
 data/exports/recovery/<session_id>.json
 data/index/session_ledger.json
+
+# --summary-mode 사용 시 추가
+data/exports/evidence/<session_id>/<micro_id>.json
+data/exports/summaries/<packet_id>-micro-v2.json
+data/exports/summaries/<packet_id>-unit-v2.json
+
+# review-first wiki growth 사용 시 추가
+data/atoms/claims.jsonl
+data/promotions/<packet_id>.json
+data/promotions/<packet_id>.md
+data/wiki_patches/<packet_id>.json
+data/wiki_patches/<packet_id>.md
 ```
 
 ledger에는 `promotion_mode`도 기록됩니다. 기존에 `full`로 처리한 세션이 있어도, 이후 `packet-only` 요청은 promotion mode가 다르므로 잘못 reuse하지 않습니다.
@@ -385,6 +402,55 @@ agent-context-substrate lint-wiki \
   --report-id wiki-lint
 ```
 
+### v2 summary artifact 만들기
+
+기본 `build-context-packet`은 기존 packet artifact만 만듭니다. 아래처럼 `--summary-mode`를 추가하면 evidence bundle과 v2 summary artifact도 생성합니다.
+
+```bash
+agent-context-substrate build-context-packet \
+  --session-id <session_id> \
+  --packet-id <packet_id> \
+  --task-title "<task title>" \
+  --macro-context "<macro context>" \
+  --unit-title "<unit title>" \
+  --goal "<goal>" \
+  --summary-mode heuristic \
+  --summary-cache on \
+  --project-root .
+```
+
+요약 모드:
+
+| 모드 | 의미 |
+| --- | --- |
+| `heuristic` | 기본 오프라인 요약. 비용/키/네트워크 없음. |
+| `agent-llm` | host Agent가 제공하는 LLM router를 사용합니다. |
+| `hybrid` | heuristic evidence + Agent LLM 해석을 조합합니다. |
+| `custom-command` | 외부 command가 stdin JSON을 받아 stdout JSON을 반환합니다. |
+
+참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`과 `custom-command`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다.
+
+### review-first wiki growth
+
+```bash
+agent-context-substrate extract-atoms --packet-id <packet_id> --project-root .
+agent-context-substrate propose-promotions --packet-id <packet_id> --project-root .
+agent-context-substrate plan-wiki-patches \
+  --promotion-file data/promotions/<packet_id>.json \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root .
+```
+
+여기까지는 Obsidian을 수정하지 않습니다. 실제 쓰기는 patch Markdown/JSON을 검토한 뒤 아래처럼 명시합니다.
+
+```bash
+agent-context-substrate apply-wiki-patch \
+  --patch-file data/wiki_patches/<packet_id>.json \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root . \
+  --apply
+```
+
 ## 11. 자동 처리되지 않는 것
 
 현재 기본 정책에서 자동 처리되지 않는 대상:
@@ -394,12 +460,14 @@ agent-context-substrate lint-wiki \
 - skip title pattern에 걸리는 session
 - 이미 completed 처리됐고 필요한 artifact가 살아 있는 session
 - Obsidian durable page promotion (`promotion_mode=packet-only`인 경우)
+- v2 summary/atoms/promotions/wiki patches. 이들은 CLI로 명시적으로 실행합니다.
 
 Obsidian이 수정되는 경로:
 
 - legacy `promotion_mode="full"`
 - `run-e2e-pipeline`
 - `promote-*` CLI commands
+- `apply-wiki-patch --apply`
 - 사람이 직접 curated page를 작성/수정하는 경우
 
 ## 12. privacy / release 주의점
@@ -423,7 +491,10 @@ Obsidian이 수정되는 경로:
 - packet-only 기본값
 - gateway source 기본 제외
 - qualitative lint
+- summary lint와 fallback
+- promotion/wiki patch semantic lint
 - retrieval read-only 기본값
+- wiki patch dry-run 기본값
 
 ## 14. 빠른 문제 해결
 

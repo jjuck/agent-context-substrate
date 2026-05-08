@@ -113,13 +113,13 @@ AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only
 
 ## 2.1 현재 검증된 기준선
 
-rename, GitHub sync, stale folder deletion, gateway restart 이후 확인된 기준선입니다.
+v0.2.0 로컬 release candidate 기준으로 확인된 운영 기준선입니다.
 
 | 항목 | 결과 |
 | --- | --- |
 | GitHub remote | `origin/main` → `jjuck/agent-context-substrate` |
-| Project tests | `67 passed` |
-| Fresh install smoke | `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=5291`, `lint_issue_count=0` |
+| Project tests | `158 passed` |
+| Fresh install smoke | `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live runtime | plugin `agent-context-substrate`, context engine `agent_context_substrate`, gateway running |
 

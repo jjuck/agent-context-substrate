@@ -26,6 +26,8 @@ Hermes state.db
 
 This means the default automation does **not** write generated query/concept/plan/architecture pages into Obsidian. Obsidian stays a human-facing semantic wiki. Machine-oriented artifacts stay in the harness project under `data/exports/` and `data/index/`.
 
+When packet evidence should grow the wiki, the recommended path is still review-first: evidence-backed summaries -> claim atoms -> promotion candidates -> wiki patch proposals -> reviewed apply.
+
 ## 2. When it helps
 
 This project is useful when:
@@ -41,8 +43,11 @@ This project is useful when:
 | Layer | Location | Format | Purpose |
 | --- | --- | --- | --- |
 | Hermes raw session DB | `HERMES_HOME/state.db` or `~/.hermes/state.db` | SQLite | Original sessions and messages |
-| Harness exports | `data/exports/` | JSON / Markdown | Raw exports, packets, lint reports, recovery briefs |
-| Harness ledger | `data/index/session_ledger.json` | JSON | Processing status, artifact paths, retry/idempotency records |
+| Harness exports | `data/exports/` | JSON / Markdown | Raw exports, packets, evidence, v2 summaries, lint reports, recovery briefs |
+| Harness atoms | `data/atoms/` | JSONL | Claim atoms extracted from packet evidence |
+| Harness promotions | `data/promotions/` | JSON / Markdown | Review queue for possible wiki updates |
+| Harness wiki patches | `data/wiki_patches/` | JSON / Markdown / JSONL | Reviewable patch proposals and applied patch log |
+| Harness ledger/index | `data/index/` | JSON / Markdown | Processing status, topic maps, artifact paths, retry/idempotency records |
 | Obsidian LLM Wiki | `WIKI_PATH` | Markdown | Human-facing curated wiki |
 
 ## 4. Default artifacts
@@ -57,6 +62,18 @@ data/exports/lint/<session_id>-lint.json
 data/exports/lint/<session_id>-lint.md
 data/exports/recovery/<session_id>.json
 data/index/session_ledger.json
+
+# Extra files when --summary-mode is used
+data/exports/evidence/<session_id>/<micro_id>.json
+data/exports/summaries/<packet_id>-micro-v2.json
+data/exports/summaries/<packet_id>-unit-v2.json
+
+# Extra files for review-first wiki growth
+data/atoms/claims.jsonl
+data/promotions/<packet_id>.json
+data/promotions/<packet_id>.md
+data/wiki_patches/<packet_id>.json
+data/wiki_patches/<packet_id>.md
 ```
 
 The ledger also records `promotion_mode`. A previous `full` run is not incorrectly reused for a later `packet-only` request.
@@ -381,6 +398,55 @@ agent-context-substrate lint-wiki \
   --report-id wiki-lint
 ```
 
+### Build v2 summary artifacts
+
+The default `build-context-packet` remains backward-compatible. Add `--summary-mode` when you want evidence bundles and v2 summary artifacts.
+
+```bash
+agent-context-substrate build-context-packet \
+  --session-id <session_id> \
+  --packet-id <packet_id> \
+  --task-title "<task title>" \
+  --macro-context "<macro context>" \
+  --unit-title "<unit title>" \
+  --goal "<goal>" \
+  --summary-mode heuristic \
+  --summary-cache on \
+  --project-root .
+```
+
+Summary modes:
+
+| Mode | Meaning |
+| --- | --- |
+| `heuristic` | Offline deterministic backend; no keys, network, or model cost. |
+| `agent-llm` | Uses the host Agent's LLM router when the integration provides one. |
+| `hybrid` | Heuristic evidence spine plus Agent LLM interpretation. |
+| `custom-command` | External command receives stdin JSON and returns stdout JSON. |
+
+Note: standalone CLI can run `heuristic` and `custom-command` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
+
+### Review-first wiki growth
+
+```bash
+agent-context-substrate extract-atoms --packet-id <packet_id> --project-root .
+agent-context-substrate propose-promotions --packet-id <packet_id> --project-root .
+agent-context-substrate plan-wiki-patches \
+  --promotion-file data/promotions/<packet_id>.json \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root .
+```
+
+These commands do not edit Obsidian. After reviewing the generated Markdown/JSON proposal, apply explicitly:
+
+```bash
+agent-context-substrate apply-wiki-patch \
+  --patch-file data/wiki_patches/<packet_id>.json \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root . \
+  --apply
+```
+
 ## 12. What is not automatic
 
 The default policy does not automatically process:
@@ -389,13 +455,15 @@ The default policy does not automatically process:
 - sessions shorter than `min_message_count`;
 - sessions matching skip title patterns;
 - sessions already completed with existing required artifacts;
-- Obsidian durable page promotion when `promotion_mode=packet-only`.
+- Obsidian durable page promotion when `promotion_mode=packet-only`;
+- v2 summaries, atoms, promotions, and wiki patch proposals. Run these explicitly from the CLI.
 
 Obsidian is modified only by:
 
 - legacy `promotion_mode="full"`;
 - `run-e2e-pipeline`;
 - `promote-*` CLI commands;
+- `apply-wiki-patch --apply`;
 - manual curated page editing.
 
 ## 13. Privacy and release notes
@@ -419,7 +487,10 @@ Agent Context Substrate works with local private data.
 - `packet-only` default
 - gateway source excluded by default
 - qualitative lint
+- summary lint and fallback
+- promotion/wiki patch semantic lint
 - read-only retrieval by default
+- dry-run wiki patches by default
 
 ## 15. Troubleshooting
 

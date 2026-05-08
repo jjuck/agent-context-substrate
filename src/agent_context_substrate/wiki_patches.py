@@ -1,0 +1,351 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .promotions import PromotionCandidate
+
+MANAGED_CLAIMS_START = "<!-- acs:auto:claims:start -->"
+MANAGED_CLAIMS_END = "<!-- acs:auto:claims:end -->"
+
+
+@dataclass(frozen=True)
+class WikiPatchApplyResult:
+    dry_run: bool
+    applied_patch_ids: list[str]
+    skipped_patch_ids: list[str]
+    planned_patch_ids: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dry_run": self.dry_run,
+            "applied_patch_ids": list(self.applied_patch_ids),
+            "skipped_patch_ids": list(self.skipped_patch_ids),
+            "planned_patch_ids": list(self.planned_patch_ids),
+        }
+
+
+@dataclass(frozen=True)
+class WikiPatchOperation:
+    patch_id: str
+    candidate_id: str
+    target: str
+    operation: str
+    rationale: str
+    evidence: list[str]
+    risk: str
+    diff: dict[str, str]
+    status: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "patch_id": self.patch_id,
+            "candidate_id": self.candidate_id,
+            "target": self.target,
+            "operation": self.operation,
+            "rationale": self.rationale,
+            "evidence": list(self.evidence),
+            "risk": self.risk,
+            "diff": dict(self.diff),
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "WikiPatchOperation":
+        return cls(
+            patch_id=str(payload["patch_id"]),
+            candidate_id=str(payload["candidate_id"]),
+            target=str(payload["target"]),
+            operation=str(payload["operation"]),
+            rationale=str(payload["rationale"]),
+            evidence=list(payload.get("evidence", [])),
+            risk=str(payload["risk"]),
+            diff={str(key): str(value) for key, value in dict(payload.get("diff", {})).items()},
+            status=str(payload["status"]),
+        )
+
+
+@dataclass(frozen=True)
+class WikiPatchProposal:
+    proposal_id: str
+    packet_id: str
+    operations: list[WikiPatchOperation]
+    status: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "packet_id": self.packet_id,
+            "operations": [operation.to_dict() for operation in self.operations],
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "WikiPatchProposal":
+        return cls(
+            proposal_id=str(payload["proposal_id"]),
+            packet_id=str(payload["packet_id"]),
+            operations=[WikiPatchOperation.from_dict(item) for item in payload.get("operations", [])],
+            status=str(payload["status"]),
+        )
+
+
+def plan_wiki_patch_proposal(
+    *,
+    packet_id: str,
+    candidates: list[PromotionCandidate],
+    wiki_root: Path,
+) -> WikiPatchProposal:
+    operations: list[WikiPatchOperation] = []
+    for candidate in candidates:
+        if candidate.status != "pending":
+            continue
+        index = len(operations) + 1
+        target = _target_file_for_candidate(candidate)
+        target_path = _safe_target_path(wiki_root=wiki_root, target=target)
+        if target_path is None:
+            target = "_review/untriaged.md"
+            target_path = _safe_target_path(wiki_root=wiki_root, target=target)
+        if target_path is None:
+            continue
+        existing_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+        claim_block = _claim_block_for_candidate(candidate)
+        before = _existing_claim_block(existing_text)
+        operation = "insert_claim_block" if target_path.exists() else "create_page"
+        operations.append(
+            WikiPatchOperation(
+                patch_id=f"{packet_id}-patch-{index}",
+                candidate_id=candidate.candidate_id,
+                target=target,
+                operation=operation,
+                rationale=candidate.reason,
+                evidence=list(candidate.evidence),
+                risk="low" if target_path.exists() else "medium",
+                diff={"before": before, "after": claim_block},
+                status="proposed",
+            )
+        )
+    return WikiPatchProposal(
+        proposal_id=f"{packet_id}-wiki-patch-proposal",
+        packet_id=packet_id,
+        operations=operations,
+        status="proposed",
+    )
+
+
+def render_wiki_patch_proposal_markdown(proposal: WikiPatchProposal) -> str:
+    lines = [f"# Wiki Patch Proposal: {proposal.packet_id}", "", f"- Proposal id: `{proposal.proposal_id}`", f"- Status: `{proposal.status}`", ""]
+    if not proposal.operations:
+        lines.extend(["No wiki patch operations proposed.", ""])
+        return "\n".join(lines)
+
+    for operation in proposal.operations:
+        lines.extend(
+            [
+                f"## {operation.patch_id}",
+                "",
+                f"- Candidate: `{operation.candidate_id}`",
+                f"- Target: `{operation.target}`",
+                f"- Operation: `{operation.operation}`",
+                f"- Risk: `{operation.risk}`",
+                f"- Status: `{operation.status}`",
+                f"- Rationale: {operation.rationale}",
+                "- Evidence:",
+            ]
+        )
+        for evidence in operation.evidence:
+            lines.append(f"  - `{evidence}`")
+        lines.extend(
+            [
+                "",
+                "### Proposed diff",
+                "",
+                "```diff",
+                "--- before",
+                operation.diff.get("before", ""),
+                "+++ after",
+                operation.diff.get("after", ""),
+                "```",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def apply_wiki_patch_proposal(
+    *,
+    proposal: WikiPatchProposal,
+    wiki_root: Path,
+    dry_run: bool = True,
+) -> WikiPatchApplyResult:
+    planned_patch_ids: list[str] = []
+    applied_patch_ids: list[str] = []
+    skipped_patch_ids: list[str] = []
+
+    for operation in proposal.operations:
+        if operation.status != "proposed":
+            skipped_patch_ids.append(operation.patch_id)
+            continue
+        planned_patch_ids.append(operation.patch_id)
+        target_path = _safe_target_path(wiki_root=wiki_root, target=operation.target)
+        if target_path is None or operation.operation not in {"insert_claim_block", "create_page", "append_section", "add_link", "mark_stale"}:
+            skipped_patch_ids.append(operation.patch_id)
+            continue
+        if dry_run:
+            continue
+        _apply_operation(operation=operation, target_path=target_path)
+        applied_patch_ids.append(operation.patch_id)
+
+    return WikiPatchApplyResult(
+        dry_run=dry_run,
+        applied_patch_ids=applied_patch_ids,
+        skipped_patch_ids=skipped_patch_ids,
+        planned_patch_ids=planned_patch_ids,
+    )
+
+
+def _target_file_for_candidate(candidate: PromotionCandidate) -> str:
+    target = candidate.target_page.strip()
+    if not target:
+        return "_review/untriaged.md"
+    if target.endswith(".md") or "/" in target:
+        return target
+    return f"concepts/{target}.md"
+
+
+def _claim_block_for_candidate(candidate: PromotionCandidate) -> str:
+    primary_evidence = candidate.evidence[0] if candidate.evidence else "no-evidence"
+    return "\n".join(
+        [
+            MANAGED_CLAIMS_START,
+            f"- {candidate.proposed_change} `{primary_evidence}`",
+            MANAGED_CLAIMS_END,
+        ]
+    )
+
+
+def _existing_claim_block(markdown: str) -> str:
+    start = markdown.find(MANAGED_CLAIMS_START)
+    end = markdown.find(MANAGED_CLAIMS_END)
+    if start == -1 or end == -1 or end < start:
+        return ""
+    return markdown[start : end + len(MANAGED_CLAIMS_END)]
+
+
+def _safe_target_path(*, wiki_root: Path, target: str) -> Path | None:
+    target_path = Path(target)
+    if target_path.is_absolute() or ".." in target_path.parts:
+        return None
+    root = wiki_root.resolve()
+    resolved = (root / target_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    return resolved
+
+
+def _apply_operation(*, operation: WikiPatchOperation, target_path: Path) -> None:
+    after = operation.diff.get("after", "")
+    if operation.operation == "create_page" and not target_path.exists():
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        title = target_path.stem.replace("-", " ").title()
+        target_path.write_text(f"# {title}\n\n{after}\n", encoding="utf-8")
+        return
+
+    existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+    if operation.operation in {"insert_claim_block", "create_page"}:
+        updated = _replace_or_append_claim_block(markdown=existing, claim_block=after)
+    elif operation.operation == "append_section":
+        updated = _append_to_section(
+            markdown=existing,
+            section=operation.diff.get("section", ""),
+            addition=after,
+        )
+    elif operation.operation == "add_link":
+        updated = _add_related_link(markdown=existing, link=after)
+    elif operation.operation == "mark_stale":
+        updated = _mark_page_stale(markdown=existing)
+    else:
+        return
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(updated, encoding="utf-8")
+
+
+
+
+def _append_to_section(*, markdown: str, section: str, addition: str) -> str:
+    addition = addition.strip()
+    if not addition:
+        return markdown
+    heading = section.strip().lstrip("# ").strip()
+    if not heading:
+        base = markdown.rstrip()
+        return f"{base}\n\n{addition}\n" if base else f"{addition}\n"
+
+    lines = markdown.splitlines()
+    heading_index = None
+    for index, line in enumerate(lines):
+        if line.strip().lower() == f"## {heading}".lower():
+            heading_index = index
+            break
+    if heading_index is None:
+        base = markdown.rstrip()
+        return f"{base}\n\n## {heading}\n{addition}\n" if base else f"## {heading}\n{addition}\n"
+
+    insert_index = len(lines)
+    for index in range(heading_index + 1, len(lines)):
+        if lines[index].startswith("## "):
+            insert_index = index
+            break
+    while insert_index > heading_index + 1 and lines[insert_index - 1] == "":
+        insert_index -= 1
+    lines.insert(insert_index, addition)
+    return "\n".join(lines) + "\n"
+
+
+def _add_related_link(*, markdown: str, link: str) -> str:
+    link = link.strip()
+    if not link or link in markdown:
+        return markdown
+    bullet = link if link.startswith("- ") else f"- {link}"
+    return _append_to_section(markdown=markdown, section="Related Pages", addition=bullet)
+
+
+def _mark_page_stale(*, markdown: str) -> str:
+    if markdown.startswith("---\n"):
+        end = markdown.find("\n---", 4)
+        if end != -1:
+            frontmatter = markdown[4:end].splitlines()
+            body = markdown[end + 4 :]
+            updated: list[str] = []
+            saw_status = False
+            saw_review = False
+            for line in frontmatter:
+                if line.startswith("status:"):
+                    updated.append("status: stale")
+                    saw_status = True
+                elif line.startswith("review_needed:"):
+                    updated.append("review_needed: true")
+                    saw_review = True
+                else:
+                    updated.append(line)
+            if not saw_status:
+                updated.append("status: stale")
+            if not saw_review:
+                updated.append("review_needed: true")
+            return "---\n" + "\n".join(updated) + "\n---" + body
+    base = markdown.rstrip()
+    return "---\nstatus: stale\nreview_needed: true\n---\n" + (base + "\n" if base else "")
+
+def _replace_or_append_claim_block(*, markdown: str, claim_block: str) -> str:
+    start = markdown.find(MANAGED_CLAIMS_START)
+    end = markdown.find(MANAGED_CLAIMS_END)
+    if start != -1 and end != -1 and end >= start:
+        end += len(MANAGED_CLAIMS_END)
+        return markdown[:start] + claim_block + markdown[end:]
+    base = markdown.rstrip()
+    if not base:
+        return claim_block + "\n"
+    return base + "\n\n" + claim_block + "\n"

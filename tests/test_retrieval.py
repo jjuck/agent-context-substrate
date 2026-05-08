@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
+import pytest
 from agent_context_substrate.retrieval import expand_hit, search_knowledge
 
 
@@ -158,6 +160,375 @@ def test_expand_hit_returns_full_wiki_or_packet_detail(tmp_path: Path) -> None:
     assert detail.metadata["source_type"] == "wiki"
 
 
+def test_search_knowledge_includes_promotions_wiki_patches_and_applied_logs(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    promotions_dir = project_root / "data" / "promotions"
+    patches_dir = project_root / "data" / "wiki_patches"
+    promotions_dir.mkdir(parents=True)
+    patches_dir.mkdir(parents=True)
+
+    (promotions_dir / "packet-1.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Claim atom should update durable summarization knowledge.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Hybrid summarizer uses heuristic spine before semantic interpretation.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.8,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (patches_dir / "packet-1.json").write_text(
+        json.dumps(
+            {
+                "proposal_id": "packet-1-wiki-patch-proposal",
+                "packet_id": "packet-1",
+                "status": "proposed",
+                "operations": [
+                    {
+                        "patch_id": "packet-1-patch-1",
+                        "candidate_id": "packet-1-candidate-1",
+                        "target": "concepts/summarization.md",
+                        "operation": "insert_claim_block",
+                        "rationale": "Apply hybrid summarizer claim into managed block.",
+                        "evidence": ["claim:packet-1-claim-1"],
+                        "risk": "low",
+                        "diff": {"before": "", "after": "Hybrid summarizer managed block."},
+                        "status": "proposed",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (patches_dir / "applied.jsonl").write_text(
+        json.dumps(
+            {
+                "created_at": "2026-05-07T00:00:00+00:00",
+                "proposal_id": "packet-1-wiki-patch-proposal",
+                "packet_id": "packet-1",
+                "patch_id": "packet-1-patch-1",
+                "candidate_id": "packet-1-candidate-1",
+                "target": "concepts/summarization.md",
+                "operation": "insert_claim_block",
+                "note": "Hybrid summarizer claim applied.",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "hybrid summarizer managed block",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        limit=10,
+    )
+
+    source_types = {hit.source_type for hit in hits}
+    assert "promotion_candidate" in source_types
+    assert "wiki_patch" in source_types
+    assert "applied_patch" in source_types
+    promotion_hit = next(hit for hit in hits if hit.source_type == "promotion_candidate")
+    assert promotion_hit.source_path == "data/promotions/packet-1.json"
+    assert promotion_hit.provenance == ["promotion:packet-1-candidate-1", "claim:packet-1-claim-1"]
+    patch_hit = next(hit for hit in hits if hit.source_type == "wiki_patch")
+    assert patch_hit.provenance == ["wiki-patch:packet-1-patch-1", "claim:packet-1-claim-1"]
+    applied_hit = next(hit for hit in hits if hit.source_type == "applied_patch")
+    assert applied_hit.provenance == ["applied-patch:packet-1-patch-1"]
+
+    detail = expand_hit(promotion_hit.hit_id, project_root=project_root, wiki_root=wiki_root)
+
+    assert detail.metadata["source_type"] == "promotion_candidate"
+    assert detail.metadata["candidate_id"] == "packet-1-candidate-1"
+    assert "Hybrid summarizer uses heuristic spine" in detail.content
+
+
+def test_search_knowledge_includes_topic_map_nodes_and_edges(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    topic_map_path = project_root / "data" / "index" / "topic_map.json"
+    topic_map_path.parent.mkdir(parents=True)
+    topic_map_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "topic_map_v1",
+                "nodes": [
+                    {
+                        "node_id": "claim:packet-1-claim-1",
+                        "type": "claim",
+                        "label": "Hybrid summarizer keeps heuristic spine.",
+                        "source_path": "data/atoms/claims.jsonl",
+                        "metadata": {"status": "active"},
+                    },
+                    {
+                        "node_id": "promotion:packet-1-candidate-1",
+                        "type": "promotion",
+                        "label": "packet-1-candidate-1",
+                        "source_path": "data/promotions/packet-1.json",
+                        "metadata": {"target_page": "summarization"},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source": "claim:packet-1-claim-1",
+                        "target": "promotion:packet-1-candidate-1",
+                        "type": "promoted_as",
+                        "metadata": {"reason": "heuristic spine became durable knowledge candidate"},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "heuristic spine promoted_as",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        limit=10,
+    )
+
+    source_types = {hit.source_type for hit in hits}
+    assert "topic_map_node" in source_types
+    assert "topic_map_edge" in source_types
+    edge_hit = next(hit for hit in hits if hit.source_type == "topic_map_edge")
+    assert edge_hit.source_path == "data/index/topic_map.json"
+    assert edge_hit.provenance == ["topic-map-edge:claim:packet-1-claim-1->promotion:packet-1-candidate-1:promoted_as"]
+
+    detail = expand_hit(edge_hit.hit_id, project_root=project_root, wiki_root=wiki_root)
+
+    assert detail.metadata["source_type"] == "topic_map_edge"
+    assert detail.metadata["edge_type"] == "promoted_as"
+    assert "heuristic spine became durable knowledge candidate" in detail.content
+
+
+def test_search_knowledge_graph_mode_returns_only_topic_map_hits(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    (wiki_root / "concepts").mkdir(parents=True)
+    (wiki_root / "concepts" / "graph.md").write_text(
+        "# Graph\n\nheuristic spine promoted_as should not win in graph mode.",
+        encoding="utf-8",
+    )
+    topic_map_path = project_root / "data" / "index" / "topic_map.json"
+    topic_map_path.parent.mkdir(parents=True)
+    topic_map_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "topic_map_v1",
+                "nodes": [
+                    {
+                        "node_id": "claim:packet-1-claim-1",
+                        "type": "claim",
+                        "label": "Hybrid summarizer heuristic spine.",
+                        "source_path": "data/atoms/claims.jsonl",
+                        "metadata": {},
+                    }
+                ],
+                "edges": [
+                    {
+                        "source": "claim:packet-1-claim-1",
+                        "target": "promotion:packet-1-candidate-1",
+                        "type": "promoted_as",
+                        "metadata": {"reason": "graph mode relation"},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "heuristic spine promoted_as",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        limit=10,
+        mode="graph",
+    )
+
+    assert hits
+    assert {hit.source_type for hit in hits} <= {"topic_map_node", "topic_map_edge"}
+    assert any(hit.source_type == "topic_map_edge" for hit in hits)
+
+
+def test_search_knowledge_graph_mode_can_expand_neighbor_edges_and_nodes(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    topic_map_path = project_root / "data" / "index" / "topic_map.json"
+    topic_map_path.parent.mkdir(parents=True)
+    topic_map_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "topic_map_v1",
+                "nodes": [
+                    {
+                        "node_id": "claim:packet-1-claim-1",
+                        "type": "claim",
+                        "label": "Hybrid summarizer keeps heuristic spine.",
+                        "source_path": "data/atoms/claims.jsonl",
+                        "metadata": {},
+                    },
+                    {
+                        "node_id": "promotion:packet-1-candidate-1",
+                        "type": "promotion",
+                        "label": "packet-1-candidate-1",
+                        "source_path": "data/promotions/packet-1.json",
+                        "metadata": {},
+                    },
+                    {
+                        "node_id": "wiki_patch:packet-1-patch-1",
+                        "type": "wiki_patch",
+                        "label": "packet-1-patch-1",
+                        "source_path": "data/wiki_patches/packet-1.json",
+                        "metadata": {},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source": "claim:packet-1-claim-1",
+                        "target": "promotion:packet-1-candidate-1",
+                        "type": "promoted_as",
+                        "metadata": {},
+                    },
+                    {
+                        "source": "promotion:packet-1-candidate-1",
+                        "target": "wiki_patch:packet-1-patch-1",
+                        "type": "planned_as",
+                        "metadata": {},
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "heuristic spine",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        limit=10,
+        mode="graph",
+        graph_depth=2,
+    )
+
+    hit_ids = {hit.provenance[0] for hit in hits}
+    assert "topic-map-node:claim:packet-1-claim-1" in hit_ids
+    assert "topic-map-edge:claim:packet-1-claim-1->promotion:packet-1-candidate-1:promoted_as" in hit_ids
+    assert "topic-map-node:promotion:packet-1-candidate-1" in hit_ids
+    assert "topic-map-edge:promotion:packet-1-candidate-1->wiki_patch:packet-1-patch-1:planned_as" in hit_ids
+    assert "topic-map-node:wiki_patch:packet-1-patch-1" in hit_ids
+
+
+def test_search_knowledge_graph_mode_returns_human_readable_paths(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    topic_map_path = project_root / "data" / "index" / "topic_map.json"
+    topic_map_path.parent.mkdir(parents=True)
+    topic_map_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "topic_map_v1",
+                "nodes": [
+                    {
+                        "node_id": "claim:packet-1-claim-1",
+                        "type": "claim",
+                        "label": "Hybrid summarizer keeps heuristic spine.",
+                        "source_path": "data/atoms/claims.jsonl",
+                        "metadata": {},
+                    },
+                    {
+                        "node_id": "promotion:packet-1-candidate-1",
+                        "type": "promotion",
+                        "label": "packet-1-candidate-1",
+                        "source_path": "data/promotions/packet-1.json",
+                        "metadata": {},
+                    },
+                    {
+                        "node_id": "wiki_patch:packet-1-patch-1",
+                        "type": "wiki_patch",
+                        "label": "packet-1-patch-1",
+                        "source_path": "data/wiki_patches/packet-1.json",
+                        "metadata": {},
+                    },
+                    {
+                        "node_id": "wiki_page:concepts/summarization.md",
+                        "type": "wiki_page",
+                        "label": "Summarization",
+                        "source_path": "concepts/summarization.md",
+                        "metadata": {},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source": "claim:packet-1-claim-1",
+                        "target": "promotion:packet-1-candidate-1",
+                        "type": "promoted_as",
+                        "metadata": {},
+                    },
+                    {
+                        "source": "promotion:packet-1-candidate-1",
+                        "target": "wiki_patch:packet-1-patch-1",
+                        "type": "planned_as",
+                        "metadata": {},
+                    },
+                    {
+                        "source": "wiki_patch:packet-1-patch-1",
+                        "target": "wiki_page:concepts/summarization.md",
+                        "type": "targets",
+                        "metadata": {},
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "heuristic spine",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        limit=20,
+        mode="graph",
+        graph_depth=3,
+    )
+
+    path_hit = next(hit for hit in hits if hit.source_type == "topic_map_path")
+    assert path_hit.title == "claim → promotion → wiki_patch → wiki_page"
+    assert (
+        "claim:packet-1-claim-1 --promoted_as--> promotion:packet-1-candidate-1"
+        " --planned_as--> wiki_patch:packet-1-patch-1"
+        " --targets--> wiki_page:concepts/summarization.md"
+    ) in path_hit.snippet
+    assert path_hit.provenance == [
+        "topic-map-path:claim:packet-1-claim-1->promotion:packet-1-candidate-1->wiki_patch:packet-1-patch-1->wiki_page:concepts/summarization.md"
+    ]
+
+    detail = expand_hit(path_hit.hit_id, project_root=project_root, wiki_root=wiki_root)
+
+    assert detail.metadata["source_type"] == "topic_map_path"
+    assert detail.metadata["path_length"] == 3
+    assert "promoted_as" in detail.content
+    assert "targets" in detail.content
+
+
+
 def test_search_knowledge_can_query_raw_evidence_sqlite(tmp_path: Path, monkeypatch) -> None:
     import sqlite3
 
@@ -189,3 +560,124 @@ def test_search_knowledge_can_query_raw_evidence_sqlite(tmp_path: Path, monkeypa
     raw_hits = [hit for hit in hits if hit.source_type == "raw_message"]
     assert raw_hits
     assert raw_hits[0].provenance == ["hermes-session:session-raw#messages=42"]
+
+
+def _forged_hit_id(payload: dict[str, object]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def test_expand_hit_rejects_forged_wiki_path_traversal(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+    outside = tmp_path / "secret.md"
+    outside.write_text("outside secret should not be readable", encoding="utf-8")
+    hit_id = _forged_hit_id(
+        {
+            "source_type": "wiki",
+            "source_path": "../secret.md",
+            "title": "forged",
+            "provenance": [],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        expand_hit(hit_id, project_root=project_root, wiki_root=wiki_root)
+
+
+def test_expand_hit_rejects_forged_project_absolute_path(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    wiki_root.mkdir()
+    outside = tmp_path / "promotions.json"
+    outside.write_text("[]", encoding="utf-8")
+    hit_id = _forged_hit_id(
+        {
+            "source_type": "promotion_candidate",
+            "source_path": str(outside),
+            "candidate_id": "candidate-1",
+            "title": "forged",
+            "provenance": [],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        expand_hit(hit_id, project_root=project_root, wiki_root=wiki_root)
+
+
+def test_expand_hit_rejects_forged_excluded_wiki_file(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    secret_page = wiki_root / "_system" / "secret.md"
+    secret_page.parent.mkdir(parents=True)
+    secret_page.write_text("# Secret\n\nexcluded wiki content", encoding="utf-8")
+    hit_id = _forged_hit_id(
+        {
+            "source_type": "wiki",
+            "source_path": "_system/secret.md",
+            "title": "forged",
+            "provenance": [],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        expand_hit(hit_id, project_root=project_root, wiki_root=wiki_root)
+
+
+def test_expand_hit_rejects_forged_project_path_outside_allowed_artifact_dirs(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    raw_export = project_root / "data" / "exports" / "session-1.json"
+    raw_export.parent.mkdir(parents=True)
+    raw_export.write_text('{"private": "raw export should not be expandable"}', encoding="utf-8")
+    hit_id = _forged_hit_id(
+        {
+            "source_type": "packet",
+            "source_path": "data/exports/session-1.json",
+            "packet_id": "session-1",
+            "title": "forged",
+            "provenance": [],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        expand_hit(hit_id, project_root=project_root, wiki_root=wiki_root)
+
+
+def test_expand_hit_rejects_forged_raw_message_hit(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    wiki_root.mkdir()
+    hit_id = _forged_hit_id(
+        {
+            "source_type": "raw_message",
+            "source_path": "state.db:session-1:1",
+            "session_id": "session-1",
+            "message_id": 1,
+            "title": "forged",
+            "provenance": [],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        expand_hit(hit_id, project_root=project_root, wiki_root=wiki_root)
+
+
+def test_search_knowledge_skips_wiki_symlink_outside_root(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+    outside = tmp_path / "outside-secret.md"
+    outside.write_text("# Secret\n\noutside-only-sentinel", encoding="utf-8")
+    link = wiki_root / "link.md"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+
+    hits = search_knowledge("outside-only-sentinel", project_root=project_root, wiki_root=wiki_root)
+
+    assert hits == []

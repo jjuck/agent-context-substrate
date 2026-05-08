@@ -19,6 +19,20 @@ This project was formerly named `hermes-llm-wiki-harness`. The rename reflects t
 
 The default session-finalize policy is **`packet-only`**: generated session artifacts stay in `data/exports/` and `data/index/session_ledger.json`; Obsidian is reserved for curated, human-written wiki pages.
 
+The new knowledge-growth path is deliberately review-first:
+
+```text
+ContextPacket
+  -> EvidenceBundle
+  -> MicroSummaryV2 / UnitSummaryV2
+  -> claim atoms
+  -> promotion candidates
+  -> wiki patch proposals
+  -> reviewed Obsidian updates
+```
+
+`ContextPacket` files are raw material for future wiki growth. They are not durable wiki pages by themselves.
+
 ## Why this helps
 
 Long AI-agent sessions often contain decisions, file paths, test results, and next steps that are hard to recover after a reset or context compression. This harness makes that work reusable:
@@ -33,6 +47,8 @@ Long AI-agent sessions often contain decisions, file paths, test results, and ne
 Hermes state.db
   -> raw session export
   -> context packet JSON / Markdown
+  -> optional v2 evidence + structured summaries
+  -> optional claim atoms / promotion candidates / wiki patch proposals
   -> lint report JSON / Markdown
   -> recovery brief JSON
   -> session ledger
@@ -43,7 +59,7 @@ Hermes state.db
 
 | Item | Value |
 | --- | --- |
-| Status | Public alpha; v0.1.0 release published; Hermes Agent is the only packaged adapter |
+| Status | Public alpha; v0.2.0 local release candidate; Hermes Agent is the only packaged adapter |
 | Runtime | Python 3.11+ |
 | Main interface | CLI: `agent-context-substrate` |
 | Current agent support | Hermes Agent only |
@@ -51,6 +67,8 @@ Hermes state.db
 | Planned adapter direction | Additional agents such as Claude Code, Codex, OpenCode, or Gemini can be added later; they are not packaged yet. |
 | Default output | `data/exports/`, `data/index/session_ledger.json` |
 | Default promotion mode | `packet-only` |
+| Optional summary modes | `heuristic`, `agent-llm`, `hybrid`, `custom-command` via `--summary-mode` |
+| Recommended wiki growth | atoms -> promotion candidates -> dry-run wiki patch proposals |
 | Legacy wiki promotion | Explicit `promotion_mode="full"` or `promote-*` CLI only |
 | Wiki role | Human-facing semantic Obsidian vault |
 | Wiki languages | `ko`, `en` via `lang` frontmatter and `_system/config.yaml` |
@@ -60,12 +78,16 @@ Hermes state.db
 
 - Export one Hermes session from `HERMES_HOME/state.db` into raw JSON.
 - Build heuristic `MicroSummary`, `UnitSummary`, and `ContextPacket` artifacts.
+- Optionally export evidence bundles plus `MicroSummaryV2` / `UnitSummaryV2` artifacts with separated recovery, knowledge, and retrieval summaries.
+- Use pluggable summary backends: default heuristic, host Agent LLM, hybrid, or custom command.
+- Extract claim atoms, propose promotion candidates, and plan reviewable wiki patches without touching Obsidian by default.
 - Generate compact recovery briefs for resume workflows.
 - Maintain a ledger for idempotency, stale-artifact rebuilds, retry budgets, and partial-failure diagnostics.
 - Keep live Obsidian clean by using `packet-only` as the default finalize mode.
 - Initialize a human-facing LLM Wiki skeleton with Korean/English templates.
 - Install packaged Hermes user-plugin and context-engine assets into a Hermes Agent environment.
 - Run `doctor` and `fresh-install-smoke` checks for distribution validation.
+- Build graph-style topic maps from wiki pages and substrate artifacts.
 - Expose request-time retrieval through Hermes context-engine tools:
   - `wiki_recovery_context`
   - `wiki_knowledge_search`
@@ -179,8 +201,8 @@ The current public alpha baseline has been verified from the published repositor
 
 | Check | Current result |
 | --- | --- |
-| Project tests | `67 passed` |
-| Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=5291`, `lint_issue_count=0` |
+| Project tests | `158 passed` |
+| Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Hermes attachment | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools loaded |
 | GitHub sync | `main` pushed to `jjuck/agent-context-substrate` |
@@ -192,7 +214,15 @@ Keep this table current when cutting a release or changing installer/runtime beh
 | Command | Purpose |
 | --- | --- |
 | `extract-session` | Export one Hermes session to raw JSON. |
-| `build-context-packet` | Build raw export + context packet artifacts. |
+| `build-context-packet` | Build raw export + context packet artifacts; add `--summary-mode` to also write v2 evidence and summary artifacts. |
+| `extract-atoms` | Extract claim, decision, entity, concept, and question atoms from v2 summary artifacts into `data/atoms/*.jsonl`. |
+| `propose-promotions` | Propose reviewable wiki promotion candidates from claim atoms. Does not write Obsidian. |
+| `plan-wiki-patches` | Convert promotion candidates into dry-run wiki patch proposals. |
+| `apply-wiki-patch` | Dry-run by default; writes only with `--apply` and safe managed-block operations. |
+| `list-promotions` | List promotion queue candidates and statuses. |
+| `list-wiki-patches` | List proposed/applied wiki patch records. |
+| `lint-promotions` | Run semantic lint checks on promotions and wiki patch records. |
+| `build-topic-map` | Build graph-style topic map reports from wiki pages and substrate artifacts. |
 | `promote-packet-query` | Legacy explicit promotion into wiki `queries/`. |
 | `promote-packet-plan` | Legacy explicit promotion into wiki `plans/`. |
 | `promote-unit-concept` | Legacy explicit promotion into wiki `concepts/`. |
@@ -240,6 +270,78 @@ Output:
 data/exports/<SESSION_ID>.json
 data/exports/context_packets/<PACKET_ID>.json
 data/exports/context_packets/<PACKET_ID>.md
+```
+
+### Add structured v2 summaries
+
+The default packet build remains backward-compatible. Add `--summary-mode` when you want evidence bundles and v2 summary artifacts.
+
+```bash
+agent-context-substrate build-context-packet \
+  --session-id '<SESSION_ID>' \
+  --packet-id '<PACKET_ID>' \
+  --task-title 'Resume context-substrate work' \
+  --macro-context 'Recover the main context without replaying the full session.' \
+  --unit-title 'Inspect packet-only finalize policy' \
+  --goal 'Capture the current implementation state and next actions.' \
+  --summary-mode heuristic \
+  --summary-cache on \
+  --project-root '<PROJECT_ROOT>'
+```
+
+Optional modes:
+
+| Mode | Meaning |
+| --- | --- |
+| `heuristic` | Default offline, deterministic summary backend. |
+| `agent-llm` | Uses the host Agent's LLM routing layer when provided by the integration. |
+| `hybrid` | Heuristic evidence spine plus Agent LLM semantic interpretation. |
+| `custom-command` | Sends JSON to an external command and expects strict JSON back. |
+
+Note: standalone CLI runs `heuristic` and `custom-command` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
+
+Additional output:
+
+```text
+data/exports/evidence/<SESSION_ID>/<PACKET_ID>-micro-1.json
+data/exports/summaries/<PACKET_ID>-micro-v2.json
+data/exports/summaries/<PACKET_ID>-unit-v2.json
+data/cache/summaries/<cache_key>.json   # when --summary-cache on
+```
+
+### Review-first wiki growth
+
+This is the recommended path for turning packet evidence into human wiki updates. The first steps are dry-run/proposal oriented and do not write Obsidian.
+
+```bash
+agent-context-substrate extract-atoms \
+  --packet-id '<PACKET_ID>' \
+  --project-root '<PROJECT_ROOT>'
+
+agent-context-substrate propose-promotions \
+  --packet-id '<PACKET_ID>' \
+  --project-root '<PROJECT_ROOT>'
+
+agent-context-substrate plan-wiki-patches \
+  --promotion-file '<PROJECT_ROOT>/data/promotions/<PACKET_ID>.json' \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root '<PROJECT_ROOT>'
+
+# Dry-run is the default. Add --apply only after reviewing the proposal.
+agent-context-substrate apply-wiki-patch \
+  --patch-file '<PROJECT_ROOT>/data/wiki_patches/<PACKET_ID>.json' \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root '<PROJECT_ROOT>'
+```
+
+Proposal outputs:
+
+```text
+data/atoms/claims.jsonl
+data/promotions/<PACKET_ID>.json
+data/promotions/<PACKET_ID>.md
+data/wiki_patches/<PACKET_ID>.json
+data/wiki_patches/<PACKET_ID>.md
 ```
 
 ### Lint a real wiki
@@ -326,6 +428,16 @@ LLM Wiki/
 
 Active durable pages should include `lang: ko` or `lang: en`, provenance/sources, and type-appropriate sections. The harness linter checks structural graph quality and human-facing quality issues.
 
+For machine-assisted updates, prefer managed blocks over full-page rewrites:
+
+```md
+<!-- acs:auto:claims:start -->
+- Evidence-backed claim `claim:<id>`
+<!-- acs:auto:claims:end -->
+```
+
+Canonical pages should receive reviewed patch proposals before any `--apply` run.
+
 ## Project structure
 
 ```text
@@ -342,14 +454,27 @@ Active durable pages should include `lang: ko` or `lang: en`, provenance/sources
 │   ├── assets/
 │   ├── cli.py
 │   ├── distribution.py
+│   ├── agent_llm_router.py
+│   ├── atoms.py
+│   ├── evidence.py
 │   ├── integration.py
 │   ├── lint.py
+│   ├── promotions.py
 │   ├── recovery.py
-│   └── retrieval.py
+│   ├── retrieval.py
+│   ├── semantic_lint.py
+│   ├── summarizer_backends.py
+│   ├── summary_lint.py
+│   ├── topic_map.py
+│   └── wiki_patches.py
 ├── tests/
 └── data/
-    ├── exports/   # generated, ignored by git
-    └── index/     # generated ledger/cache, ignored by git
+    ├── atoms/         # generated atom JSONL, ignored by git
+    ├── cache/         # generated summary cache, ignored by git
+    ├── exports/       # generated raw/packet/evidence/summary/lint artifacts
+    ├── index/         # generated ledger/topic-map reports
+    ├── promotions/    # generated promotion queue proposals
+    └── wiki_patches/  # generated wiki patch proposals and apply log
 ```
 
 ## Development and verification
@@ -390,12 +515,14 @@ This project works with sensitive local data. Treat exports as private unless de
 - [User Guide EN](./docs/USER_GUIDE.en.md) — English storage layers, Hermes install, plugin/context-engine use, Telegram commands.
 - [User Guide KO](./docs/USER_GUIDE.md) — Korean storage layers, Hermes install, plugin/context-engine use, Telegram commands.
 - [Operations Guide](./docs/OPERATIONS.md) — runbooks, validation, troubleshooting, privacy and rollback notes.
-- [Pipeline Reference](./docs/PIPELINE.md) — data flow, module responsibilities, artifact lifecycle.
+- [Pipeline Reference](./docs/PIPELINE.md) — data flow, module responsibilities, artifact lifecycle, v2 summaries, promotion queue, wiki patches, and topic map.
 - [Release Checklist](./docs/RELEASE_CHECKLIST.md) — source hygiene, install checks, privacy checks, verification gates.
 
 ## Current limitations
 
 - The project is a public alpha: APIs, docs, and installer behavior may still change before beta/stable releases.
-- Curated promotion into the new human-facing folders (`01 지식`, `04 프로젝트`, etc.) is not yet automated.
+- Claim atoms are implemented first; decision/entity/concept/question atom stores are planned extensions.
+- Semantic lint currently starts with promotion/wiki-patch checks; deeper wiki health checks are planned.
+- Wiki patch apply is intentionally narrow and managed-block oriented.
 - Legacy full promotion still writes old `queries/`, `concepts/`, `plans/`, and `architectures/` paths.
 - Long-running Hermes gateway processes need restart after plugin/context-engine deployment.

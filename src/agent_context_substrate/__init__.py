@@ -1,3 +1,15 @@
+from .atoms import (
+    ClaimAtom,
+    ConceptAtom,
+    DecisionAtom,
+    EntityAtom,
+    QuestionAtom,
+    extract_claim_atoms,
+    extract_concept_atoms,
+    extract_decision_atoms,
+    extract_entity_atoms,
+    extract_question_atoms,
+)
 from .context_packet import build_context_packet, export_context_packet, render_context_packet_markdown
 from .distribution import (
     DoctorReport,
@@ -9,6 +21,7 @@ from .distribution import (
     install_user_plugin,
     run_fresh_install_smoke,
 )
+from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
 from .integration import (
     IntegrationResult,
     PipelineRetryExhaustedError,
@@ -17,7 +30,18 @@ from .integration import (
 )
 from .ledger import LedgerRecord, SessionLedger
 from .lint import WikiLintReport, BrokenWikilink, export_lint_report, lint_wiki, render_lint_report_markdown
-from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
+from .models import (
+    ContextPacket,
+    EvidenceBackedText,
+    EvidenceMessage,
+    MicroEvidenceBundle,
+    MicroSummary,
+    MicroSummaryV2,
+    RawSessionReference,
+    SummaryMetadata,
+    UnitSummary,
+    UnitSummaryV2,
+)
 from .naming import derive_goal, derive_task_title, derive_unit_title, slugify_label
 from .paths import HarnessPaths
 from .policy import should_process_bundle
@@ -27,26 +51,94 @@ from .promotion import (
     promote_unit_summary_to_architecture,
     promote_unit_summary_to_concept,
 )
+from .promotions import (
+    PromotionCandidate,
+    propose_promotion_candidates,
+    render_promotion_candidates_markdown,
+)
 from .raw_extract import export_session_bundle
 from .recovery import RecoveryBrief, build_recovery_brief, export_recovery_brief
 from .retrieval import RetrievalHit, RetrievalHitDetail, expand_hit, search_knowledge
+from .semantic_lint import (
+    SemanticLintIssue,
+    SemanticLintReport,
+    lint_promotion_substrate,
+    render_semantic_lint_report,
+)
 from .session_store import SessionStore
-from .summarizer import build_micro_summary, build_unit_summary
+from .wiki_patches import (
+    WikiPatchApplyResult,
+    WikiPatchOperation,
+    WikiPatchProposal,
+    apply_wiki_patch_proposal,
+    plan_wiki_patch_proposal,
+    render_wiki_patch_proposal_markdown,
+)
+from .summarizer_backends import (
+    AgentLLMRouter,
+    AgentLLMSummarizerBackend,
+    CustomCommandSummarizerBackend,
+    HeuristicSummarizerBackend,
+    HybridSummarizerBackend,
+    SummarizerBackend,
+    get_summarizer_backend,
+)
+from .summary_lint import SummaryLintIssue, SummaryLintReport, lint_micro_summary_v2
+from .summarizer import (
+    build_micro_summary,
+    build_micro_summary_v2,
+    build_unit_summary,
+    build_unit_summary_v2,
+)
+from .topic_map import (
+    TopicMap,
+    TopicMapEdge,
+    TopicMapNode,
+    build_topic_map,
+    export_topic_map,
+    render_topic_map_markdown,
+)
 
 __all__ = [
     "IntegrationResult",
+    "AgentLLMRouter",
+    "AgentLLMSummarizerBackend",
+    "ClaimAtom",
+    "ConceptAtom",
+    "DecisionAtom",
+    "EntityAtom",
+    "QuestionAtom",
+    "CustomCommandSummarizerBackend",
+    "HeuristicSummarizerBackend",
+    "HybridSummarizerBackend",
     "DoctorReport",
     "FreshInstallSmokeResult",
     "InstallResult",
     "PipelineRetryExhaustedError",
+    "PromotionCandidate",
+    "WikiPatchApplyResult",
+    "WikiPatchOperation",
+    "WikiPatchProposal",
     "LedgerRecord",
+    "SemanticLintIssue",
+    "SemanticLintReport",
     "SessionLedger",
+    "SummaryLintIssue",
+    "SummaryLintReport",
+    "SummarizerBackend",
     "RecoveryBrief",
     "RetrievalHit",
     "RetrievalHitDetail",
+    "TopicMap",
+    "TopicMapEdge",
+    "TopicMapNode",
     "build_context_packet",
+    "build_micro_evidence_bundle",
     "build_micro_summary",
+    "build_micro_summary_v2",
+    "build_topic_map",
     "build_unit_summary",
+    "build_unit_summary_v2",
     "derive_goal",
     "doctor",
     "init_wiki",
@@ -57,10 +149,21 @@ __all__ = [
     "derive_unit_title",
     "slugify_label",
     "export_context_packet",
+    "export_micro_evidence_bundle",
+    "extract_claim_atoms",
+    "extract_concept_atoms",
+    "extract_decision_atoms",
+    "extract_entity_atoms",
+    "extract_question_atoms",
     "expand_hit",
     "render_context_packet_markdown",
+    "get_summarizer_backend",
     "lint_wiki",
+    "lint_micro_summary_v2",
+    "lint_promotion_substrate",
     "render_lint_report_markdown",
+    "render_semantic_lint_report",
+    "render_topic_map_markdown",
     "run_session_finalize_pipeline",
     "should_process_session",
     "search_knowledge",
@@ -68,19 +171,31 @@ __all__ = [
     "export_recovery_brief",
     "should_process_bundle",
     "export_lint_report",
+    "export_topic_map",
     "promote_context_packet_to_plan",
     "promote_context_packet_to_query",
     "promote_unit_summary_to_architecture",
     "promote_unit_summary_to_concept",
+    "propose_promotion_candidates",
+    "render_promotion_candidates_markdown",
+    "apply_wiki_patch_proposal",
+    "plan_wiki_patch_proposal",
+    "render_wiki_patch_proposal_markdown",
     "BrokenWikilink",
     "ContextPacket",
+    "EvidenceBackedText",
+    "EvidenceMessage",
     "HarnessPaths",
+    "MicroEvidenceBundle",
     "MicroSummary",
+    "MicroSummaryV2",
     "RawSessionReference",
     "SessionStore",
+    "SummaryMetadata",
     "UnitSummary",
+    "UnitSummaryV2",
     "WikiLintReport",
     "export_session_bundle",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
