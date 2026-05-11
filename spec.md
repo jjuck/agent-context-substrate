@@ -2,9 +2,10 @@
 
 > **For Hermes:** Use `subagent-driven-development` if implementing this spec task-by-task.
 
-**Status:** Draft
+**Status:** Partially implemented alpha; MVP scope locked
 **Scope:** Summarization quality, knowledge atoms, promotion queue, wiki patching, and semantic lint
 **Default posture:** Keep Obsidian human-facing. Keep generated machine artifacts outside the wiki by default.
+**Alpha decision:** Implement recovery and LLM-input safety gaps; keep wiki growth automation intentionally review-first and MVP-sized.
 
 ## 1. Goal
 
@@ -75,6 +76,22 @@ The current weak points are:
 7. **LLM features are opt-in.**
    Default summarization remains heuristic for privacy, cost, speed, offline use, and reproducibility.
 
+## 3.1 Product Philosophy and Quality Metrics
+
+The alpha should optimize for usefulness, trust, and reviewability rather than automation volume.
+
+1. **Recovery brief quality is the core metric.**
+   The most important product question is: can the next session immediately continue real work? A recovery brief is high quality when it captures the last concrete state, key decisions, active files, unresolved blockers, and the next safe action without replaying raw transcript.
+
+2. **Search trust matters before search sophistication.**
+   Lexical retrieval is sufficient for the alpha, but larger substrates will need better precision, recency, and source-aware ranking. Retrieval results should make it clear why a hit appeared, how recent it is, and which artifact or wiki source supports it.
+
+3. **Promotion queue friction must stay low.**
+   The review-first philosophy is correct only if users can quickly triage proposed wiki updates. If patch proposals become noisy or hard to compare, backlog will grow and the wiki will stop improving. Queue/listing UX, grouping, evidence display, and status transitions are therefore product-quality concerns, not just CLI polish.
+
+4. **Automation should reduce review load, not bypass it.**
+   The substrate should help decide what deserves wiki life. It should not become an automatic page factory or broad wiki editor before review, rollback, and conflict handling are mature.
+
 ## 4. Non-goals
 
 This spec does **not** require:
@@ -84,7 +101,21 @@ This spec does **not** require:
 - writing generated packets directly into Obsidian;
 - redesigning the existing Obsidian folder structure;
 - adding provider SDKs as core dependencies;
-- rewriting existing wiki pages wholesale.
+- rewriting existing wiki pages wholesale;
+- implementing every possible wiki patch operation in the alpha;
+- treating native Windows or non-Hermes agent compatibility as a blocker for the current Hermes-focused alpha.
+
+## 4.1 Alpha MVP Scope
+
+The alpha scope is intentionally split into **Implemented**, **MVP to implement**, and **Future** work.
+
+| Area | Alpha decision | Rationale |
+| --- | --- | --- |
+| `search_knowledge(mode="recovery")` | **MVP to implement** | Recovery is part of the core promise. Search should surface recovery briefs and packet recovery fields directly. |
+| LLM input safety flags | **MVP to implement** | `agent-llm`, `hybrid`, and `custom-command` modes need a visible input boundary before broader use. |
+| Wiki patch operations | **MVP subset only** | More operations would turn the project into an automatic wiki editor before review, rollback, and conflict UX are mature. |
+| Semantic lint | **Structural MVP now, semantic heuristics later** | Deep duplicate/stale/contradiction checks require ontology, similarity, and freshness policy to avoid noisy warnings. |
+| Native Windows / non-Hermes portability | **Future before expansion** | The current release remains Hermes-focused; see `docs/AGENT_PORTABILITY_NOTES.md` before claiming broader support. |
 
 ## 5. Target Architecture
 
@@ -130,6 +161,25 @@ Obsidian Wiki
         ↓
 Semantic Lint + Graph Retrieval
 ```
+
+## 5.1 Code Design Direction
+
+The current implementation is acceptable for the Hermes-focused alpha, but the following design pressures should guide the next refactors.
+
+1. **Keep shrinking `cli.py`.**
+   Moving handlers into `commands/` is the right direction, but the CLI still knows too much about orchestration, file I/O, rendering, listing, and lint glue. Prefer thin CLI handlers that validate arguments and delegate to service modules.
+
+2. **Split retrieval responsibilities before retrieval grows further.**
+   `retrieval.py` currently combines lexical search, hit encoding, source expansion, graph search, and artifact parsing. As ranking, recency, source weighting, and recovery mode mature, this file is likely to become the first maintenance bottleneck. Future structure should separate source loaders, scoring/ranking, hit encoding/decoding, expansion, and graph traversal.
+
+3. **Move model invariants closer to construction.**
+   `models.py` has clear dataclass serialization, but many important invariants are enforced later by lint. Examples include `UnitSummary.micro_ids` matching actual `MicroSummary` objects and evidence refs matching known message ids. Lint should remain as a safety net, but constructors/builders should prevent invalid substrate artifacts when the required context is available.
+
+4. **Make agent/session boundaries explicit.**
+   Even in Hermes-only mode, `session_store.py` and raw bundle dictionary shapes leak across multiple layers. A future multi-agent substrate should introduce explicit boundaries such as `AgentAdapter`, `SessionBundle`, or similar typed interfaces so Hermes state.db details stay inside the Hermes adapter.
+
+5. **Treat heuristic summarization as a pipeline, not one growing helper file.**
+   `summarizer.py` is practical for alpha, but regex/helper accumulation will become hard to tune once recovery quality becomes the core metric. When quality work begins, split heuristic extraction into strategy objects or staged extractors such as request/outcome extraction, artifact extraction, question extraction, and recovery-summary composition.
 
 ## 6. Data Model Requirements
 
@@ -362,16 +412,26 @@ All wiki updates should be reviewable patches.
 }
 ```
 
-Supported operations:
+Supported alpha operations:
 
 ```text
 create_page
-append_section
-replace_section
 insert_claim_block
+append_managed_section / append_section
+```
+
+Operations already useful in experiments but not part of the alpha guarantee:
+
+```text
 add_link
-add_alias
 mark_stale
+```
+
+Future operations:
+
+```text
+replace_section
+add_alias
 mark_deprecated
 merge_pages
 split_page
@@ -633,6 +693,13 @@ CLI options:
 --llm-max-input-chars <N>
 ```
 
+Alpha MVP behavior:
+
+- `--llm-redact` defaults to `on` for non-heuristic summary modes.
+- `--llm-max-input-chars` bounds evidence sent to host LLM/custom-command adapters.
+- `--llm-allow-code-snippets` defaults to `off`; opt in only when code snippets are needed for the summary task.
+- Provider-specific privacy policy, complex PII detection, and named redaction profiles are future work.
+
 Required redactions:
 
 ```text
@@ -728,6 +795,13 @@ Legacy full promotion is for compatibility and experiments. The recommended path
 
 Split retrieval intent into three modes.
 
+Alpha decision:
+
+- `knowledge` and `graph` are already part of the current retrieval surface.
+- `recovery` should be implemented as a small MVP mode, not left as documentation only.
+- Recovery mode should prioritize `data/exports/recovery/*.json`, then context packet recovery fields such as `macro_context`, `open_questions`, `critical_files`, and recovery-oriented unit/micro summary text.
+- Ranking can stay deterministic and simple: recovery brief hits first, packet/summary recovery hits next.
+
 ### 11.1 Recovery search
 
 Purpose:
@@ -789,6 +863,12 @@ Initial implementation may keep the current `wiki_knowledge_search` tool but sho
 
 Add semantic checks beyond structural wiki health.
 
+Alpha decision:
+
+- Keep alpha semantic lint mostly structural and evidence-oriented.
+- Implement or keep checks such as `claim_without_source`, `patch_without_candidate`, `applied_patch_missing_log`, and `applied_promotion_without_applied_patch`.
+- Treat `duplicate_concept`, `stale_claim`, `contradiction_unresolved`, `hub_overload`, and related ontology/freshness checks as future work until similarity, ontology, and freshness policies are explicit enough to avoid noisy warnings.
+
 Initial checks:
 
 ```text
@@ -839,13 +919,13 @@ Acceptance criteria:
 
 ## 14. Implementation Phases
 
-### Phase 0: Document current direction
+### Phase 0: Document current direction — **Implemented**
 
 - Clarify that `packet-only` is the recommended default.
 - Mark full promotion as legacy/experimental.
 - Add this spec to repository-facing docs.
 
-### Phase 1: Schema foundation without LLM
+### Phase 1: Schema foundation without LLM — **Implemented**
 
 - Add `SummaryMetadata`.
 - Add `MicroEvidenceBundle`.
@@ -853,14 +933,14 @@ Acceptance criteria:
 - Add heuristic conversion into v2 fields.
 - Add tests for backward compatibility.
 
-### Phase 2: Evidence and summary lint
+### Phase 2: Evidence and summary lint — **Mostly implemented; keep improving gates**
 
 - Export evidence bundles.
 - Add summary lint report model.
 - Validate evidence ids, files, entities, empty summaries, and confidence.
 - Add fallback behavior.
 
-### Phase 3: Backend abstraction
+### Phase 3: Backend abstraction — **Implemented**
 
 - Add `SummarizerBackend` protocol.
 - Move current heuristic logic behind `HeuristicSummarizerBackend`.
@@ -868,35 +948,40 @@ Acceptance criteria:
 - Add `AgentLLMSummarizerBackend` as the preferred packaged LLM path.
 - Add CLI flags for summary mode.
 
-### Phase 4: Agent LLM and hybrid summarization
+### Phase 4: Agent LLM and hybrid summarization — **MVP to finish**
 
 - Add structured JSON prompt templates.
 - Route `agent-llm` requests through the host AI Agent LLM router.
 - Treat `--summary-model` / `--summary-budget` as optional router hints.
 - Add JSON parse / repair / fallback.
 - Add privacy redaction before Agent LLM calls.
+- Add MVP CLI controls: `--llm-redact`, `--llm-max-input-chars`, and `--llm-allow-code-snippets`.
 - Keep heuristic as default.
 - Do not add direct provider SDKs as core dependencies.
 
-### Phase 5: Atoms and promotion queue
+### Phase 5: Atoms and promotion queue — **MVP implemented**
 
 - Add atom models and JSONL storage.
 - Add `extract-atoms`.
 - Add `propose-promotions`.
 - Ensure no Obsidian writes happen during proposal.
 
-### Phase 6: Wiki patch planner
+### Phase 6: Wiki patch planner — **MVP subset locked**
 
 - Add patch proposal model.
 - Add managed block support.
 - Add dry-run by default.
 - Add apply command with explicit confirmation or flag.
+- Keep alpha write operations narrow: `create_page`, `insert_claim_block`, and managed append-style updates.
+- Leave broad page-editing operations such as `replace_section`, `merge_pages`, and `split_page` for future work.
 
-### Phase 7: Semantic lint and graph retrieval
+### Phase 7: Semantic lint and graph retrieval — **Partial; recovery retrieval is next MVP**
 
-- Add semantic lint checks.
+- Add structural semantic lint checks first.
 - Add retrieval modes or tool metadata.
+- Add `search_knowledge(mode="recovery")` as a focused MVP.
 - Add topic map builder.
+- Leave ontology-heavy lint such as duplicate/stale/contradiction analysis for future work.
 
 ## 15. Testing Requirements
 

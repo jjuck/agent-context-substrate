@@ -103,13 +103,14 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 python -m pytest -q
+ruff check .
 .venv/bin/agent-context-substrate --help
 ```
 
 기대 결과:
 
 ```text
-158 passed
+200 passed
 ```
 
 그리고 `--help`에 다음 명령들이 보여야 합니다.
@@ -225,7 +226,7 @@ lint_issue_count=0
 
 | 항목 | 현재 결과 |
 | --- | --- |
-| 프로젝트 테스트 | `158 passed` |
+| 프로젝트 테스트 | `200 passed` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | 실제 wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Hermes 연결 | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools 로드됨 |
