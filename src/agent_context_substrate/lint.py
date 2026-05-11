@@ -127,6 +127,39 @@ class WikiLintReport:
         }
 
 
+def count_lint_issues(report: WikiLintReport) -> int:
+    """Count all actionable wiki lint issues in one place."""
+
+    return sum(
+        len(items)
+        for items in [
+            report.missing_provenance_pages,
+            report.orphan_pages,
+            report.pages_missing_from_index,
+            report.broken_wikilinks,
+            report.micro_summaries_missing_parent_unit,
+            report.micro_summaries_with_unknown_parent_unit,
+            report.unit_summaries_with_missing_micro_references,
+            report.packet_micro_summaries_unreferenced,
+            report.packets_missing_raw_pointers,
+            report.numeric_slug_pages,
+            report.session_id_slug_pages,
+            report.generated_summary_only_pages,
+            report.multiline_frontmatter_title_pages,
+            report.transient_command_title_pages,
+            report.smoke_or_test_pages,
+            report.session_derived_plan_pages,
+            report.excessive_critical_files_pages,
+            report.missing_lang_pages,
+            report.unsupported_lang_pages,
+            report.missing_required_sections_pages,
+            report.thin_content_pages,
+            report.unexplained_english_terms_pages,
+            report.insufficient_related_links_pages,
+        ]
+    )
+
+
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 

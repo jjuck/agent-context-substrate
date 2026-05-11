@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from datetime import date, datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -15,30 +14,45 @@ from .atoms import (
     extract_entity_atoms,
     extract_question_atoms,
 )
-from .context_packet import build_context_packet, export_context_packet
-from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
-from .distribution import (
-    doctor,
-    init_wiki,
-    install_context_engine,
-    install_user_plugin,
-    run_fresh_install_smoke,
+from .commands.artifacts import (
+    handle_build_topic_map_command,
+    handle_extract_atoms_command,
+    handle_extract_session_command,
+    handle_lint_promotions_command,
+    handle_propose_promotions_command,
 )
-from .lint import export_lint_report, lint_wiki
-from .models import ContextPacket, MicroSummaryV2, UnitSummaryV2
+from .commands.build_context_packet import handle_build_context_packet_command
+from .commands.distribution import (
+    handle_doctor_command,
+    handle_fresh_install_smoke_command,
+    handle_init_wiki_command,
+    handle_install_context_engine_command,
+    handle_install_plugin_command,
+)
+from .commands.legacy_promotions import (
+    handle_promote_packet_plan_command,
+    handle_promote_packet_query_command,
+    handle_promote_unit_architecture_command,
+    handle_promote_unit_concept_command,
+    handle_run_e2e_pipeline_command,
+)
+from .commands.lint_wiki import handle_lint_wiki_command
+from .commands.wiki_patches import (
+    handle_apply_wiki_patch_command,
+    handle_list_promotions_command,
+    handle_list_wiki_patches_command,
+    handle_plan_wiki_patches_command,
+)
+from .packet_builder import build_packet_from_session
+from .lint import count_lint_issues
+from .models import ContextPacket, MicroSummaryV2
 from .paths import HarnessPaths
-from .promotion import (
-    promote_context_packet_to_plan,
-    promote_context_packet_to_query,
-    promote_unit_summary_to_architecture,
-    promote_unit_summary_to_concept,
-)
 from .promotions import (
     PromotionCandidate,
     propose_promotion_candidates,
     render_promotion_candidates_markdown,
 )
-from .raw_extract import build_session_bundle, export_session_bundle
+from .raw_extract import build_session_bundle
 from .safe_paths import safe_artifact_stem, safe_child_path
 from .semantic_lint import lint_promotion_substrate, render_semantic_lint_report
 from .wiki_patches import (
@@ -48,9 +62,8 @@ from .wiki_patches import (
     plan_wiki_patch_proposal,
     render_wiki_patch_proposal_markdown,
 )
-from .summarizer import build_micro_summary, build_unit_summary
-from .summarizer_backends import AgentLLMRouter, get_summarizer_backend
-from .topic_map import build_topic_map, export_topic_map
+from .summarizer_backends import AgentLLMRouter
+from .summary_pipeline import SummaryOptions, build_v2_summary_artifacts
 
 
 def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
@@ -406,53 +419,6 @@ def _slugify(value: str) -> str:
     return slug or "artifact"
 
 
-def _build_packet_from_session(
-    *,
-    session_id: str,
-    packet_id: str,
-    task_title: str,
-    macro_context: str,
-    unit_title: str,
-    goal: str,
-    related_pages: list[str],
-    paths: HarnessPaths,
-) -> tuple[ContextPacket, Path, Path, Path]:
-    raw_export_path = export_session_bundle(session_id=session_id, paths=paths)
-    raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
-    unit_id = f"{packet_id}-unit-1"
-    micro_summary = build_micro_summary(
-        raw_bundle=raw_bundle,
-        micro_id=f"{packet_id}-micro-1",
-        parent_unit_id=unit_id,
-    )
-    unit_summary = build_unit_summary(
-        unit_id=unit_id,
-        session_id=session_id,
-        title=unit_title,
-        goal=goal,
-        micro_summaries=[micro_summary],
-        related_pages=list(related_pages),
-    )
-    packet = build_context_packet(
-        packet_id=packet_id,
-        task_title=task_title,
-        macro_context=macro_context,
-        unit_summary=unit_summary,
-        micro_summaries=[micro_summary],
-    )
-    packet_json_path, packet_markdown_path = export_context_packet(packet=packet, paths=paths)
-    return packet, raw_export_path, packet_json_path, packet_markdown_path
-
-
-def _summary_cache_key(payload: dict[str, object]) -> str:
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _summary_cache_path(*, paths: HarnessPaths, cache_key: str) -> Path:
-    return paths.project_root / "data" / "cache" / "summaries" / f"{cache_key}.json"
-
-
 def _summary_routing_hints(*, summary_model: str | None, summary_budget: str | None) -> dict[str, object]:
     hints: dict[str, object] = {}
     if summary_model:
@@ -460,53 +426,6 @@ def _summary_routing_hints(*, summary_model: str | None, summary_budget: str | N
     if summary_budget:
         hints["budget"] = summary_budget
     return hints
-
-
-def _load_summary_cache(cache_path: Path) -> tuple[MicroSummaryV2, UnitSummaryV2]:
-    payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    return MicroSummaryV2.from_dict(payload["micro_summary"]), UnitSummaryV2.from_dict(payload["unit_summary"])
-
-
-def _write_summary_cache(
-    *,
-    cache_path: Path,
-    cache_key: str,
-    cache_input: dict[str, object],
-    micro_summary: MicroSummaryV2,
-    unit_summary: UnitSummaryV2,
-) -> None:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_text(
-        json.dumps(
-            {
-                "cache_key": cache_key,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "cache_input": cache_input,
-                "micro_summary": micro_summary.to_dict(),
-                "unit_summary": unit_summary.to_dict(),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
-def _export_summary_files(
-    *,
-    paths: HarnessPaths,
-    packet_id: str,
-    micro_summary: MicroSummaryV2,
-    unit_summary: UnitSummaryV2,
-) -> tuple[Path, Path]:
-    packet_id = safe_artifact_stem(packet_id, label="packet id")
-    summary_dir = paths.exports_dir / "summaries"
-    summary_dir.mkdir(parents=True, exist_ok=True)
-    micro_path = safe_child_path(summary_dir, f"{packet_id}-micro-v2", ".json", label="summary artifact id")
-    unit_path = safe_child_path(summary_dir, f"{packet_id}-unit-v2", ".json", label="summary artifact id")
-    micro_path.write_text(json.dumps(micro_summary.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-    unit_path.write_text(json.dumps(unit_summary.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-    return micro_path, unit_path
 
 
 def _export_v2_summary_artifacts(
@@ -524,65 +443,23 @@ def _export_v2_summary_artifacts(
     summary_cache: bool = False,
 ) -> tuple[Path, Path, Path]:
     raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
-    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id=f"{packet_id}-micro-1")
-    evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
-    cache_input = {
-        "session_id": session_id,
-        "packet_id": packet_id,
-        "unit_title": unit_title,
-        "goal": goal,
-        "related_pages": list(related_pages),
-        "summary_mode": summary_mode,
-        "summarizer_command": summarizer_command,
-        "routing_hints": dict(routing_hints or {}),
-        "micro_schema_version": "micro_summary_v2",
-        "unit_schema_version": "unit_summary_v2",
-        "evidence": evidence.to_dict(),
-    }
-    cache_key = _summary_cache_key(cache_input)
-    cache_path = _summary_cache_path(paths=paths, cache_key=cache_key)
-    if summary_cache and cache_path.exists():
-        micro_summary, unit_summary = _load_summary_cache(cache_path)
-        micro_path, unit_path = _export_summary_files(
-            paths=paths,
-            packet_id=packet_id,
-            micro_summary=micro_summary,
-            unit_summary=unit_summary,
-        )
-        return micro_path, unit_path, evidence_path
-
-    backend = get_summarizer_backend(
-        summary_mode,
-        command=summarizer_command,
-        agent_llm_router=agent_llm_router,
-        routing_hints=routing_hints,
-    )
-    micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
-    unit_summary = backend.summarize_unit(
-        unit_id=f"{packet_id}-unit-1",
-        session_id=session_id,
-        title=unit_title,
-        goal=goal,
-        micro_summaries=[micro_summary],
-        schema_version="unit_summary_v2",
-        related_pages=list(related_pages),
-    )
-
-    micro_path, unit_path = _export_summary_files(
+    result = build_v2_summary_artifacts(
+        raw_bundle=raw_bundle,
         paths=paths,
-        packet_id=packet_id,
-        micro_summary=micro_summary,
-        unit_summary=unit_summary,
+        options=SummaryOptions(
+            session_id=session_id,
+            packet_id=packet_id,
+            unit_title=unit_title,
+            goal=goal,
+            related_pages=list(related_pages),
+            summary_mode=summary_mode,
+            summarizer_command=summarizer_command,
+            routing_hints=dict(routing_hints or {}),
+            summary_cache=summary_cache,
+            agent_llm_router=agent_llm_router,
+        ),
     )
-    if summary_cache:
-        _write_summary_cache(
-            cache_path=cache_path,
-            cache_key=cache_key,
-            cache_input=cache_input,
-            micro_summary=micro_summary,
-            unit_summary=unit_summary,
-        )
-    return micro_path, unit_path, evidence_path
+    return result.as_tuple()
 
 
 def _upsert_index_entry(index_path: Path, section_heading: str, entry_line: str) -> None:
@@ -663,20 +540,7 @@ def _register_promoted_page(
 
 
 def _lint_issue_count(report) -> int:
-    return sum(
-        len(items)
-        for items in [
-            report.missing_provenance_pages,
-            report.orphan_pages,
-            report.pages_missing_from_index,
-            report.broken_wikilinks,
-            report.micro_summaries_missing_parent_unit,
-            report.micro_summaries_with_unknown_parent_unit,
-            report.unit_summaries_with_missing_micro_references,
-            report.packet_micro_summaries_unreferenced,
-            report.packets_missing_raw_pointers,
-        ]
-    )
+    return count_lint_issues(report)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1073,473 +937,134 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "init-wiki":
-        result = init_wiki(Path(args.wiki_root).resolve())
-        print(result.status)
-        for name, path in result.paths.items():
-            print(f"{name}={path}")
-        for message in result.messages:
-            print(message)
-        return 0
+        return handle_init_wiki_command(args=args)
 
     if args.command == "install-plugin":
-        result = install_user_plugin(
-            hermes_home=Path(args.hermes_home).expanduser(),
-            project_root=Path(args.project_root).expanduser(),
-            wiki_root=Path(args.wiki_root).expanduser(),
-            overwrite=args.overwrite,
-        )
-        print(result.status)
-        for name, path in result.paths.items():
-            print(f"{name}={path}")
-        for message in result.messages:
-            print(message)
-        return 0
+        return handle_install_plugin_command(args=args)
 
     if args.command == "install-context-engine":
-        result = install_context_engine(
-            hermes_agent_root=Path(args.hermes_agent_root).expanduser(),
-            project_root=Path(args.project_root).expanduser() if args.project_root else None,
-            wiki_root=Path(args.wiki_root).expanduser() if args.wiki_root else None,
-            overwrite=args.overwrite,
-        )
-        print(result.status)
-        for name, path in result.paths.items():
-            print(f"{name}={path}")
-        for message in result.messages:
-            print(message)
-        return 0
+        return handle_install_context_engine_command(args=args)
 
     if args.command == "doctor":
-        report = doctor(
-            hermes_home=Path(args.hermes_home).expanduser(),
-            project_root=Path(args.project_root).expanduser(),
-            wiki_root=Path(args.wiki_root).expanduser(),
-            hermes_agent_root=Path(args.hermes_agent_root).expanduser(),
-        )
-        print(f"doctor ok={report.ok}")
-        for name, ok in report.checks.items():
-            print(f"{name}={'ok' if ok else 'missing'}")
-        for message in report.messages:
-            print(message)
-        if args.fail_on_issues and not report.ok:
-            return 1
-        return 0
+        return handle_doctor_command(args=args)
 
     if args.command == "fresh-install-smoke":
-        result = run_fresh_install_smoke(
-            session_id=args.session_id,
-            hermes_home=Path(args.hermes_home).expanduser(),
-            project_root=Path(args.project_root).expanduser(),
-            wiki_root=Path(args.wiki_root).expanduser(),
-            hermes_agent_root=Path(args.hermes_agent_root).expanduser() if args.hermes_agent_root else None,
-        )
-        print(f"fresh-install-smoke ok={result.ok}")
-        print(f"retrieval_hit_count={result.retrieval_hit_count}")
-        print(f"expanded_content_length={result.expanded_content_length}")
-        print(f"lint_issue_count={result.lint_issue_count}")
-        for name, path in result.artifacts.items():
-            print(f"{name}={path}")
-        for message in result.messages:
-            print(message)
-        return 0 if result.ok else 1
+        return handle_fresh_install_smoke_command(args=args)
 
     paths = HarnessPaths(project_root=Path(args.project_root).resolve())
 
     if args.command == "extract-session":
-        export_path = export_session_bundle(session_id=args.session_id, paths=paths)
-        print(export_path)
-        return 0
+        return handle_extract_session_command(args=args, paths=paths)
 
     if args.command == "extract-atoms":
-        atom_paths = _export_atoms(packet_id=args.packet_id, paths=paths)
-        for atom_path in atom_paths:
-            print(atom_path)
-        return 0
+        return handle_extract_atoms_command(args=args, paths=paths, export_atoms=_export_atoms)
 
     if args.command == "propose-promotions":
-        promotion_json_path, promotion_markdown_path = _export_promotion_candidates(packet_id=args.packet_id, paths=paths)
-        print(promotion_json_path)
-        print(promotion_markdown_path)
-        return 0
+        return handle_propose_promotions_command(
+            args=args,
+            paths=paths,
+            export_promotion_candidates=_export_promotion_candidates,
+        )
 
     if args.command == "plan-wiki-patches":
-        patch_json_path, patch_markdown_path, _proposal = _export_wiki_patch_proposal(
-            promotion_file=Path(args.promotion_file).expanduser(),
+        return handle_plan_wiki_patches_command(
+            args=args,
             paths=paths,
-            wiki_root=Path(args.wiki_root).expanduser() if args.wiki_root else None,
+            export_wiki_patch_proposal=_export_wiki_patch_proposal,
         )
-        print(patch_json_path)
-        print(patch_markdown_path)
-        return 0
 
     if args.command == "apply-wiki-patch":
-        result = _apply_wiki_patch_file(
-            patch_file=Path(args.patch_file).expanduser(),
+        return handle_apply_wiki_patch_command(
+            args=args,
             paths=paths,
-            wiki_root=Path(args.wiki_root).expanduser() if args.wiki_root else None,
-            dry_run=not args.apply,
+            apply_wiki_patch_file=_apply_wiki_patch_file,
         )
-        print(
-            " ".join(
-                [
-                    f"dry_run={result.dry_run}",
-                    f"planned={len(result.planned_patch_ids)}",
-                    f"applied={len(result.applied_patch_ids)}",
-                    f"skipped={len(result.skipped_patch_ids)}",
-                ]
-            )
-        )
-        return 0
 
     if args.command == "list-promotions":
-        print(_render_promotions_listing(paths=paths, status=args.status))
-        return 0
+        return handle_list_promotions_command(
+            args=args,
+            paths=paths,
+            render_promotions_listing=_render_promotions_listing,
+        )
 
     if args.command == "list-wiki-patches":
-        print(_render_wiki_patches_listing(paths=paths, status=args.status))
-        return 0
+        return handle_list_wiki_patches_command(
+            args=args,
+            paths=paths,
+            render_wiki_patches_listing=_render_wiki_patches_listing,
+        )
 
     if args.command == "lint-promotions":
-        report = _lint_promotions(paths)
-        print(render_semantic_lint_report(report))
-        lint_json_path, lint_markdown_path = _export_semantic_lint_report(
+        return handle_lint_promotions_command(
+            args=args,
             paths=paths,
-            report=report,
-            report_id=args.report_id,
+            lint_promotions=_lint_promotions,
+            export_semantic_lint_report=_export_semantic_lint_report,
         )
-        print(lint_json_path)
-        print(lint_markdown_path)
-        if args.fail_on_issues and not report.ok:
-            return 1
-        return 0
 
     if args.command == "build-topic-map":
-        topic_map = build_topic_map(
-            project_root=paths.project_root,
-            wiki_root=Path(args.wiki_root).expanduser() if args.wiki_root else paths.wiki_root,
-        )
-        json_path, markdown_path = export_topic_map(
-            topic_map=topic_map,
-            project_root=paths.project_root,
-            report_id=args.report_id,
-        )
-        print(json_path)
-        print(markdown_path)
-        print(f"nodes={len(topic_map.nodes)} edges={len(topic_map.edges)}")
-        return 0
+        return handle_build_topic_map_command(args=args, paths=paths)
 
     if args.command == "build-context-packet":
-        packet, raw_export_path, packet_json_path, packet_markdown_path = _build_packet_from_session(
-            session_id=args.session_id,
-            packet_id=args.packet_id,
-            task_title=args.task_title,
-            macro_context=args.macro_context,
-            unit_title=args.unit_title,
-            goal=args.goal,
-            related_pages=list(args.related_pages),
+        return handle_build_context_packet_command(
+            args=args,
+            parser=parser,
             paths=paths,
+            build_packet_from_session=build_packet_from_session,
+            export_v2_summary_artifacts=_export_v2_summary_artifacts,
+            summary_routing_hints=_summary_routing_hints,
         )
-        print(raw_export_path)
-        print(packet_json_path)
-        print(packet_markdown_path)
-        if args.summary_mode:
-            if args.summary_mode == "custom-command" and not args.summarizer_command:
-                parser.error("--summary-mode custom-command requires --summarizer-command")
-            if args.summary_mode in {"agent-llm", "hybrid"}:
-                parser.error("--summary-mode agent-llm/hybrid requires host Agent integration with an injected Agent LLM router")
-            micro_v2_path, unit_v2_path, evidence_path = _export_v2_summary_artifacts(
-                session_id=args.session_id,
-                packet_id=args.packet_id,
-                unit_title=args.unit_title,
-                goal=args.goal,
-                related_pages=list(args.related_pages),
-                summary_mode=args.summary_mode,
-                summarizer_command=args.summarizer_command,
-                paths=paths,
-                routing_hints=_summary_routing_hints(
-                    summary_model=args.summary_model,
-                    summary_budget=args.summary_budget,
-                ),
-                summary_cache=args.summary_cache == "on",
-            )
-            print(micro_v2_path)
-            print(unit_v2_path)
-            print(evidence_path)
-        print(
-            " ".join(
-                [
-                    f"micro_summaries={len(packet.micro_summaries)}",
-                    f"unit_summaries={len(packet.unit_summaries)}",
-                    f"critical_files={len(packet.critical_files)}",
-                ]
-            )
-        )
-        return 0
 
     if args.command == "promote-packet-query":
-        packet = _load_packet(args.packet_json)
-        output_path = promote_context_packet_to_query(
-            packet=packet,
+        return handle_promote_packet_query_command(
+            args=args,
             paths=paths,
-            slug=args.slug,
-            title=args.title,
-            summary=args.summary,
-            related_pages=list(args.related_pages),
-            tags=list(args.tags),
+            load_packet=_load_packet,
+            register_promoted_page=_register_promoted_page,
         )
-        if args.register:
-            _register_promoted_page(
-                paths=paths,
-                section_heading="Queries",
-                slug=args.slug,
-                summary=args.summary,
-                output_path=output_path,
-                command_name="promote-packet-query",
-                extra_lines=[f"- Source packet: `{args.packet_json}`"],
-            )
-        print(output_path)
-        return 0
 
     if args.command == "promote-packet-plan":
-        packet = _load_packet(args.packet_json)
-        output_path = promote_context_packet_to_plan(
-            packet=packet,
+        return handle_promote_packet_plan_command(
+            args=args,
             paths=paths,
-            slug=args.slug,
-            title=args.title,
-            summary=args.summary,
-            related_pages=list(args.related_pages),
-            tags=list(args.tags),
+            load_packet=_load_packet,
+            register_promoted_page=_register_promoted_page,
         )
-        if args.register:
-            _register_promoted_page(
-                paths=paths,
-                section_heading="Plans",
-                slug=args.slug,
-                summary=args.summary,
-                output_path=output_path,
-                command_name="promote-packet-plan",
-                extra_lines=[f"- Source packet: `{args.packet_json}`"],
-            )
-        print(output_path)
-        return 0
 
     if args.command == "promote-unit-concept":
-        packet = _load_packet(args.packet_json)
-        if not packet.unit_summaries:
-            parser.error("promote-unit-concept requires a packet with at least one unit summary")
-        output_path = promote_unit_summary_to_concept(
-            unit_summary=packet.unit_summaries[0],
-            micro_summaries=packet.micro_summaries,
+        return handle_promote_unit_concept_command(
+            args=args,
+            parser=parser,
             paths=paths,
-            slug=args.slug,
-            title=args.title,
-            summary=args.summary,
-            related_pages=list(args.related_pages),
-            tags=list(args.tags),
+            load_packet=_load_packet,
+            register_promoted_page=_register_promoted_page,
         )
-        if args.register:
-            _register_promoted_page(
-                paths=paths,
-                section_heading="Concepts",
-                slug=args.slug,
-                summary=args.summary,
-                output_path=output_path,
-                command_name="promote-unit-concept",
-                extra_lines=[f"- Source packet: `{args.packet_json}`"],
-            )
-        print(output_path)
-        return 0
 
     if args.command == "promote-unit-architecture":
-        packet = _load_packet(args.packet_json)
-        if not packet.unit_summaries:
-            parser.error("promote-unit-architecture requires a packet with at least one unit summary")
-        output_path = promote_unit_summary_to_architecture(
-            unit_summary=packet.unit_summaries[0],
-            micro_summaries=packet.micro_summaries,
+        return handle_promote_unit_architecture_command(
+            args=args,
+            parser=parser,
             paths=paths,
-            slug=args.slug,
-            title=args.title,
-            summary=args.summary,
-            related_pages=list(args.related_pages),
-            tags=list(args.tags),
+            load_packet=_load_packet,
+            register_promoted_page=_register_promoted_page,
         )
-        if args.register:
-            _register_promoted_page(
-                paths=paths,
-                section_heading="Architectures",
-                slug=args.slug,
-                summary=args.summary,
-                output_path=output_path,
-                command_name="promote-unit-architecture",
-                extra_lines=[f"- Source packet: `{args.packet_json}`"],
-            )
-        print(output_path)
-        return 0
 
     if args.command == "run-e2e-pipeline":
-        packet, raw_export_path, packet_json_path, packet_markdown_path = _build_packet_from_session(
-            session_id=args.session_id,
-            packet_id=args.packet_id,
-            task_title=args.task_title,
-            macro_context=args.macro_context,
-            unit_title=args.unit_title,
-            goal=args.goal,
-            related_pages=list(args.packet_related_pages),
+        return handle_run_e2e_pipeline_command(
+            args=args,
             paths=paths,
+            slugify=_slugify,
+            upsert_index_entry=_upsert_index_entry,
+            append_log_entry=_append_log_entry,
         )
-        query_slug = args.query_slug or args.packet_id
-        query_title = args.query_title or args.task_title
-        query_summary = args.query_summary or (
-            f"Durable query page derived from context packet {args.packet_id}."
-        )
-        concept_slug = args.concept_slug or _slugify(args.unit_title)
-        concept_title = args.concept_title or args.unit_title
-        concept_summary = args.concept_summary or (
-            f"Durable concept page derived from the unit summary for {args.unit_title}."
-        )
-        plan_slug = args.plan_slug or f"{args.packet_id}-plan"
-        plan_title = args.plan_title or f"{args.task_title} Plan"
-        plan_summary = args.plan_summary or (
-            f"Durable plan page derived from context packet {args.packet_id}."
-        )
-        architecture_slug = args.architecture_slug or f"{_slugify(args.unit_title)}-architecture"
-        architecture_title = args.architecture_title or f"{args.unit_title} Architecture"
-        architecture_summary = args.architecture_summary or (
-            f"Durable architecture page derived from the unit summary for {args.unit_title}."
-        )
-
-        query_path = promote_context_packet_to_query(
-            packet=packet,
-            paths=paths,
-            slug=query_slug,
-            title=query_title,
-            summary=query_summary,
-            related_pages=list(args.query_related_pages),
-            tags=list(args.query_tags),
-        )
-        concept_path = promote_unit_summary_to_concept(
-            unit_summary=packet.unit_summaries[0],
-            micro_summaries=packet.micro_summaries,
-            paths=paths,
-            slug=concept_slug,
-            title=concept_title,
-            summary=concept_summary,
-            related_pages=list(args.concept_related_pages),
-            tags=list(args.concept_tags),
-        )
-        plan_path = promote_context_packet_to_plan(
-            packet=packet,
-            paths=paths,
-            slug=plan_slug,
-            title=plan_title,
-            summary=plan_summary,
-            related_pages=list(args.plan_related_pages),
-            tags=list(args.plan_tags),
-        )
-        architecture_path = promote_unit_summary_to_architecture(
-            unit_summary=packet.unit_summaries[0],
-            micro_summaries=packet.micro_summaries,
-            paths=paths,
-            slug=architecture_slug,
-            title=architecture_title,
-            summary=architecture_summary,
-            related_pages=list(args.architecture_related_pages),
-            tags=list(args.architecture_tags),
-        )
-        for section_heading, slug, summary in [
-            ("Queries", query_slug, query_summary),
-            ("Concepts", concept_slug, concept_summary),
-            ("Plans", plan_slug, plan_summary),
-            ("Architectures", architecture_slug, architecture_summary),
-        ]:
-            _upsert_index_entry(
-                paths.wiki_root / "index.md",
-                section_heading,
-                f"- [[{slug}]] — {summary}",
-            )
-        _append_log_entry(
-            paths.wiki_root / "log.md",
-            f"## [{date.today().isoformat()}] e2e pipeline | {args.packet_id}",
-            [
-                f"- Session: `{args.session_id}`",
-                f"- Created/updated: `{query_path.relative_to(paths.wiki_root).as_posix()}`",
-                f"- Created/updated: `{concept_path.relative_to(paths.wiki_root).as_posix()}`",
-                f"- Created/updated: `{plan_path.relative_to(paths.wiki_root).as_posix()}`",
-                f"- Created/updated: `{architecture_path.relative_to(paths.wiki_root).as_posix()}`",
-                f"- Packet export: `{packet_json_path}`",
-            ],
-        )
-        report = lint_wiki(paths)
-        lint_json_path, lint_markdown_path = export_lint_report(
-            report=report,
-            paths=paths,
-            report_id=args.report_id,
-        )
-        for output_path in [
-            raw_export_path,
-            packet_json_path,
-            packet_markdown_path,
-            query_path,
-            concept_path,
-            plan_path,
-            architecture_path,
-            lint_json_path,
-            lint_markdown_path,
-        ]:
-            print(output_path)
-        print(
-            " ".join(
-                [
-                    f"micro_summaries={len(packet.micro_summaries)}",
-                    f"critical_files={len(packet.critical_files)}",
-                    f"orphan_pages={len(report.orphan_pages)}",
-                    f"broken_wikilinks={len(report.broken_wikilinks)}",
-                ]
-            )
-        )
-        return 0
 
     if args.command == "lint-wiki":
-        report = lint_wiki(paths)
-        json_path, markdown_path = export_lint_report(
-            report=report,
+        return handle_lint_wiki_command(
+            args=args,
             paths=paths,
-            report_id=args.report_id,
+            lint_promotions=_lint_promotions,
+            export_semantic_lint_report=_export_semantic_lint_report,
         )
-        semantic_report = None
-        semantic_json_path = None
-        semantic_markdown_path = None
-        if args.include_promotions:
-            semantic_report = _lint_promotions(paths)
-            semantic_json_path, semantic_markdown_path = _export_semantic_lint_report(
-                paths=paths,
-                report=semantic_report,
-            )
-        print(json_path)
-        print(markdown_path)
-        if semantic_report is not None and semantic_json_path is not None and semantic_markdown_path is not None:
-            print(semantic_json_path)
-            print(semantic_markdown_path)
-            print(render_semantic_lint_report(semantic_report))
-        print(
-            " ".join(
-                [
-                    f"checked_pages={len(report.checked_pages)}",
-                    f"missing_provenance={len(report.missing_provenance_pages)}",
-                    f"orphan_pages={len(report.orphan_pages)}",
-                    f"missing_from_index={len(report.pages_missing_from_index)}",
-                    f"broken_wikilinks={len(report.broken_wikilinks)}",
-                    f"promotion_issues={len(semantic_report.issues) if semantic_report is not None else 0}",
-                ]
-            )
-        )
-        if args.fail_on_issues and (
-            _lint_issue_count(report) > 0 or (semantic_report is not None and not semantic_report.ok)
-        ):
-            return 1
-        return 0
 
     parser.error(f"Unknown command: {args.command}")
     return 2

@@ -1,4 +1,5 @@
 import json
+import pytest
 import sqlite3
 from pathlib import Path
 import sys
@@ -8,7 +9,201 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+import agent_context_substrate.cli as cli  # noqa: E402
 from agent_context_substrate.cli import main  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "argv"),
+    [
+        ("handle_init_wiki_command", ["init-wiki", "--wiki-root", "{wiki}"]),
+        (
+            "handle_install_plugin_command",
+            ["install-plugin", "--hermes-home", "{home}", "--project-root", "{project}", "--wiki-root", "{wiki}"],
+        ),
+        (
+            "handle_install_context_engine_command",
+            ["install-context-engine", "--hermes-agent-root", "{agent}"],
+        ),
+        (
+            "handle_doctor_command",
+            [
+                "doctor",
+                "--hermes-home",
+                "{home}",
+                "--project-root",
+                "{project}",
+                "--wiki-root",
+                "{wiki}",
+                "--hermes-agent-root",
+                "{agent}",
+            ],
+        ),
+        (
+            "handle_fresh_install_smoke_command",
+            [
+                "fresh-install-smoke",
+                "--session-id",
+                "session-1",
+                "--hermes-home",
+                "{home}",
+                "--project-root",
+                "{project}",
+                "--wiki-root",
+                "{wiki}",
+            ],
+        ),
+        ("handle_extract_session_command", ["extract-session", "--session-id", "session-1", "--project-root", "{project}"]),
+        ("handle_extract_atoms_command", ["extract-atoms", "--packet-id", "packet-1", "--project-root", "{project}"]),
+        ("handle_propose_promotions_command", ["propose-promotions", "--packet-id", "packet-1", "--project-root", "{project}"]),
+        (
+            "handle_plan_wiki_patches_command",
+            ["plan-wiki-patches", "--promotion-file", "{promotion}", "--project-root", "{project}"],
+        ),
+        ("handle_apply_wiki_patch_command", ["apply-wiki-patch", "--patch-file", "{patch}", "--project-root", "{project}"]),
+        ("handle_list_promotions_command", ["list-promotions", "--project-root", "{project}"]),
+        ("handle_list_wiki_patches_command", ["list-wiki-patches", "--project-root", "{project}"]),
+        ("handle_lint_promotions_command", ["lint-promotions", "--project-root", "{project}"]),
+        ("handle_build_topic_map_command", ["build-topic-map", "--project-root", "{project}"]),
+        (
+            "handle_build_context_packet_command",
+            [
+                "build-context-packet",
+                "--session-id",
+                "session-1",
+                "--packet-id",
+                "packet-1",
+                "--task-title",
+                "Task",
+                "--macro-context",
+                "Context",
+                "--unit-title",
+                "Unit",
+                "--goal",
+                "Goal",
+                "--project-root",
+                "{project}",
+            ],
+        ),
+        (
+            "handle_promote_packet_query_command",
+            [
+                "promote-packet-query",
+                "--packet-json",
+                "{packet}",
+                "--slug",
+                "slug",
+                "--title",
+                "Title",
+                "--summary",
+                "Summary",
+                "--project-root",
+                "{project}",
+            ],
+        ),
+        (
+            "handle_promote_packet_plan_command",
+            [
+                "promote-packet-plan",
+                "--packet-json",
+                "{packet}",
+                "--slug",
+                "slug",
+                "--title",
+                "Title",
+                "--summary",
+                "Summary",
+                "--project-root",
+                "{project}",
+            ],
+        ),
+        (
+            "handle_promote_unit_concept_command",
+            [
+                "promote-unit-concept",
+                "--packet-json",
+                "{packet}",
+                "--slug",
+                "slug",
+                "--title",
+                "Title",
+                "--summary",
+                "Summary",
+                "--project-root",
+                "{project}",
+            ],
+        ),
+        (
+            "handle_promote_unit_architecture_command",
+            [
+                "promote-unit-architecture",
+                "--packet-json",
+                "{packet}",
+                "--slug",
+                "slug",
+                "--title",
+                "Title",
+                "--summary",
+                "Summary",
+                "--project-root",
+                "{project}",
+            ],
+        ),
+        (
+            "handle_run_e2e_pipeline_command",
+            [
+                "run-e2e-pipeline",
+                "--session-id",
+                "session-1",
+                "--packet-id",
+                "packet-1",
+                "--task-title",
+                "Task",
+                "--macro-context",
+                "Context",
+                "--unit-title",
+                "Unit",
+                "--goal",
+                "Goal",
+                "--project-root",
+                "{project}",
+            ],
+        ),
+        ("handle_lint_wiki_command", ["lint-wiki", "--project-root", "{project}"]),
+    ],
+)
+def test_cli_delegates_remaining_commands_to_extracted_handlers(
+    monkeypatch, tmp_path: Path, handler_name: str, argv: list[str]
+) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    home = tmp_path / "home"
+    agent_root = tmp_path / "agent"
+    promotion_file = tmp_path / "promotion.json"
+    patch_file = tmp_path / "patch.json"
+    packet_file = tmp_path / "packet.json"
+    calls = []
+
+    def fake_handler(**kwargs):
+        calls.append(kwargs)
+        return 37
+
+    monkeypatch.setattr(cli, handler_name, fake_handler, raising=True)
+    rendered_argv = [
+        item.format(
+            project=project_root,
+            wiki=wiki_root,
+            home=home,
+            agent=agent_root,
+            promotion=promotion_file,
+            patch=patch_file,
+            packet=packet_file,
+        )
+        for item in argv
+    ]
+
+    assert cli.main(rendered_argv) == 37
+    assert calls
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -95,6 +290,95 @@ def _build_sample_state_db(db_path: Path) -> None:
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def test_cli_build_context_packet_delegates_to_command_handler(tmp_path, monkeypatch) -> None:
+    import agent_context_substrate.cli as cli_module
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    calls = []
+
+    def fake_handler(*, args, parser, paths, build_packet_from_session, export_v2_summary_artifacts, summary_routing_hints):
+        calls.append(
+            {
+                "command": args.command,
+                "packet_id": args.packet_id,
+                "project_root": paths.project_root,
+                "has_build_callback": callable(build_packet_from_session),
+                "has_v2_callback": callable(export_v2_summary_artifacts),
+                "has_routing_callback": callable(summary_routing_hints),
+            }
+        )
+        return 37
+
+    monkeypatch.setattr(cli_module, "handle_build_context_packet_command", fake_handler)
+
+    exit_code = cli_module.main(
+        [
+            "build-context-packet",
+            "--session-id",
+            "session-1",
+            "--packet-id",
+            "packet-1",
+            "--task-title",
+            "Task",
+            "--macro-context",
+            "Context",
+            "--unit-title",
+            "Unit",
+            "--goal",
+            "Goal",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    assert exit_code == 37
+    assert calls == [
+        {
+            "command": "build-context-packet",
+            "packet_id": "packet-1",
+            "project_root": project_root.resolve(),
+            "has_build_callback": True,
+            "has_v2_callback": True,
+            "has_routing_callback": True,
+        }
+    ]
+
+
+def test_cli_build_context_packet_validates_summary_mode_before_export(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "build-context-packet",
+                "--session-id",
+                "session-1",
+                "--packet-id",
+                "packet-1",
+                "--task-title",
+                "Task",
+                "--macro-context",
+                "Context",
+                "--unit-title",
+                "Unit",
+                "--goal",
+                "Goal",
+                "--summary-mode",
+                "custom-command",
+                "--project-root",
+                str(project_root),
+            ]
+        )
+
+    assert exc_info.value.code == 2
+    assert not (project_root / "data").exists()
 
 
 def test_cli_extract_session_exports_bundle_and_prints_path(tmp_path, monkeypatch, capsys) -> None:
