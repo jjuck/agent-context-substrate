@@ -299,7 +299,16 @@ def test_cli_build_context_packet_delegates_to_command_handler(tmp_path, monkeyp
     project_root.mkdir()
     calls = []
 
-    def fake_handler(*, args, parser, paths, build_packet_from_session, export_v2_summary_artifacts, summary_routing_hints):
+    def fake_handler(
+        *,
+        args,
+        parser,
+        paths,
+        build_packet_from_session,
+        export_v2_summary_artifacts,
+        summary_routing_hints,
+        llm_safety_options,
+    ):
         calls.append(
             {
                 "command": args.command,
@@ -308,6 +317,7 @@ def test_cli_build_context_packet_delegates_to_command_handler(tmp_path, monkeyp
                 "has_build_callback": callable(build_packet_from_session),
                 "has_v2_callback": callable(export_v2_summary_artifacts),
                 "has_routing_callback": callable(summary_routing_hints),
+                "has_llm_safety_callback": callable(llm_safety_options),
             }
         )
         return 37
@@ -343,6 +353,7 @@ def test_cli_build_context_packet_delegates_to_command_handler(tmp_path, monkeyp
             "has_build_callback": True,
             "has_v2_callback": True,
             "has_routing_callback": True,
+            "has_llm_safety_callback": True,
         }
     ]
 

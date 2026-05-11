@@ -82,6 +82,7 @@ from .summarizer_backends import (
     CustomCommandSummarizerBackend,
     HeuristicSummarizerBackend,
     HybridSummarizerBackend,
+    LLMInputSafetyOptions,
     SummarizerBackend,
     get_summarizer_backend,
 )
@@ -114,6 +115,7 @@ __all__ = [
     "CustomCommandSummarizerBackend",
     "HeuristicSummarizerBackend",
     "HybridSummarizerBackend",
+    "LLMInputSafetyOptions",
     "DoctorReport",
     "FreshInstallSmokeResult",
     "InstallResult",

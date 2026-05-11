@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from .models import EvidenceMessage, MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
@@ -40,6 +41,34 @@ class SummarizerBackend(Protocol):
 AgentLLMRouter = Callable[[dict[str, object]], dict[str, object] | str]
 
 
+@dataclass(frozen=True)
+class LLMInputSafetyOptions:
+    """Safety controls for payloads sent to opt-in LLM/custom summarizers."""
+
+    redact: bool = True
+    max_input_chars: int = 12_000
+    allow_code_snippets: bool = False
+
+    def __post_init__(self) -> None:
+        if self.max_input_chars < 256:
+            raise ValueError("llm max input chars must be at least 256")
+
+
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"\b([A-Za-z0-9_-]*(?:api[_-]?key|secret|token|password|credential|connection[_-]?string)[A-Za-z0-9_-]*)"
+    r"\s*[:=]\s*([^\s,;]+)",
+    flags=re.IGNORECASE,
+)
+_BEARER_TOKEN_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", flags=re.IGNORECASE)
+_TOKEN_PATTERN = re.compile(
+    r"\b(?:(?:sk|pk)-[A-Za-z0-9_./+=-]{6,}|(?:ghp|github_pat|xox[baprs])[_-][A-Za-z0-9_./+=-]{6,})\b"
+)
+_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+
+_CODE_FENCE_PATTERN = re.compile(r"```.*?```", flags=re.DOTALL)
+_TRUNCATION_MARKER = "…<TRUNCATED_FOR_LLM_INPUT>"
+
+
 class AgentLLMSummarizerBackend:
     name = "agent-llm"
 
@@ -49,10 +78,12 @@ class AgentLLMSummarizerBackend:
         router: AgentLLMRouter,
         fallback_backend: SummarizerBackend | None = None,
         routing_hints: dict[str, object] | None = None,
+        llm_safety: LLMInputSafetyOptions | None = None,
     ) -> None:
         self.router = router
         self.fallback_backend = fallback_backend or HeuristicSummarizerBackend()
         self.routing_hints = dict(routing_hints or {})
+        self.llm_safety = llm_safety or LLMInputSafetyOptions()
 
     def summarize_micro(
         self,
@@ -129,7 +160,7 @@ class AgentLLMSummarizerBackend:
             )
 
     def _call_router(self, request: dict[str, object]) -> dict[str, object]:
-        response = self.router(request)
+        response = self.router(_prepare_llm_request(request, safety=self.llm_safety))
         if isinstance(response, str):
             parsed = json.loads(response)
         else:
@@ -169,10 +200,12 @@ class HybridSummarizerBackend:
         router: AgentLLMRouter,
         heuristic_backend: SummarizerBackend | None = None,
         routing_hints: dict[str, object] | None = None,
+        llm_safety: LLMInputSafetyOptions | None = None,
     ) -> None:
         self.router = router
         self.heuristic_backend = heuristic_backend or HeuristicSummarizerBackend()
         self.routing_hints = dict(routing_hints or {})
+        self.llm_safety = llm_safety or LLMInputSafetyOptions()
 
     def summarize_micro(
         self,
@@ -253,7 +286,7 @@ class HybridSummarizerBackend:
             )
 
     def _call_router(self, request: dict[str, object]) -> dict[str, object]:
-        response = self.router(request)
+        response = self.router(_prepare_llm_request(request, safety=self.llm_safety))
         if isinstance(response, str):
             parsed = json.loads(response)
         else:
@@ -293,6 +326,7 @@ class CustomCommandSummarizerBackend:
         *,
         timeout_seconds: int = 60,
         fallback_backend: SummarizerBackend | None = None,
+        llm_safety: LLMInputSafetyOptions | None = None,
     ) -> None:
         if not command.strip():
             raise ValueError("custom-command summarizer requires a command")
@@ -304,6 +338,7 @@ class CustomCommandSummarizerBackend:
             raise ValueError("custom-command summarizer requires a command")
         self.timeout_seconds = timeout_seconds
         self.fallback_backend = fallback_backend or HeuristicSummarizerBackend()
+        self.llm_safety = llm_safety or LLMInputSafetyOptions()
 
     def summarize_micro(
         self,
@@ -374,7 +409,7 @@ class CustomCommandSummarizerBackend:
     def _run_command(self, payload: dict[str, object]) -> dict[str, object]:
         result = subprocess.run(
             self.command,
-            input=json.dumps(payload, ensure_ascii=False),
+            input=json.dumps(_prepare_llm_request(payload, safety=self.llm_safety), ensure_ascii=False),
             text=True,
             capture_output=True,
             timeout=self.timeout_seconds,
@@ -480,6 +515,76 @@ def _messages_to_raw(messages: list[EvidenceMessage]) -> list[dict[str, object]]
     ]
 
 
+def _prepare_llm_request(request: dict[str, object], *, safety: LLMInputSafetyOptions) -> dict[str, object]:
+    prepared = _sanitize_value(request, safety=safety)
+    if not isinstance(prepared, dict):
+        raise TypeError("LLM request must sanitize to a JSON object")
+    return _bound_llm_request(prepared, max_chars=safety.max_input_chars)
+
+
+def _sanitize_value(value, *, safety: LLMInputSafetyOptions):
+    if isinstance(value, dict):
+        sanitized: dict[str, object] = {}
+        for key, item in value.items():
+            if not safety.allow_code_snippets and key == "code_blocks" and isinstance(item, list):
+                sanitized[key] = []
+            else:
+                sanitized[key] = _sanitize_value(item, safety=safety)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_value(item, safety=safety) for item in value]
+    if isinstance(value, str):
+        text = value
+        if not safety.allow_code_snippets:
+            text = _CODE_FENCE_PATTERN.sub("<CODE_BLOCK_OMITTED>", text)
+        if safety.redact:
+            text = _redact_llm_text(text)
+        return text
+    return value
+
+
+def _redact_llm_text(text: str) -> str:
+    redacted = _SECRET_ASSIGNMENT_PATTERN.sub(lambda match: f"{match.group(1)}=<REDACTED_SECRET>", text)
+    redacted = _BEARER_TOKEN_PATTERN.sub("Bearer <REDACTED_SECRET>", redacted)
+    redacted = _TOKEN_PATTERN.sub("<REDACTED_SECRET>", redacted)
+    return _EMAIL_PATTERN.sub("<REDACTED_EMAIL>", redacted)
+
+
+def _bound_llm_request(request: dict[str, object], *, max_chars: int) -> dict[str, object]:
+    if _json_size(request) <= max_chars:
+        return request
+    bounded = _truncate_strings(request, max_chars=max_chars)
+    if _json_size(bounded) <= max_chars:
+        return bounded
+    compact = {
+        "kind": request.get("kind"),
+        "schema_version": request.get("schema_version"),
+        "routing_hints": request.get("routing_hints", {}),
+        "llm_input_truncated": True,
+    }
+    if _json_size(compact) <= max_chars:
+        return compact
+    return {"llm_input_truncated": True}
+
+
+def _truncate_strings(value, *, max_chars: int):
+    if isinstance(value, dict):
+        return {key: _truncate_strings(item, max_chars=max_chars) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_truncate_strings(item, max_chars=max_chars) for item in value]
+    if isinstance(value, str):
+        per_string_limit = max(32, max_chars // 8)
+        if len(value) <= per_string_limit:
+            return value
+        keep = max(0, per_string_limit - len(_TRUNCATION_MARKER))
+        return value[:keep] + _TRUNCATION_MARKER
+    return value
+
+
+def _json_size(value: object) -> int:
+    return len(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
 def _summarizer_fallback_reason(exc: Exception) -> str:
     message = str(exc)
     if "failed lint:" in message:
@@ -516,18 +621,19 @@ def get_summarizer_backend(
     command: str | None = None,
     agent_llm_router: AgentLLMRouter | None = None,
     routing_hints: dict[str, object] | None = None,
+    llm_safety: LLMInputSafetyOptions | None = None,
 ) -> SummarizerBackend:
     normalized = name.strip().lower()
     if normalized == "heuristic":
         return HeuristicSummarizerBackend()
     if normalized == "custom-command":
-        return CustomCommandSummarizerBackend(command=command or "")
+        return CustomCommandSummarizerBackend(command=command or "", llm_safety=llm_safety)
     if normalized == "agent-llm":
         if agent_llm_router is None:
             raise ValueError("agent-llm summarizer requires an injected Agent LLM router")
-        return AgentLLMSummarizerBackend(router=agent_llm_router, routing_hints=routing_hints)
+        return AgentLLMSummarizerBackend(router=agent_llm_router, routing_hints=routing_hints, llm_safety=llm_safety)
     if normalized == "hybrid":
         if agent_llm_router is None:
             raise ValueError("hybrid summarizer requires an injected Agent LLM router")
-        return HybridSummarizerBackend(router=agent_llm_router, routing_hints=routing_hints)
+        return HybridSummarizerBackend(router=agent_llm_router, routing_hints=routing_hints, llm_safety=llm_safety)
     raise ValueError(f"Unsupported summarizer backend: {name}")

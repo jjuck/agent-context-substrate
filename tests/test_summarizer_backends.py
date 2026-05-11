@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,9 +10,11 @@ if str(SRC) not in sys.path:
 from agent_context_substrate.evidence import build_micro_evidence_bundle  # noqa: E402
 from agent_context_substrate.models import MicroSummaryV2, UnitSummaryV2  # noqa: E402
 from agent_context_substrate.summarizer_backends import (  # noqa: E402
+    AgentLLMSummarizerBackend,
     CustomCommandSummarizerBackend,
     HeuristicSummarizerBackend,
     HybridSummarizerBackend,
+    LLMInputSafetyOptions,
     get_summarizer_backend,
 )
 
@@ -51,6 +54,106 @@ def test_get_summarizer_backend_returns_heuristic_backend() -> None:
     backend = get_summarizer_backend("heuristic")
 
     assert isinstance(backend, HeuristicSummarizerBackend)
+
+
+def _valid_micro_summary_payload(*, evidence, mode: str) -> dict[str, object]:
+    return {
+        "micro_id": evidence.micro_id,
+        "session_id": evidence.session_id,
+        "message_ids": list(evidence.message_ids),
+        "recovery_summary": "agent recovery",
+        "knowledge_summary": "agent knowledge",
+        "retrieval_summary": "agent retrieval " + " ".join(evidence.files),
+        "user_intent": "agent intent",
+        "assistant_outcome": "agent outcome",
+        "decisions": [],
+        "claims": [],
+        "action_items": [],
+        "open_questions": [],
+        "files": list(evidence.files),
+        "entities": [],
+        "concepts": [],
+        "metadata": {
+            "mode": mode,
+            "schema_version": "micro_summary_v2",
+            "prompt_version": "test",
+            "model": None,
+            "input_hash": "sha256:test",
+            "created_at": "2026-05-07T00:00:00+00:00",
+            "confidence": 0.9,
+        },
+        "provenance": None,
+    }
+
+
+def test_agent_llm_summarizer_redacts_secrets_and_strips_code_blocks_by_default() -> None:
+    direct_github_token = "ghp" + "_testsecret"
+    direct_openai_token = "sk" + "-testsecret"
+    raw_bundle = {
+        "session": {"id": "session-secret", "source": "telegram", "title": "Secrets"},
+        "messages": [
+            {
+                "id": 1,
+                "role": "user",
+                "content": (
+                    "Use api_key=demo-value and email admin@example.com.\n"
+                    "OPENAI_API_KEY=demo-openai AWS_SECRET_ACCESS_KEY:demo-aws GITHUB_TOKEN=demo-github\n"
+                    f"Standalone {direct_github_token} and {direct_openai_token} should be redacted.\n"
+                    "```python\nprint('secret code')\n```"
+                ),
+            },
+            {"id": 2, "role": "assistant", "content": "Bearer ghp_testsecret should not leave the process."},
+        ],
+    }
+    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id="micro-agent-safe")
+    requests: list[dict[str, object]] = []
+
+    def router(request: dict[str, object]) -> dict[str, object]:
+        requests.append(request)
+        return _valid_micro_summary_payload(evidence=evidence, mode="agent-llm")
+
+    backend = AgentLLMSummarizerBackend(router=router)
+
+    summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    request_json = json.dumps(requests[0], ensure_ascii=False, sort_keys=True)
+    assert summary.metadata.mode == "agent-llm"
+    assert "demo-value" not in request_json
+    assert "demo-openai" not in request_json
+    assert "demo-aws" not in request_json
+    assert "demo-github" not in request_json
+    assert direct_github_token not in request_json
+    assert direct_openai_token not in request_json
+    assert "admin@example.com" not in request_json
+    assert "print('secret code')" not in request_json
+    assert "<REDACTED_SECRET>" in request_json
+    assert "<REDACTED_EMAIL>" in request_json
+    assert requests[0]["evidence"]["code_blocks"] == []
+
+
+def test_agent_llm_summarizer_bounds_router_payload_size() -> None:
+    raw_bundle = {
+        "session": {"id": "session-long", "source": "telegram", "title": "Long"},
+        "messages": [
+            {"id": 1, "role": "user", "content": "README.md " + ("very-long-input " * 200)},
+        ],
+    }
+    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id="micro-agent-bounded")
+    payload_sizes: list[int] = []
+
+    def router(request: dict[str, object]) -> dict[str, object]:
+        payload_sizes.append(len(json.dumps(request, ensure_ascii=False, sort_keys=True)))
+        return _valid_micro_summary_payload(evidence=evidence, mode="agent-llm")
+
+    backend = AgentLLMSummarizerBackend(
+        router=router,
+        llm_safety=LLMInputSafetyOptions(max_input_chars=700),
+    )
+
+    backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert payload_sizes
+    assert payload_sizes[0] <= 700
 
 
 def test_hybrid_summarizer_backend_sends_heuristic_spine_to_router() -> None:

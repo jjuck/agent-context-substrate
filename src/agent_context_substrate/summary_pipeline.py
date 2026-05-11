@@ -12,10 +12,13 @@ from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
 from .models import MicroSummaryV2, UnitSummaryV2
 from .paths import HarnessPaths
 from .safe_paths import safe_artifact_stem, safe_child_path
-from .summarizer_backends import AgentLLMRouter, SummarizerBackend, get_summarizer_backend
+from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions, SummarizerBackend, get_summarizer_backend
 
 
-BackendFactory = Callable[[str, str | None, AgentLLMRouter | None, dict[str, object] | None], SummarizerBackend]
+BackendFactory = Callable[
+    [str, str | None, AgentLLMRouter | None, dict[str, object] | None, LLMInputSafetyOptions],
+    SummarizerBackend,
+]
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,7 @@ class SummaryOptions:
     routing_hints: dict[str, object] = field(default_factory=dict)
     summary_cache: bool = False
     agent_llm_router: AgentLLMRouter | None = None
+    llm_safety: LLMInputSafetyOptions = field(default_factory=LLMInputSafetyOptions)
 
 
 @dataclass(frozen=True)
@@ -102,12 +106,14 @@ def _build_backend(*, options: SummaryOptions, backend_factory: BackendFactory |
             options.summarizer_command,
             options.agent_llm_router,
             dict(options.routing_hints),
+            options.llm_safety,
         )
     return get_summarizer_backend(
         options.summary_mode,
         command=options.summarizer_command,
         agent_llm_router=options.agent_llm_router,
         routing_hints=dict(options.routing_hints),
+        llm_safety=options.llm_safety,
     )
 
 
@@ -121,6 +127,11 @@ def _summary_cache_input(*, options: SummaryOptions, evidence_dict: dict[str, ob
         "summary_mode": options.summary_mode,
         "summarizer_command": options.summarizer_command,
         "routing_hints": dict(options.routing_hints),
+        "llm_safety": {
+            "redact": options.llm_safety.redact,
+            "max_input_chars": options.llm_safety.max_input_chars,
+            "allow_code_snippets": options.llm_safety.allow_code_snippets,
+        },
         "micro_schema_version": "micro_summary_v2",
         "unit_schema_version": "unit_summary_v2",
         "evidence": evidence_dict,

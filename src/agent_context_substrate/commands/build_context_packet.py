@@ -11,6 +11,7 @@ from ..packet_builder import PacketBuildOptions, PacketBuildResult
 BuildPacketCallback = Callable[..., PacketBuildResult]
 ExportV2Callback = Callable[..., tuple[Any, Any, Any]]
 RoutingHintsCallback = Callable[..., dict[str, object]]
+LLMSafetyOptionsCallback = Callable[..., object]
 
 
 def handle_build_context_packet_command(
@@ -21,6 +22,7 @@ def handle_build_context_packet_command(
     build_packet_from_session: BuildPacketCallback,
     export_v2_summary_artifacts: ExportV2Callback,
     summary_routing_hints: RoutingHintsCallback,
+    llm_safety_options: LLMSafetyOptionsCallback | None = None,
 ) -> int:
     """Handle the build-context-packet CLI command.
 
@@ -64,6 +66,15 @@ def handle_build_context_packet_command(
                 summary_budget=args.summary_budget,
             ),
             summary_cache=args.summary_cache == "on",
+            llm_safety=(
+                llm_safety_options(
+                    llm_redact=getattr(args, "llm_redact", "on"),
+                    llm_max_input_chars=getattr(args, "llm_max_input_chars", 12_000),
+                    llm_allow_code_snippets=getattr(args, "llm_allow_code_snippets", "off"),
+                )
+                if llm_safety_options is not None
+                else None
+            ),
         )
         print(micro_v2_path)
         print(unit_v2_path)

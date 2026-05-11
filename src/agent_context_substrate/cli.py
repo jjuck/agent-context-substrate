@@ -62,7 +62,7 @@ from .wiki_patches import (
     plan_wiki_patch_proposal,
     render_wiki_patch_proposal_markdown,
 )
-from .summarizer_backends import AgentLLMRouter
+from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from .summary_pipeline import SummaryOptions, build_v2_summary_artifacts
 
 
@@ -428,6 +428,14 @@ def _summary_routing_hints(*, summary_model: str | None, summary_budget: str | N
     return hints
 
 
+def _llm_safety_options(*, llm_redact: str, llm_max_input_chars: int, llm_allow_code_snippets: str) -> LLMInputSafetyOptions:
+    return LLMInputSafetyOptions(
+        redact=llm_redact == "on",
+        max_input_chars=llm_max_input_chars,
+        allow_code_snippets=llm_allow_code_snippets == "on",
+    )
+
+
 def _export_v2_summary_artifacts(
     *,
     session_id: str,
@@ -441,6 +449,7 @@ def _export_v2_summary_artifacts(
     agent_llm_router: AgentLLMRouter | None = None,
     routing_hints: dict[str, object] | None = None,
     summary_cache: bool = False,
+    llm_safety: LLMInputSafetyOptions | None = None,
 ) -> tuple[Path, Path, Path]:
     raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
     result = build_v2_summary_artifacts(
@@ -457,6 +466,7 @@ def _export_v2_summary_artifacts(
             routing_hints=dict(routing_hints or {}),
             summary_cache=summary_cache,
             agent_llm_router=agent_llm_router,
+            llm_safety=llm_safety or LLMInputSafetyOptions(),
         ),
     )
     return result.as_tuple()
@@ -646,6 +656,24 @@ def build_parser() -> argparse.ArgumentParser:
     build_packet.add_argument(
         "--summary-budget",
         help="Optional budget routing hint for host Agent LLM summary modes, e.g. cheap, balanced, or quality.",
+    )
+    build_packet.add_argument(
+        "--llm-redact",
+        choices=["on", "off"],
+        default="on",
+        help="Redact common secrets and emails before sending evidence to opt-in LLM/custom summary modes.",
+    )
+    build_packet.add_argument(
+        "--llm-max-input-chars",
+        type=int,
+        default=12_000,
+        help="Maximum JSON payload size sent to opt-in LLM/custom summary modes after safety filtering.",
+    )
+    build_packet.add_argument(
+        "--llm-allow-code-snippets",
+        choices=["on", "off"],
+        default="off",
+        help="Allow code blocks in opt-in LLM/custom summary payloads. Default omits them.",
     )
     _add_project_root_argument(build_packet)
 
@@ -1013,6 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
             build_packet_from_session=build_packet_from_session,
             export_v2_summary_artifacts=_export_v2_summary_artifacts,
             summary_routing_hints=_summary_routing_hints,
+            llm_safety_options=_llm_safety_options,
         )
 
     if args.command == "promote-packet-query":

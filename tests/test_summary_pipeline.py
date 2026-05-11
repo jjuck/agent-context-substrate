@@ -110,7 +110,7 @@ def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache
         raw_bundle=_raw_bundle(),
         paths=paths,
         options=options,
-        backend_factory=lambda mode, command, router, routing_hints: CountingBackend(calls),
+        backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
     )
 
     assert calls == ["micro", "unit"]
