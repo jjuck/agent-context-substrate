@@ -4,9 +4,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from .config import LEDGER_PIPELINE
+
+_SAFE_STEM_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+
+
+def _safe_artifact_stem(value: str) -> str | None:
+    stem = str(value).strip()
+    path = Path(stem)
+    if (
+        not stem
+        or path.is_absolute()
+        or ".." in path.parts
+        or "/" in stem
+        or "\\" in stem
+        or not _SAFE_STEM_PATTERN.fullmatch(stem)
+    ):
+        return None
+    return stem
 
 
 def recovery_dir(project_root: Path) -> Path:
@@ -24,15 +42,23 @@ def load_recovery_brief(
     if not requested_session_id:
         return None, None
 
-    ledger_record = ledger_record_for(project_root, requested_session_id)
+    safe_session_id = _safe_artifact_stem(requested_session_id)
+    if safe_session_id is None:
+        return None, None
+
+    ledger_record = ledger_record_for(project_root, safe_session_id)
     candidate_paths: list[Path] = []
     if ledger_record:
         artifact_paths = dict(ledger_record.get("artifact_paths", {}))
         recovery_path = artifact_paths.get("recovery_json_path")
         if recovery_path:
-            candidate_paths.append(resolve_artifact_path(project_root, recovery_path))
+            resolved_path = resolve_artifact_path(project_root, recovery_path)
+            if _is_recovery_artifact_path(project_root, resolved_path):
+                candidate_paths.append(resolved_path)
 
-    candidate_paths.append(recovery_dir(project_root) / f"{requested_session_id}.json")
+    direct_path = recovery_dir(project_root) / f"{safe_session_id}.json"
+    if _is_recovery_artifact_path(project_root, direct_path):
+        candidate_paths.append(direct_path)
     return load_first_json(candidate_paths)
 
 
@@ -50,10 +76,14 @@ def load_latest_recovery_from_ledger(project_root: Path) -> tuple[dict[str, Any]
         candidate_paths: list[Path] = []
         recovery_path = artifact_paths.get("recovery_json_path")
         if recovery_path:
-            candidate_paths.append(resolve_artifact_path(project_root, recovery_path))
-        session_id = str(record.get("session_id", ""))
+            resolved_path = resolve_artifact_path(project_root, recovery_path)
+            if _is_recovery_artifact_path(project_root, resolved_path):
+                candidate_paths.append(resolved_path)
+        session_id = _safe_artifact_stem(str(record.get("session_id", "")))
         if session_id:
-            candidate_paths.append(recovery_dir(project_root) / f"{session_id}.json")
+            direct_path = recovery_dir(project_root) / f"{session_id}.json"
+            if _is_recovery_artifact_path(project_root, direct_path):
+                candidate_paths.append(direct_path)
         brief, source_path = load_first_json(candidate_paths)
         if brief is not None:
             return brief, source_path
@@ -79,6 +109,19 @@ def ledger_records(project_root: Path) -> list[dict[str, Any]]:
 def resolve_artifact_path(project_root: Path, value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else project_root / path
+
+
+def _is_recovery_artifact_path(project_root: Path, path: Path) -> bool:
+    project_root_resolved = Path(project_root).resolve()
+    root = recovery_dir(project_root).resolve()
+    try:
+        root.relative_to(project_root_resolved)
+        resolved_path = path.resolve()
+        resolved_path.relative_to(project_root_resolved)
+        resolved_path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def load_json_object(path: Path) -> dict[str, Any] | None:

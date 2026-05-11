@@ -10,6 +10,7 @@ import sqlite3
 
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
+from .safe_paths import is_safe_project_artifact_path
 
 
 @dataclass(frozen=True)
@@ -302,6 +303,8 @@ def _search_packets(terms: list[str], project_root: Path) -> list[RetrievalHit]:
         return []
     hits: list[RetrievalHit] = []
     for path in sorted(packet_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["packet"]):
+            continue
         packet = _load_packet(path)
         if packet is None:
             continue
@@ -406,6 +409,8 @@ def _search_topic_map(terms: list[str], project_root: Path, *, graph_depth: int 
         return []
     hits_by_provenance: dict[str, RetrievalHit] = {}
     for path in sorted(index_dir.glob("topic_map*.json")):
+        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["topic_map_node"]):
+            continue
         payload = _load_json_object(path)
         if not payload:
             continue
@@ -657,6 +662,8 @@ def _search_promotions(terms: list[str], project_root: Path) -> list[RetrievalHi
         return []
     hits: list[RetrievalHit] = []
     for path in sorted(promotions_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["promotion_candidate"]):
+            continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -704,6 +711,8 @@ def _search_wiki_patches(terms: list[str], project_root: Path) -> list[Retrieval
         return []
     hits: list[RetrievalHit] = []
     for path in sorted(wiki_patches_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["wiki_patch"]):
+            continue
         try:
             proposal = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
@@ -745,7 +754,7 @@ def _search_wiki_patches(terms: list[str], project_root: Path) -> list[Retrieval
                 )
             )
     applied_log = wiki_patches_dir / "applied.jsonl"
-    if applied_log.exists():
+    if applied_log.exists() and is_safe_project_artifact_path(applied_log, project_root, *_PROJECT_SOURCE_PREFIXES["applied_patch"]):
         hits.extend(_search_applied_patch_log(terms, project_root, applied_log))
     return hits
 

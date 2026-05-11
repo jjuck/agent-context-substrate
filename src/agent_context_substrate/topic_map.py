@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 import json
 import re
 
-from .safe_paths import safe_child_path
+from .safe_paths import is_safe_project_artifact_path, safe_child_path
 
 
 @dataclass(frozen=True)
@@ -177,6 +176,8 @@ def _add_context_packets(builder: _TopicMapBuilder, project_root: Path) -> None:
     if not packet_dir.exists():
         return
     for path in sorted(packet_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, "data", "exports", "context_packets"):
+            continue
         payload = _load_json_object(path)
         if not payload:
             continue
@@ -192,7 +193,7 @@ def _add_context_packets(builder: _TopicMapBuilder, project_root: Path) -> None:
 
 def _add_claim_atoms(builder: _TopicMapBuilder, project_root: Path) -> None:
     claims_path = project_root / "data" / "atoms" / "claims.jsonl"
-    if not claims_path.exists():
+    if not claims_path.exists() or not is_safe_project_artifact_path(claims_path, project_root, "data", "atoms"):
         return
     for claim in _load_jsonl_objects(claims_path):
         atom_id = str(claim.get("atom_id", ""))
@@ -226,7 +227,7 @@ def _add_structured_atoms(builder: _TopicMapBuilder, project_root: Path) -> None
     ]
     for filename, node_type, label_key, packet_edge_type in specs:
         atom_path = project_root / "data" / "atoms" / filename
-        if not atom_path.exists():
+        if not atom_path.exists() or not is_safe_project_artifact_path(atom_path, project_root, "data", "atoms"):
             continue
         rel_path = _relative_to(atom_path, project_root)
         for atom in _load_jsonl_objects(atom_path):
@@ -258,6 +259,8 @@ def _add_promotion_candidates(builder: _TopicMapBuilder, project_root: Path) -> 
     if not promotions_dir.exists():
         return
     for path in sorted(promotions_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, "data", "promotions"):
+            continue
         payload = _load_json(path)
         if not isinstance(payload, list):
             continue
@@ -298,6 +301,8 @@ def _add_wiki_patches(builder: _TopicMapBuilder, project_root: Path) -> None:
     if not patches_dir.exists():
         return
     for path in sorted(patches_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, "data", "wiki_patches"):
+            continue
         proposal = _load_json_object(path)
         if not proposal:
             continue
@@ -341,7 +346,7 @@ def _add_wiki_patches(builder: _TopicMapBuilder, project_root: Path) -> None:
 
 def _add_applied_patch_log(builder: _TopicMapBuilder, project_root: Path) -> None:
     applied_path = project_root / "data" / "wiki_patches" / "applied.jsonl"
-    if not applied_path.exists():
+    if not applied_path.exists() or not is_safe_project_artifact_path(applied_path, project_root, "data", "wiki_patches"):
         return
     rel_path = _relative_to(applied_path, project_root)
     for index, record in enumerate(_load_jsonl_objects(applied_path)):

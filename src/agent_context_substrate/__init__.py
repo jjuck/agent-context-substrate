@@ -43,7 +43,9 @@ from .models import (
     UnitSummaryV2,
 )
 from .naming import derive_goal, derive_task_title, derive_unit_title, slugify_label
+from .packet_builder import PacketBuildOptions, PacketBuildResult, build_packet_from_session
 from .paths import HarnessPaths
+from .safe_paths import is_safe_project_artifact_path, safe_artifact_stem, safe_child_path, safe_wiki_target_path
 from .policy import should_process_bundle
 from .promotion import (
     promote_context_packet_to_plan,
@@ -84,6 +86,7 @@ from .summarizer_backends import (
     get_summarizer_backend,
 )
 from .summary_lint import SummaryLintIssue, SummaryLintReport, lint_micro_summary_v2
+from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
 from .summarizer import (
     build_micro_summary,
     build_micro_summary_v2,
@@ -115,6 +118,8 @@ __all__ = [
     "FreshInstallSmokeResult",
     "InstallResult",
     "PipelineRetryExhaustedError",
+    "PacketBuildOptions",
+    "PacketBuildResult",
     "PromotionCandidate",
     "WikiPatchApplyResult",
     "WikiPatchOperation",
@@ -125,6 +130,8 @@ __all__ = [
     "SessionLedger",
     "SummaryLintIssue",
     "SummaryLintReport",
+    "SummaryArtifactResult",
+    "SummaryOptions",
     "SummarizerBackend",
     "RecoveryBrief",
     "RetrievalHit",
@@ -136,6 +143,8 @@ __all__ = [
     "build_micro_evidence_bundle",
     "build_micro_summary",
     "build_micro_summary_v2",
+    "build_packet_from_session",
+    "build_v2_summary_artifacts",
     "build_topic_map",
     "build_unit_summary",
     "build_unit_summary_v2",
@@ -167,6 +176,10 @@ __all__ = [
     "run_session_finalize_pipeline",
     "should_process_session",
     "search_knowledge",
+    "safe_artifact_stem",
+    "safe_child_path",
+    "safe_wiki_target_path",
+    "is_safe_project_artifact_path",
     "build_recovery_brief",
     "export_recovery_brief",
     "should_process_bundle",

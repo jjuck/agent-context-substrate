@@ -72,6 +72,51 @@ def test_lint_micro_summary_v2_reports_invented_files_and_empty_summaries() -> N
     assert [issue.code for issue in report.issues] == ["summary_not_empty", "no_new_files"]
 
 
+def test_lint_micro_summary_v2_reports_invented_entities_and_missing_retrieval_keywords() -> None:
+    summary = build_micro_summary_v2(raw_bundle=_raw_bundle(), micro_id="micro-lint")
+    bad_summary = replace(
+        summary,
+        retrieval_summary="generic session notes",
+        entities=["ImaginaryVendor"],
+    )
+
+    report = lint_micro_summary_v2(bad_summary, raw_bundle=_raw_bundle())
+
+    assert report.ok is False
+    assert [issue.code for issue in report.issues] == ["no_new_entities", "retrieval_keywords_present"]
+
+
+def test_lint_micro_summary_v2_reports_unresolved_questions_missing_from_open_questions() -> None:
+    raw_bundle = {
+        "session": {"id": "session-question", "source": "telegram", "title": "Question lint"},
+        "messages": [
+            {"id": 1, "role": "user", "content": "How should we route hybrid LLM summaries?"},
+        ],
+    }
+    summary = build_micro_summary_v2(raw_bundle=raw_bundle, micro_id="micro-question")
+    bad_summary = replace(summary, open_questions=[])
+
+    report = lint_micro_summary_v2(bad_summary, raw_bundle=raw_bundle)
+
+    assert report.ok is False
+    assert [issue.code for issue in report.issues] == ["unresolved_question_detection"]
+
+
+def test_lint_micro_summary_v2_reports_uncalibrated_confidence_values() -> None:
+    summary = build_micro_summary_v2(raw_bundle=_raw_bundle(), micro_id="micro-lint")
+    assert summary.metadata is not None
+    bad_summary = replace(
+        summary,
+        decisions=[EvidenceBackedText(text="Too certain", evidence_message_ids=[1], confidence=1.5)],
+        metadata=replace(summary.metadata, confidence=-0.1),
+    )
+
+    report = lint_micro_summary_v2(bad_summary, raw_bundle=_raw_bundle())
+
+    assert report.ok is False
+    assert [issue.code for issue in report.issues] == ["confidence_calibrated", "confidence_calibrated"]
+
+
 def test_lint_unit_summary_v2_accepts_grounded_heuristic_unit_summary() -> None:
     micro = build_micro_summary_v2(raw_bundle=_raw_bundle(), micro_id="micro-lint")
     unit = build_unit_summary_v2(

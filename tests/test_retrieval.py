@@ -160,6 +160,39 @@ def test_expand_hit_returns_full_wiki_or_packet_detail(tmp_path: Path) -> None:
     assert detail.metadata["source_type"] == "wiki"
 
 
+def test_search_knowledge_skips_project_artifact_symlinks_that_escape_root(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    promotions_dir = project_root / "data" / "promotions"
+    promotions_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-promotions.json"
+    outside.write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "outside-candidate",
+                    "packet_id": "outside-packet",
+                    "kind": "concept_update",
+                    "target_page": "outside",
+                    "reason": "This outside artifact must not be searchable.",
+                    "evidence": ["claim:outside"],
+                    "proposed_change": "secret outside symlink payload",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.9,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (promotions_dir / "linked.json").symlink_to(outside)
+
+    hits = search_knowledge("secret outside symlink", project_root=project_root, wiki_root=wiki_root, limit=10)
+
+    assert hits == []
+
+
 def test_search_knowledge_includes_promotions_wiki_patches_and_applied_logs(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"

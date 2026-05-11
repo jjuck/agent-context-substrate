@@ -36,3 +36,21 @@ def test_harness_paths_defaults_to_hermes_state_db_under_home(tmp_path, monkeypa
     assert paths.hermes_home == hermes_home
     assert paths.state_db_path == hermes_home / "state.db"
     assert paths.wiki_root == tmp_path / "wiki"
+
+
+def test_harness_paths_explicit_roots_take_precedence_over_env(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "env-hermes"))
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "env-wiki"))
+
+    explicit_hermes = tmp_path / "explicit-hermes"
+    explicit_wiki = tmp_path / "explicit-wiki"
+    paths = HarnessPaths(
+        project_root=tmp_path / "project",
+        hermes_home=explicit_hermes,
+        wiki_root=explicit_wiki,
+    )
+
+    assert paths.hermes_home == explicit_hermes
+    assert paths.state_db_path == explicit_hermes / "state.db"
+    assert paths.wiki_root == explicit_wiki

@@ -154,6 +154,48 @@ def test_apply_wiki_patch_proposal_skips_unsafe_target_paths(tmp_path) -> None:
     assert not outside.exists()
 
 
+def test_apply_wiki_patch_proposal_skips_system_and_non_markdown_targets(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    system_target = wiki_root / "_system" / "secret.md"
+    non_markdown_target = wiki_root / "concepts" / "data.json"
+    proposal = WikiPatchProposal(
+        proposal_id="packet-1-wiki-patch-proposal",
+        packet_id="packet-1",
+        status="proposed",
+        operations=[
+            WikiPatchOperation(
+                patch_id="packet-1-patch-system",
+                candidate_id="packet-1-candidate-1",
+                target="_system/secret.md",
+                operation="insert_claim_block",
+                rationale="System pages should not be modified.",
+                evidence=["claim:packet-1-claim-1"],
+                risk="high",
+                diff={"before": "", "after": "unsafe"},
+                status="proposed",
+            ),
+            WikiPatchOperation(
+                patch_id="packet-1-patch-json",
+                candidate_id="packet-1-candidate-1",
+                target="concepts/data.json",
+                operation="insert_claim_block",
+                rationale="Non-markdown targets should not be modified.",
+                evidence=["claim:packet-1-claim-1"],
+                risk="high",
+                diff={"before": "", "after": "unsafe"},
+                status="proposed",
+            ),
+        ],
+    )
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    assert result.applied_patch_ids == []
+    assert result.skipped_patch_ids == ["packet-1-patch-system", "packet-1-patch-json"]
+    assert not system_target.exists()
+    assert not non_markdown_target.exists()
+
+
 def test_apply_wiki_patch_proposal_skips_unsupported_operations(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
     target = wiki_root / "concepts" / "summarization.md"

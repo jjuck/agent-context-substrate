@@ -40,3 +40,40 @@ def safe_child_path(directory: Path, stem: str, suffix: str, *, label: str = "ar
     except ValueError as exc:
         raise ValueError(f"Unsafe {label}: {stem!r}") from exc
     return path
+
+
+def is_safe_project_artifact_path(path: Path, project_root: Path, *relative_root_parts: str) -> bool:
+    """Return True when an artifact path resolves under an allowed project subdirectory."""
+
+    if not relative_root_parts:
+        return False
+    project_root_resolved = Path(project_root).resolve()
+    allowed_root = (Path(project_root) / Path(*relative_root_parts)).resolve()
+    try:
+        allowed_root.relative_to(project_root_resolved)
+        resolved_path = Path(path).resolve()
+        resolved_path.relative_to(project_root_resolved)
+        resolved_path.relative_to(allowed_root)
+    except ValueError:
+        return False
+    return True
+
+
+def safe_wiki_target_path(*, wiki_root: Path, target: str) -> Path | None:
+    """Resolve a reviewable wiki patch target or return None when unsafe."""
+
+    target_path = Path(target)
+    if target_path.is_absolute() or ".." in target_path.parts:
+        return None
+    if target_path.suffix != ".md":
+        return None
+    parts = target_path.parts
+    if not parts or any(part.startswith(".") for part in parts) or parts[0] in {"_system", "90 보관"}:
+        return None
+    root = Path(wiki_root).resolve()
+    resolved = (root / target_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    return resolved

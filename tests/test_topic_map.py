@@ -133,6 +133,39 @@ def test_build_topic_map_connects_claims_promotions_patches_applied_logs_and_wik
     assert ("wiki_page:concepts/summarization.md", "wiki_page:concepts/agent-context-substrate.md", "links_to") in edge_pairs
 
 
+def test_build_topic_map_skips_project_artifact_symlinks_that_escape_root(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    promotions_dir = project_root / "data" / "promotions"
+    promotions_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-promotions.json"
+    outside.write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "outside-candidate",
+                    "packet_id": "outside-packet",
+                    "kind": "concept_update",
+                    "target_page": "outside",
+                    "reason": "This outside artifact must not enter the topic map.",
+                    "evidence": ["claim:outside"],
+                    "proposed_change": "outside symlink payload",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.9,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (promotions_dir / "linked.json").symlink_to(outside)
+
+    topic_map = build_topic_map(project_root=project_root, wiki_root=wiki_root)
+
+    assert "promotion:outside-candidate" not in {node.node_id for node in topic_map.nodes}
+
+
 def test_export_topic_map_writes_json_and_markdown(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"

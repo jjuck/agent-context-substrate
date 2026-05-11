@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .promotions import PromotionCandidate
+from .safe_paths import safe_wiki_target_path
 
 MANAGED_CLAIMS_START = "<!-- acs:auto:claims:start -->"
 MANAGED_CLAIMS_END = "<!-- acs:auto:claims:end -->"
@@ -234,16 +235,7 @@ def _existing_claim_block(markdown: str) -> str:
 
 
 def _safe_target_path(*, wiki_root: Path, target: str) -> Path | None:
-    target_path = Path(target)
-    if target_path.is_absolute() or ".." in target_path.parts:
-        return None
-    root = wiki_root.resolve()
-    resolved = (root / target_path).resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError:
-        return None
-    return resolved
+    return safe_wiki_target_path(wiki_root=wiki_root, target=target)
 
 
 def _apply_operation(*, operation: WikiPatchOperation, target_path: Path) -> None:

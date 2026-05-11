@@ -6,6 +6,7 @@ import re
 
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
+from .safe_paths import safe_child_path
 
 _RELATED_SECTION_HEADING = "## Related Pages"
 _UPDATED_PATTERN = re.compile(r"^updated:\s*.+$", re.MULTILINE)
@@ -115,6 +116,7 @@ def _write_markdown_page(
     source_refs: list[str],
     body_lines: list[str],
 ) -> Path:
+    output_path = safe_child_path(root_dir, slug, ".md", label="wiki promotion slug")
     root_dir.mkdir(parents=True, exist_ok=True)
     today = date.today().isoformat()
     markdown = "\n".join(
@@ -132,7 +134,6 @@ def _write_markdown_page(
             "",
         ]
     )
-    output_path = root_dir / f"{slug}.md"
     output_path.write_text(markdown, encoding="utf-8")
     return output_path
 

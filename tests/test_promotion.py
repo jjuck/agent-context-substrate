@@ -2,6 +2,8 @@ from datetime import date
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -68,6 +70,34 @@ def _sample_unit(micro_ids: list[str]) -> UnitSummary:
         related_pages=["agent-context-substrate", "context-packet"],
         provenance=_sample_reference([1, 2, 3]),
     )
+
+
+def test_promote_context_packet_rejects_path_like_slug(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+    paths = HarnessPaths(project_root=project_root)
+    packet = build_context_packet(
+        packet_id="packet-1",
+        task_title="Unsafe slug regression",
+        macro_context="Reject path-like promotion slugs.",
+        unit_summary=_sample_unit(micro_ids=[]),
+        micro_summaries=[],
+    )
+
+    with pytest.raises(ValueError):
+        promote_context_packet_to_query(
+            packet=packet,
+            paths=paths,
+            slug="../../outside",
+            title="Unsafe",
+            summary="Should not write outside the wiki.",
+        )
+
+    assert not (tmp_path / "outside.md").exists()
+    assert not (wiki_root / "queries").exists()
 
 
 def test_promote_context_packet_to_query_writes_frontmatter_provenance_and_wikilinks(tmp_path, monkeypatch) -> None:

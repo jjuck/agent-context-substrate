@@ -25,6 +25,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
   "pytest>=9.0",
+  "ruff>=0.8.0",
 ]
 
 [project.scripts]
@@ -41,6 +42,16 @@ agent_context_substrate = ["assets/**/__pycache__/*", "assets/**/*.pyc"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/agent_context_substrate/assets/user_plugin/agent_context_substrate/runtime.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,6 +8,9 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from agent_context_substrate.lint import (  # noqa: E402
+    BrokenWikilink,
+    WikiLintReport,
+    count_lint_issues,
     export_lint_report,
     lint_wiki,
 )
@@ -17,6 +20,38 @@ from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def test_count_lint_issues_includes_human_quality_and_internal_graph_fields() -> None:
+    report = WikiLintReport(
+        wiki_root="wiki",
+        checked_pages=[],
+        missing_provenance_pages=["a.md"],
+        orphan_pages=[],
+        pages_missing_from_index=[],
+        broken_wikilinks=[BrokenWikilink(source_page="a.md", target="missing")],
+        micro_summaries_missing_parent_unit=[],
+        micro_summaries_with_unknown_parent_unit=[],
+        unit_summaries_with_missing_micro_references=[],
+        packet_micro_summaries_unreferenced=[],
+        packets_missing_raw_pointers=["packet-1"],
+        numeric_slug_pages=["123.md"],
+        session_id_slug_pages=[],
+        generated_summary_only_pages=[],
+        multiline_frontmatter_title_pages=[],
+        transient_command_title_pages=[],
+        smoke_or_test_pages=[],
+        session_derived_plan_pages=[],
+        excessive_critical_files_pages=[],
+        missing_lang_pages=["no-lang.md"],
+        unsupported_lang_pages=[],
+        missing_required_sections_pages=["thin.md"],
+        thin_content_pages=[],
+        unexplained_english_terms_pages=[],
+        insufficient_related_links_pages=["isolated.md"],
+    )
+
+    assert count_lint_issues(report) == 7
 
 
 def test_lint_wiki_detects_missing_provenance_orphans_broken_links_and_index_gaps(tmp_path, monkeypatch) -> None:

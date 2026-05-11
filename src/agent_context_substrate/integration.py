@@ -7,7 +7,7 @@ import os
 
 from .context_packet import build_context_packet, export_context_packet
 from .ledger import SessionLedger
-from .lint import export_lint_report, lint_wiki
+from .lint import count_lint_issues, export_lint_report, lint_wiki
 from .naming import derive_goal, derive_task_title, derive_unit_title, slugify_label
 from .paths import HarnessPaths
 from .policy import should_process_bundle
@@ -153,30 +153,7 @@ def _register_promoted_page(
 
 
 def _lint_issue_count(report) -> int:
-    return sum(
-        len(items)
-        for items in [
-            report.missing_provenance_pages,
-            report.orphan_pages,
-            report.pages_missing_from_index,
-            report.broken_wikilinks,
-            report.micro_summaries_missing_parent_unit,
-            report.micro_summaries_with_unknown_parent_unit,
-            report.unit_summaries_with_missing_micro_references,
-            report.packet_micro_summaries_unreferenced,
-            report.packets_missing_raw_pointers,
-            getattr(report, "numeric_slug_pages", []),
-            getattr(report, "session_id_slug_pages", []),
-            getattr(report, "generated_summary_only_pages", []),
-            getattr(report, "multiline_frontmatter_title_pages", []),
-            getattr(report, "transient_command_title_pages", []),
-            getattr(report, "smoke_or_test_pages", []),
-            getattr(report, "session_derived_plan_pages", []),
-            getattr(report, "excessive_critical_files_pages", []),
-            getattr(report, "missing_lang_pages", []),
-            getattr(report, "unsupported_lang_pages", []),
-        ]
-    )
+    return count_lint_issues(report)
 
 
 def _dedupe_related_pages(pages: list[str]) -> list[str]:

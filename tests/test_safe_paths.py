@@ -8,7 +8,12 @@ from agent_context_substrate.context_packet import export_context_packet
 from agent_context_substrate.lint import WikiLintReport, export_lint_report
 from agent_context_substrate.models import ContextPacket
 from agent_context_substrate.paths import HarnessPaths
-from agent_context_substrate.safe_paths import safe_artifact_stem, safe_child_path
+from agent_context_substrate.safe_paths import (
+    is_safe_project_artifact_path,
+    safe_artifact_stem,
+    safe_child_path,
+    safe_wiki_target_path,
+)
 from agent_context_substrate.topic_map import TopicMap, export_topic_map
 
 
@@ -24,6 +29,44 @@ def test_safe_child_path_keeps_output_inside_directory(tmp_path: Path) -> None:
     assert safe_child_path(base, "report-1", ".json").parent == base
     with pytest.raises(ValueError):
         safe_child_path(base, "../escape", ".json")
+
+
+def test_safe_project_artifact_path_rejects_symlink_escape(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    promotions_dir = project_root / "data" / "promotions"
+    promotions_dir.mkdir(parents=True)
+    inside = promotions_dir / "packet-1.json"
+    inside.write_text("[]", encoding="utf-8")
+    outside = tmp_path / "outside.json"
+    outside.write_text("[]", encoding="utf-8")
+    escaping_link = promotions_dir / "linked.json"
+    escaping_link.symlink_to(outside)
+
+    assert is_safe_project_artifact_path(inside, project_root, "data", "promotions") is True
+    assert is_safe_project_artifact_path(escaping_link, project_root, "data", "promotions") is False
+
+
+def test_safe_project_artifact_path_rejects_symlinked_allowed_directory(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    data_dir = project_root / "data"
+    data_dir.mkdir(parents=True)
+    outside_promotions = tmp_path / "outside-promotions"
+    outside_promotions.mkdir()
+    outside_artifact = outside_promotions / "packet-1.json"
+    outside_artifact.write_text("[]", encoding="utf-8")
+    (data_dir / "promotions").symlink_to(outside_promotions, target_is_directory=True)
+
+    assert is_safe_project_artifact_path(outside_artifact, project_root, "data", "promotions") is False
+
+
+def test_safe_wiki_target_path_rejects_system_hidden_non_markdown_and_escape(tmp_path: Path) -> None:
+    wiki_root = tmp_path / "wiki"
+
+    accepted = safe_wiki_target_path(wiki_root=wiki_root, target="concepts/summarization.md")
+
+    assert accepted == (wiki_root / "concepts" / "summarization.md").resolve()
+    for target in ["../outside.md", "/tmp/outside.md", "_system/secret.md", "90 보관/old.md", ".hidden/page.md", "concepts/data.json"]:
+        assert safe_wiki_target_path(wiki_root=wiki_root, target=target) is None
 
 
 def test_export_topic_map_rejects_unsafe_report_id(tmp_path: Path) -> None:

@@ -7,25 +7,35 @@ import os
 
 @dataclass(frozen=True)
 class HarnessPaths:
-    project_root: Path
+    project_root: Path | str
+    hermes_home: Path | str | None = None
+    wiki_root: Path | str | None = None
+    home_dir: Path | str | None = None
 
-    @property
-    def home_dir(self) -> Path:
-        return Path(os.path.expanduser("~"))
-
-    @property
-    def hermes_home(self) -> Path:
-        value = os.environ.get("HERMES_HOME")
-        return Path(value).expanduser() if value else self.home_dir / ".hermes"
+    def __post_init__(self) -> None:
+        home_dir = Path(self.home_dir).expanduser() if self.home_dir is not None else Path(os.path.expanduser("~"))
+        hermes_home = (
+            Path(self.hermes_home).expanduser()
+            if self.hermes_home is not None
+            else Path(os.environ["HERMES_HOME"]).expanduser()
+            if os.environ.get("HERMES_HOME")
+            else home_dir / ".hermes"
+        )
+        wiki_root = (
+            Path(self.wiki_root).expanduser()
+            if self.wiki_root is not None
+            else Path(os.environ["WIKI_PATH"]).expanduser()
+            if os.environ.get("WIKI_PATH")
+            else home_dir / "wiki"
+        )
+        object.__setattr__(self, "project_root", Path(self.project_root).expanduser())
+        object.__setattr__(self, "home_dir", home_dir)
+        object.__setattr__(self, "hermes_home", hermes_home)
+        object.__setattr__(self, "wiki_root", wiki_root)
 
     @property
     def state_db_path(self) -> Path:
         return self.hermes_home / "state.db"
-
-    @property
-    def wiki_root(self) -> Path:
-        value = os.environ.get("WIKI_PATH")
-        return Path(value).expanduser() if value else self.home_dir / "wiki"
 
     @property
     def data_dir(self) -> Path:

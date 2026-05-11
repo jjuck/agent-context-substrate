@@ -32,7 +32,7 @@ def _micro_payload(evidence: dict[str, object]) -> dict:
         "message_ids": evidence["message_ids"],
         "recovery_summary": "agent recovery",
         "knowledge_summary": "agent knowledge",
-        "retrieval_summary": "agent retrieval README.md",
+        "retrieval_summary": "agent LLM retrieval README.md",
         "user_intent": "agent intent",
         "assistant_outcome": "agent outcome",
         "decisions": [{"text": "Use Agent router", "evidence_message_ids": evidence["message_ids"], "confidence": 0.9}],
@@ -40,7 +40,7 @@ def _micro_payload(evidence: dict[str, object]) -> dict:
         "action_items": [],
         "open_questions": [],
         "files": ["README.md"],
-        "entities": ["AgentLLMSummarizerBackend"],
+        "entities": ["Agent LLM"],
         "concepts": ["agent-llm"],
         "metadata": {
             "mode": "agent-llm",

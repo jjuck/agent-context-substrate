@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .models import EvidenceBackedText, MicroSummaryV2, UnitSummaryV2
-from .summarizer import _extract_files
+from .summarizer import _extract_files, _extract_follow_up_questions
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,95 @@ def _raw_message_ids(raw_bundle: dict[str, Any]) -> set[int]:
 
 def _raw_text(raw_bundle: dict[str, Any]) -> str:
     return "\n".join(str(message.get("content") or "") for message in raw_bundle.get("messages", []))
+
+
+def _normalize_semantic_text(value: str) -> str:
+    return " ".join(str(value).casefold().split())
+
+
+def _confidence_issue(*, field: str, value: float | None) -> SummaryLintIssue | None:
+    if value is None:
+        return None
+    if 0.0 <= float(value) <= 1.0:
+        return None
+    return SummaryLintIssue(
+        code="confidence_calibrated",
+        field=field,
+        message=f"{field} confidence must be between 0.0 and 1.0, got {value}",
+    )
+
+
+def _lint_confidence_items(items: list[EvidenceBackedText], *, field: str) -> list[SummaryLintIssue]:
+    issues: list[SummaryLintIssue] = []
+    for index, item in enumerate(items):
+        issue = _confidence_issue(field=f"{field}[{index}]", value=item.confidence)
+        if issue is not None:
+            issues.append(issue)
+    return issues
+
+
+def _summary_metadata_confidence(summary: MicroSummaryV2 | UnitSummaryV2) -> float | None:
+    if summary.metadata is None:
+        return None
+    return summary.metadata.confidence
+
+
+def _lint_retrieval_keywords(summary: MicroSummaryV2, *, raw_text: str) -> list[SummaryLintIssue]:
+    normalized_raw_text = _normalize_semantic_text(raw_text)
+    expected_keywords = [
+        keyword
+        for keyword in [*summary.files, *summary.entities, *summary.concepts]
+        if _normalize_semantic_text(keyword) in normalized_raw_text
+    ]
+    normalized_retrieval = _normalize_semantic_text(summary.retrieval_summary)
+    if not normalized_retrieval:
+        return []
+    if not expected_keywords or any(_normalize_semantic_text(keyword) in normalized_retrieval for keyword in expected_keywords):
+        return []
+    return [
+        SummaryLintIssue(
+            code="retrieval_keywords_present",
+            field="retrieval_summary",
+            message="retrieval_summary should include at least one grounded file, entity, or concept keyword.",
+        )
+    ]
+
+
+def _lint_new_entities(summary: MicroSummaryV2, *, raw_text: str) -> list[SummaryLintIssue]:
+    normalized_raw_text = _normalize_semantic_text(raw_text)
+    invented_entities = [
+        entity
+        for entity in summary.entities
+        if _normalize_semantic_text(entity) not in normalized_raw_text
+    ]
+    if not invented_entities:
+        return []
+    return [
+        SummaryLintIssue(
+            code="no_new_entities",
+            field="entities",
+            message=f"summary cites entities absent from raw bundle: {invented_entities}",
+        )
+    ]
+
+
+def _lint_unresolved_questions(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]) -> list[SummaryLintIssue]:
+    expected_questions = _extract_follow_up_questions(list(raw_bundle.get("messages", [])))
+    normalized_open_questions = {_normalize_semantic_text(question) for question in summary.open_questions}
+    missing_questions = [
+        question
+        for question in expected_questions
+        if _normalize_semantic_text(question) not in normalized_open_questions
+    ]
+    if not missing_questions:
+        return []
+    return [
+        SummaryLintIssue(
+            code="unresolved_question_detection",
+            field="open_questions",
+            message=f"unanswered trailing user questions missing from open_questions: {missing_questions}",
+        )
+    ]
 
 
 def _lint_evidence_items(
@@ -94,7 +183,8 @@ def lint_micro_summary_v2(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]
     ):
         issues.extend(_lint_evidence_items(items, field=field, valid_message_ids=valid_message_ids))
 
-    source_files = set(_extract_files(_raw_text(raw_bundle)))
+    raw_text = _raw_text(raw_bundle)
+    source_files = set(_extract_files(raw_text))
     invented_files = [file_path for file_path in summary.files if file_path not in source_files]
     if invented_files:
         issues.append(
@@ -104,6 +194,22 @@ def lint_micro_summary_v2(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]
                 message=f"summary cites files absent from raw bundle: {invented_files}",
             )
         )
+
+    issues.extend(_lint_new_entities(summary, raw_text=raw_text))
+    issues.extend(_lint_retrieval_keywords(summary, raw_text=raw_text))
+    issues.extend(_lint_unresolved_questions(summary, raw_bundle=raw_bundle))
+    for field, items in (
+        ("decisions", summary.decisions),
+        ("claims", summary.claims),
+        ("action_items", summary.action_items),
+    ):
+        issues.extend(_lint_confidence_items(items, field=field))
+    metadata_confidence_issue = _confidence_issue(
+        field="metadata.confidence",
+        value=_summary_metadata_confidence(summary),
+    )
+    if metadata_confidence_issue is not None:
+        issues.append(metadata_confidence_issue)
 
     return SummaryLintReport(issues=issues)
 
@@ -127,6 +233,14 @@ def lint_unit_summary_v2(summary: UnitSummaryV2, *, micro_summaries: list[MicroS
         ("wiki_candidates", summary.wiki_candidates),
     ):
         issues.extend(_lint_evidence_items(items, field=field, valid_message_ids=valid_message_ids))
+        issues.extend(_lint_confidence_items(items, field=field))
+
+    metadata_confidence_issue = _confidence_issue(
+        field="metadata.confidence",
+        value=_summary_metadata_confidence(summary),
+    )
+    if metadata_confidence_issue is not None:
+        issues.append(metadata_confidence_issue)
 
     unknown_micro_ids = [micro_id for micro_id in summary.micro_ids if micro_id not in valid_micro_ids]
     if unknown_micro_ids:
