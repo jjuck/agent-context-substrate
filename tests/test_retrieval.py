@@ -145,6 +145,137 @@ def test_search_knowledge_includes_packet_and_micro_summary_hits(tmp_path: Path)
     assert "hermes-session:session-1#messages=10,11" in micro_hits[0].provenance
 
 
+def test_search_knowledge_recovery_mode_prioritizes_recovery_briefs(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    recovery_dir = project_root / "data" / "exports" / "recovery"
+    recovery_dir.mkdir(parents=True)
+    (wiki_root / "notes").mkdir(parents=True)
+    (wiki_root / "notes" / "llm-safety.md").write_text(
+        "# LLM Safety\n\nnext action LLM input safety next action LLM input safety",
+        encoding="utf-8",
+    )
+    recovery_path = recovery_dir / "session-1.json"
+    recovery_path.write_text(
+        json.dumps(
+            {
+                "session_id": "session-1",
+                "packet_id": "packet-1",
+                "task_title": "Resume alpha work",
+                "macro_context": "Next action: implement LLM input safety controls.",
+                "decisions": ["Recovery retrieval ships before provider-specific policy."],
+                "critical_files": ["src/agent_context_substrate/retrieval.py"],
+                "open_questions": ["Should max input chars default to 12000?"],
+                "related_pages": ["Agent Context Substrate"],
+                "provenance": ["hermes-session:session-1#messages=1,2"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "next action LLM input safety",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        mode="recovery",
+        limit=5,
+    )
+
+    assert hits
+    assert hits[0].source_type == "recovery_brief"
+    assert hits[0].source_path == "data/exports/recovery/session-1.json"
+    assert hits[0].title == "Resume alpha work"
+    assert "Next action" in hits[0].snippet
+    assert hits[0].provenance == ["recovery:session-1", "hermes-session:session-1#messages=1,2"]
+    assert all(hit.source_type != "wiki" for hit in hits)
+
+    detail = expand_hit(hits[0].hit_id, project_root=project_root, wiki_root=wiki_root)
+    assert detail.metadata["source_type"] == "recovery_brief"
+    assert detail.metadata["session_id"] == "session-1"
+    assert "implement LLM input safety controls" in detail.content
+
+
+def test_search_knowledge_recovery_mode_includes_packet_recovery_fields(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    packet_dir = project_root / "data" / "exports" / "context_packets"
+    packet_dir.mkdir(parents=True)
+    packet_json = packet_dir / "packet-1.json"
+    packet_json.write_text(
+        json.dumps(
+            {
+                "packet_id": "packet-1",
+                "task_title": "Recovery retrieval packet",
+                "macro_context": "Resume work by checking recovery retrieval tests first.",
+                "unit_summaries": [
+                    {
+                        "unit_id": "unit-1",
+                        "session_id": "session-1",
+                        "title": "Build recovery search",
+                        "goal": "Expose recovery artifacts as first-class retrieval input.",
+                        "decisions": ["Recovery mode searches packet fields when no brief exists."],
+                        "progress": ["Context packet exists."],
+                        "open_questions": ["How should expand return packet recovery excerpts?"],
+                        "micro_ids": ["micro-1"],
+                        "related_pages": [],
+                        "provenance": None,
+                    }
+                ],
+                "micro_summaries": [
+                    {
+                        "micro_id": "micro-1",
+                        "session_id": "session-1",
+                        "message_ids": [1, 2],
+                        "summary": "Recovery-oriented summary text mentions resume checklist.",
+                        "why_it_matters": "Next sessions can continue from the right file.",
+                        "request": "Add recovery mode",
+                        "outcome": "Packet recovery fields are searchable.",
+                        "key_points": ["critical_files guide the next edit."],
+                        "follow_up_questions": [],
+                        "artifacts": [],
+                        "files": ["src/agent_context_substrate/retrieval.py"],
+                        "entities": [],
+                        "concepts": ["recovery retrieval"],
+                        "parent_unit_id": "unit-1",
+                        "provenance": {
+                            "session_id": "session-1",
+                            "message_ids": [1, 2],
+                            "source": "telegram",
+                            "started_at": None,
+                            "ended_at": None,
+                            "title": "Recovery retrieval",
+                        },
+                    }
+                ],
+                "raw_pointers": [],
+                "critical_files": ["src/agent_context_substrate/retrieval.py"],
+                "open_questions": ["Should recovery_packet ranking follow recovery_brief?"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    hits = search_knowledge(
+        "resume checklist critical_files",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        mode="recovery",
+        limit=5,
+    )
+
+    assert hits
+    assert hits[0].source_type == "recovery_packet"
+    assert hits[0].source_path == "data/exports/context_packets/packet-1.json"
+    assert "Resume work" in hits[0].snippet
+
+    detail = expand_hit(hits[0].hit_id, project_root=project_root, wiki_root=wiki_root)
+    assert detail.metadata["source_type"] == "recovery_packet"
+    assert detail.metadata["packet_id"] == "packet-1"
+    assert "critical_files" in detail.content
+
+
 def test_expand_hit_returns_full_wiki_or_packet_detail(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"
@@ -670,6 +801,42 @@ def test_expand_hit_rejects_forged_project_path_outside_allowed_artifact_dirs(tm
             "source_type": "packet",
             "source_path": "data/exports/session-1.json",
             "packet_id": "session-1",
+            "title": "forged",
+            "provenance": [],
+        }
+    )
+
+    with pytest.raises(ValueError):
+        expand_hit(hit_id, project_root=project_root, wiki_root=wiki_root)
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_path"),
+    [
+        ("recovery_brief", "data/exports/recovery/link.json"),
+        ("recovery_packet", "data/exports/context_packets/link.json"),
+    ],
+)
+def test_expand_hit_rejects_project_artifact_symlink_boundary_bypass(
+    tmp_path: Path, source_type: str, source_path: str
+) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    secret_json = project_root / "data" / "exports" / "private" / "secret.json"
+    secret_json.parent.mkdir(parents=True)
+    secret_json.write_text('{"private": "symlink boundary bypass"}', encoding="utf-8")
+    link = project_root / source_path
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        link.symlink_to(secret_json)
+    except OSError:
+        pytest.skip("symlinks unavailable on this platform")
+    hit_id = _forged_hit_id(
+        {
+            "source_type": source_type,
+            "source_path": source_path,
+            "packet_id": "packet-forged",
+            "session_id": "session-forged",
             "title": "forged",
             "provenance": [],
         }

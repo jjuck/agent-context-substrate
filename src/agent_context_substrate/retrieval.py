@@ -72,13 +72,18 @@ def search_knowledge(
         return []
 
     normalized_mode = mode.strip().lower() if mode else "knowledge"
-    if normalized_mode not in {"knowledge", "graph"}:
+    if normalized_mode not in {"knowledge", "graph", "recovery"}:
         raise ValueError(f"Unsupported retrieval mode: {mode!r}")
 
     hits: list[RetrievalHit] = []
     if normalized_mode == "graph":
         hits.extend(_search_topic_map(terms, project_root, graph_depth=graph_depth))
         hits.sort(key=lambda hit: (-hit.score, _source_rank(hit.source_type), hit.title, hit.hit_id))
+        return hits[: max(0, limit)]
+    if normalized_mode == "recovery":
+        hits.extend(_search_recovery_briefs(terms, project_root))
+        hits.extend(_search_recovery_packets(terms, project_root))
+        hits.sort(key=lambda hit: (_source_rank(hit.source_type), -hit.score, hit.title, hit.hit_id))
         return hits[: max(0, limit)]
 
     hits.extend(_search_wiki(terms, wiki_root))
@@ -115,7 +120,7 @@ def expand_hit(
             metadata={"source_type": source_type, "source_path": source_path},
         )
 
-    if source_type in {"packet", "unit_summary", "micro_summary"}:
+    if source_type in {"packet", "unit_summary", "micro_summary", "recovery_packet"}:
         path = _resolve_project_path(project_root, source_path, source_type=source_type)
         payload_json = json.loads(path.read_text(encoding="utf-8"))
         content = json.dumps(payload_json, ensure_ascii=False, indent=2)
@@ -128,6 +133,22 @@ def expand_hit(
                 "source_path": source_path,
                 "packet_id": payload.get("packet_id", ""),
                 "item_id": payload.get("item_id", ""),
+            },
+        )
+
+    if source_type == "recovery_brief":
+        path = _resolve_project_path(project_root, source_path, source_type=source_type)
+        payload_json = json.loads(path.read_text(encoding="utf-8"))
+        content = json.dumps(payload_json, ensure_ascii=False, indent=2)
+        hit = _hit_from_payload(payload, content=_make_snippet(content, _tokenize(content)[:1]))
+        return RetrievalHitDetail(
+            hit=hit,
+            content=content,
+            metadata={
+                "source_type": source_type,
+                "source_path": source_path,
+                "session_id": payload.get("session_id", ""),
+                "packet_id": payload.get("packet_id", ""),
             },
         )
 
@@ -292,6 +313,87 @@ def _search_wiki(terms: list[str], wiki_root: Path) -> list[RetrievalHit]:
                 snippet=snippet,
                 score=score,
                 provenance=[f"wiki:{rel_path}"],
+            )
+        )
+    return hits
+
+
+def _search_recovery_briefs(terms: list[str], project_root: Path) -> list[RetrievalHit]:
+    recovery_dir = project_root / "data" / "exports" / "recovery"
+    if not recovery_dir.exists():
+        return []
+    hits: list[RetrievalHit] = []
+    for path in sorted(recovery_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["recovery_brief"]):
+            continue
+        payload = _load_json_object(path)
+        if payload is None:
+            continue
+        content = _recovery_brief_search_text(payload)
+        score = _score_text(content, terms)
+        if score <= 0:
+            continue
+        rel_path = path.relative_to(project_root).as_posix()
+        session_id = str(payload.get("session_id") or path.stem)
+        packet_id = str(payload.get("packet_id", ""))
+        title = str(payload.get("task_title") or session_id)
+        provenance = [f"recovery:{session_id}"]
+        provenance.extend(str(item) for item in payload.get("provenance", []) if item)
+        hit_payload = {
+            "source_type": "recovery_brief",
+            "source_path": rel_path,
+            "session_id": session_id,
+            "packet_id": packet_id,
+            "title": title,
+            "provenance": provenance,
+        }
+        hits.append(
+            RetrievalHit(
+                hit_id=_encode_hit_id(hit_payload),
+                source_type="recovery_brief",
+                source_path=rel_path,
+                title=title,
+                snippet=_make_snippet(content, terms),
+                score=score,
+                provenance=provenance,
+            )
+        )
+    return hits
+
+
+def _search_recovery_packets(terms: list[str], project_root: Path) -> list[RetrievalHit]:
+    packet_dir = project_root / "data" / "exports" / "context_packets"
+    if not packet_dir.exists():
+        return []
+    hits: list[RetrievalHit] = []
+    for path in sorted(packet_dir.glob("*.json")):
+        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["recovery_packet"]):
+            continue
+        packet = _load_packet(path)
+        if packet is None:
+            continue
+        content = _packet_recovery_search_text(packet)
+        score = _score_text(content, terms)
+        if score <= 0:
+            continue
+        rel_path = path.relative_to(project_root).as_posix()
+        provenance = [_format_pointer(pointer) for pointer in packet.raw_pointers]
+        hit_payload = {
+            "source_type": "recovery_packet",
+            "source_path": rel_path,
+            "packet_id": packet.packet_id,
+            "title": packet.task_title,
+            "provenance": provenance,
+        }
+        hits.append(
+            RetrievalHit(
+                hit_id=_encode_hit_id(hit_payload),
+                source_type="recovery_packet",
+                source_path=rel_path,
+                title=packet.task_title,
+                snippet=_make_snippet(content, terms),
+                score=score,
+                provenance=provenance,
             )
         )
     return hits
@@ -936,6 +1038,65 @@ def _load_jsonl_record(path: Path, line_index: int) -> dict[str, object]:
     return record
 
 
+def _recovery_brief_search_text(payload: dict[str, object]) -> str:
+    pieces: list[str] = []
+    for key in (
+        "session_id",
+        "packet_id",
+        "task_title",
+        "macro_context",
+        "decisions",
+        "critical_files",
+        "open_questions",
+        "related_pages",
+        "provenance",
+    ):
+        pieces.extend(_flatten_text_value(payload.get(key)))
+    return "\n".join(piece for piece in pieces if piece)
+
+
+def _packet_recovery_search_text(packet: ContextPacket) -> str:
+    pieces: list[str] = [packet.packet_id, packet.task_title, packet.macro_context]
+    pieces.extend(packet.critical_files)
+    pieces.extend(packet.open_questions)
+    for unit in packet.unit_summaries:
+        pieces.extend([unit.title, unit.goal, *unit.decisions, *unit.progress, *unit.open_questions])
+    for micro in packet.micro_summaries:
+        pieces.extend(
+            [
+                micro.summary,
+                micro.why_it_matters,
+                micro.request or "",
+                micro.outcome or "",
+                *micro.key_points,
+                *micro.follow_up_questions,
+                *micro.files,
+                *micro.concepts,
+            ]
+        )
+    return "\n".join(piece for piece in pieces if piece)
+
+
+def _flatten_text_value(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    if isinstance(value, list):
+        pieces: list[str] = []
+        for item in value:
+            pieces.extend(_flatten_text_value(item))
+        return pieces
+    if isinstance(value, dict):
+        pieces: list[str] = []
+        for item in value.values():
+            pieces.extend(_flatten_text_value(item))
+        return pieces
+    return [str(value)]
+
+
 def _packet_search_text(packet: ContextPacket) -> str:
     pieces: list[str] = [packet.packet_id, packet.task_title, packet.macro_context]
     pieces.extend(packet.critical_files)
@@ -1013,17 +1174,19 @@ def _format_pointer(pointer: RawSessionReference | None) -> str:
 
 def _source_rank(source_type: str) -> int:
     return {
-        "wiki": 0,
-        "packet": 1,
-        "unit_summary": 2,
-        "micro_summary": 3,
-        "topic_map_node": 4,
-        "topic_map_edge": 5,
-        "topic_map_path": 6,
-        "promotion_candidate": 7,
-        "wiki_patch": 8,
-        "applied_patch": 9,
-        "raw_message": 10,
+        "recovery_brief": 0,
+        "recovery_packet": 1,
+        "wiki": 2,
+        "packet": 3,
+        "unit_summary": 4,
+        "micro_summary": 5,
+        "topic_map_node": 6,
+        "topic_map_edge": 7,
+        "topic_map_path": 8,
+        "promotion_candidate": 9,
+        "wiki_patch": 10,
+        "applied_patch": 11,
+        "raw_message": 12,
     }.get(source_type, 99)
 
 
@@ -1054,6 +1217,8 @@ def _hit_from_payload(payload: dict[str, Any], *, content: str) -> RetrievalHit:
 
 
 _PROJECT_SOURCE_PREFIXES = {
+    "recovery_brief": ("data", "exports", "recovery"),
+    "recovery_packet": ("data", "exports", "context_packets"),
     "packet": ("data", "exports", "context_packets"),
     "unit_summary": ("data", "exports", "context_packets"),
     "micro_summary": ("data", "exports", "context_packets"),
@@ -1079,7 +1244,13 @@ def _resolve_project_path(project_root: Path, value: str, *, source_type: str) -
         raise ValueError(f"Unsupported project source_type: {source_type!r}")
     if tuple(path.parts[: len(allowed_prefix)]) != allowed_prefix:
         raise ValueError(f"Unsafe project path for {source_type}: {value!r}")
-    return _resolve_child_path(project_root, value, "project")
+    resolved = _resolve_child_path(project_root, value, "project")
+    allowed_root = (project_root.resolve() / Path(*allowed_prefix)).resolve()
+    try:
+        resolved.relative_to(allowed_root)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe project path for {source_type}: {value!r}") from exc
+    return resolved
 
 
 def _resolve_child_path(root: Path, value: str, label: str) -> Path:
