@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from agent_context_substrate.models import MicroSummaryV2, SummaryMetadata, UnitSummaryV2  # noqa: E402
+from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.summary_pipeline import SummaryOptions, build_v2_summary_artifacts  # noqa: E402
+
+
+class CountingBackend:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+
+    def summarize_micro(self, evidence, *, schema_version: str) -> MicroSummaryV2:
+        self.calls.append("micro")
+        return MicroSummaryV2(
+            micro_id=evidence.micro_id,
+            session_id=evidence.session_id,
+            message_ids=list(evidence.message_ids),
+            recovery_summary="Recovered implementation context.",
+            knowledge_summary="A reusable SummaryPipeline service is being introduced.",
+            retrieval_summary="SummaryPipeline service build_v2_summary_artifacts",
+            user_intent="Introduce SummaryPipeline.",
+            assistant_outcome="Created service-level v2 summary artifacts.",
+            metadata=SummaryMetadata(
+                mode="test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+    def summarize_unit(
+        self,
+        *,
+        unit_id: str,
+        session_id: str,
+        title: str,
+        goal: str,
+        micro_summaries: list[MicroSummaryV2],
+        schema_version: str,
+        related_pages: list[str] | None = None,
+    ) -> UnitSummaryV2:
+        self.calls.append("unit")
+        return UnitSummaryV2(
+            unit_id=unit_id,
+            session_id=session_id,
+            title=title,
+            goal=goal,
+            state="SummaryPipeline artifacts exported.",
+            micro_ids=[summary.micro_id for summary in micro_summaries],
+            related_pages=list(related_pages or []),
+            metadata=SummaryMetadata(
+                mode="test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+
+def _raw_bundle() -> dict[str, object]:
+    return {
+        "session": {"id": "session-1", "source": "telegram", "title": "SummaryPipeline"},
+        "messages": [
+            {
+                "id": 1,
+                "role": "user",
+                "content": "Please introduce summary_pipeline.py for build_v2_summary_artifacts.",
+                "timestamp": 1776395278.0,
+            },
+            {
+                "id": 2,
+                "role": "assistant",
+                "content": "I will extract the v2 summary export flow from cli.py.",
+                "timestamp": 1776395280.0,
+            },
+        ],
+        "slice": {"start_message_id": 1, "end_message_id": 2},
+        "message_count": 2,
+    }
+
+
+def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep CLI thin.",
+        related_pages=["Architecture"],
+        summary_mode="heuristic",
+        routing_hints={"model": "fast", "budget": "small"},
+        summary_cache=True,
+    )
+    calls: list[str] = []
+
+    first_result = build_v2_summary_artifacts(
+        raw_bundle=_raw_bundle(),
+        paths=paths,
+        options=options,
+        backend_factory=lambda mode, command, router, routing_hints: CountingBackend(calls),
+    )
+
+    assert calls == ["micro", "unit"]
+    assert first_result.evidence_path.exists()
+    evidence_payload = json.loads(first_result.evidence_path.read_text(encoding="utf-8"))
+    assert evidence_payload["session_id"] == "session-1"
+    assert evidence_payload["micro_id"] == "packet-1-micro-1"
+    cache_files = list((paths.project_root / "data" / "cache" / "summaries").glob("*.json"))
+    assert len(cache_files) == 1
+    cache_payload = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    assert cache_payload["cache_input"]["routing_hints"] == {"model": "fast", "budget": "small"}
+
+    second_result = build_v2_summary_artifacts(
+        raw_bundle=_raw_bundle(),
+        paths=paths,
+        options=options,
+        backend_factory=lambda mode, command, router, routing_hints: (_ for _ in ()).throw(AssertionError("cache miss")),
+    )
+
+    assert second_result.micro_path.exists()
+    assert second_result.unit_path.exists()
+    assert second_result.evidence_path == first_result.evidence_path
+    assert calls == ["micro", "unit"]
