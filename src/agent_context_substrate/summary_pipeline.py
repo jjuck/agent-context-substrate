@@ -228,8 +228,11 @@ def _summary_cache_path(*, paths: HarnessPaths, cache_key: str) -> Path:
 
 
 def _load_summary_cache(cache_path: Path) -> tuple[MicroSummaryV2, UnitSummaryV2]:
-    payload = json.loads(cache_path.read_text(encoding="utf-8"))
-    return MicroSummaryV2.from_dict(payload["micro_summary"]), UnitSummaryV2.from_dict(payload["unit_summary"])
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        return MicroSummaryV2.from_dict(payload["micro_summary"]), UnitSummaryV2.from_dict(payload["unit_summary"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SummaryPipelineInvariantError("Malformed summary cache payload") from exc
 
 
 def _write_summary_cache(
