@@ -110,7 +110,7 @@ ruff check .
 기대 결과:
 
 ```text
-200 passed
+207 passed
 ```
 
 그리고 `--help`에 다음 명령들이 보여야 합니다.
@@ -226,7 +226,7 @@ lint_issue_count=0
 
 | 항목 | 현재 결과 |
 | --- | --- |
-| 프로젝트 테스트 | `200 passed` |
+| 프로젝트 테스트 | `207 passed` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | 실제 wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Hermes 연결 | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools 로드됨 |
@@ -382,7 +382,8 @@ agent-context-substrate plan-wiki-patches \
 
 - 현재 public alpha입니다. beta/stable 전까지 API, 문서, installer 동작이 바뀔 수 있습니다.
 - atom은 현재 claim 중심으로 시작했습니다. decision/entity/concept/question atom은 후속 확장입니다.
-- semantic lint는 현재 promotion/wiki patch 검사부터 시작했습니다. 더 깊은 wiki health 검사는 후속 작업입니다.
+- recovery brief 품질은 export된 recovery JSON의 `quality_gate` score/issue 목록으로 확인할 수 있습니다.
+- semantic lint는 현재 promotion/wiki patch 구조 검사를 다룹니다. evidence 누락, target 누락, claim source, patch→candidate 무결성, applied patch log를 검사하며, 더 깊은 wiki health 검사는 후속 작업입니다.
 - wiki patch apply는 의도적으로 좁고 managed block 중심입니다.
 - legacy full promotion은 여전히 `queries/`, `concepts/`, `plans/`, `architectures/` 경로를 사용합니다.
 - Hermes gateway는 plugin/context-engine 변경 뒤 재시작이 필요할 수 있습니다.

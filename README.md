@@ -201,7 +201,7 @@ The current public alpha baseline has been verified from the published repositor
 
 | Check | Current result |
 | --- | --- |
-| Project tests | `200 passed` |
+| Project tests | `207 passed` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Hermes attachment | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools loaded |
@@ -523,7 +523,8 @@ This project works with sensitive local data. Treat exports as private unless de
 
 - The project is a public alpha: APIs, docs, and installer behavior may still change before beta/stable releases.
 - Claim atoms are implemented first; decision/entity/concept/question atom stores are planned extensions.
-- Semantic lint currently starts with promotion/wiki-patch checks; deeper wiki health checks are planned.
+- Recovery brief quality is now surfaced in exported recovery JSON through a `quality_gate` score and issue list.
+- Semantic lint currently covers promotion/wiki-patch structural checks, including missing evidence, missing targets, claim sources, patch→candidate integrity, and applied-patch logs; deeper wiki health checks are planned.
 - Wiki patch apply is intentionally narrow and managed-block oriented.
 - Legacy full promotion still writes old `queries/`, `concepts/`, `plans/`, and `architectures/` paths.
 - Long-running Hermes gateway processes need restart after plugin/context-engine deployment.

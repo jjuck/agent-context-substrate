@@ -81,7 +81,7 @@ The current weak points are:
 The alpha should optimize for usefulness, trust, and reviewability rather than automation volume.
 
 1. **Recovery brief quality is the core metric.**
-   The most important product question is: can the next session immediately continue real work? A recovery brief is high quality when it captures the last concrete state, key decisions, active files, unresolved blockers, and the next safe action without replaying raw transcript.
+   The most important product question is: can the next session immediately continue real work? A recovery brief is high quality when it captures the last concrete state, key decisions, active files, unresolved blockers, and the next safe action without replaying raw transcript. Exported recovery briefs should surface this as a quality gate with a score and actionable missing-field issues.
 
 2. **Search trust matters before search sophistication.**
    Lexical retrieval is sufficient for the alpha, but larger substrates will need better precision, recency, and source-aware ranking. Retrieval results should make it clear why a hit appeared, how recent it is, and which artifact or wiki source supports it.
@@ -164,22 +164,15 @@ Semantic Lint + Graph Retrieval
 
 ## 5.1 Code Design Direction
 
-The current implementation is acceptable for the Hermes-focused alpha, but the following design pressures should guide the next refactors.
+Maintenance/refactoring work is tracked separately from this feature/spec roadmap.
 
-1. **Keep shrinking `cli.py`.**
-   Moving handlers into `commands/` is the right direction, but the CLI still knows too much about orchestration, file I/O, rendering, listing, and lint glue. Prefer thin CLI handlers that validate arguments and delegate to service modules.
+See:
 
-2. **Split retrieval responsibilities before retrieval grows further.**
-   `retrieval.py` currently combines lexical search, hit encoding, source expansion, graph search, and artifact parsing. As ranking, recency, source weighting, and recovery mode mature, this file is likely to become the first maintenance bottleneck. Future structure should separate source loaders, scoring/ranking, hit encoding/decoding, expansion, and graph traversal.
+```text
+docs/plans/2026-05-12-maintenance-refactoring-plan.md
+```
 
-3. **Move model invariants closer to construction.**
-   `models.py` has clear dataclass serialization, but many important invariants are enforced later by lint. Examples include `UnitSummary.micro_ids` matching actual `MicroSummary` objects and evidence refs matching known message ids. Lint should remain as a safety net, but constructors/builders should prevent invalid substrate artifacts when the required context is available.
-
-4. **Make agent/session boundaries explicit.**
-   Even in Hermes-only mode, `session_store.py` and raw bundle dictionary shapes leak across multiple layers. A future multi-agent substrate should introduce explicit boundaries such as `AgentAdapter`, `SessionBundle`, or similar typed interfaces so Hermes state.db details stay inside the Hermes adapter.
-
-5. **Treat heuristic summarization as a pipeline, not one growing helper file.**
-   `summarizer.py` is practical for alpha, but regex/helper accumulation will become hard to tune once recovery quality becomes the core metric. When quality work begins, split heuristic extraction into strategy objects or staged extractors such as request/outcome extraction, artifact extraction, question extraction, and recovery-summary composition.
+That plan covers the non-feature architecture cleanup track: shrinking `cli.py`, splitting retrieval responsibilities, moving model invariants closer to builders, clarifying agent/session boundaries, and treating heuristic summarization as a staged pipeline.
 
 ## 6. Data Model Requirements
 
@@ -412,7 +405,7 @@ All wiki updates should be reviewable patches.
 }
 ```
 
-Supported alpha operations:
+Supported and applied by default in the alpha:
 
 ```text
 create_page
@@ -420,7 +413,7 @@ insert_claim_block
 append_managed_section / append_section
 ```
 
-Operations already useful in experiments but not part of the alpha guarantee:
+Operations that may appear in proposals or experiments but are skipped by default alpha apply:
 
 ```text
 add_link
@@ -441,7 +434,8 @@ Acceptance criteria:
 
 - Default is dry-run.
 - Patch proposal shows target file, rationale, evidence, and diff.
-- Applying a patch updates only the intended section or managed block.
+- Applying a patch updates only the intended alpha-managed section or managed block.
+- Alpha apply skips experimental or future operations instead of guessing a broader edit.
 
 ## 7. Wiki Editing Policy
 
@@ -867,7 +861,7 @@ Alpha decision:
 
 - Keep alpha semantic lint mostly structural and evidence-oriented.
 - Implement or keep checks such as `claim_without_source`, `patch_without_candidate`, `applied_patch_missing_log`, and `applied_promotion_without_applied_patch`.
-- Treat `duplicate_concept`, `stale_claim`, `contradiction_unresolved`, `hub_overload`, and related ontology/freshness checks as future work until similarity, ontology, and freshness policies are explicit enough to avoid noisy warnings.
+- Treat ontology-heavy duplicate detection, `stale_claim`, `contradiction_unresolved`, `hub_overload`, and related freshness checks as future work until similarity, ontology, and freshness policies are explicit enough to avoid noisy warnings.
 
 Initial checks:
 
@@ -972,12 +966,13 @@ Acceptance criteria:
 - Add managed block support.
 - Add dry-run by default.
 - Add apply command with explicit confirmation or flag.
-- Keep alpha write operations narrow: `create_page`, `insert_claim_block`, and managed append-style updates.
+- Keep alpha write operations narrow and applied by default only for: `create_page`, `insert_claim_block`, `append_managed_section`, and `append_section`.
+- Treat `add_link` and `mark_stale` as experimental proposal operations that alpha apply skips by default.
 - Leave broad page-editing operations such as `replace_section`, `merge_pages`, and `split_page` for future work.
 
-### Phase 7: Semantic lint and graph retrieval — **Partial; recovery retrieval is next MVP**
+### Phase 7: Semantic lint and graph retrieval — **Partial; structural lint MVP strengthened**
 
-- Add structural semantic lint checks first.
+- Add structural semantic lint checks first, including `claim_without_source`, `patch_without_candidate`, `applied_patch_missing_log`, and `applied_promotion_without_applied_patch`.
 - Add retrieval modes or tool metadata.
 - Add `search_knowledge(mode="recovery")` as a focused MVP.
 - Add topic map builder.

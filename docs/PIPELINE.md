@@ -19,7 +19,7 @@ Hermes state.db
   -> ContextPacket
   -> ContextPacket JSON / Markdown export
   -> Wiki lint + internal artifact graph lint
-  -> RecoveryBrief JSON
+  -> RecoveryBrief JSON + quality gate
   -> SessionLedger completed record
 ```
 
@@ -53,6 +53,8 @@ raw session bundle
 - direct provider SDK는 core dependency가 아닙니다.
 - promotion candidate와 wiki patch proposal 생성은 Obsidian을 수정하지 않습니다.
 - `apply-wiki-patch`도 기본은 dry-run이며, 실제 쓰기는 `--apply`가 있을 때만 합니다.
+- alpha에서 기본 적용되는 wiki patch operation은 `create_page`, `insert_claim_block`, `append_managed_section`, `append_section`으로 제한합니다.
+- `add_link`, `mark_stale`는 proposal/실험 단계로 남기고 alpha 기본 apply에서는 skip합니다.
 
 ### 1.3 Legacy full promotion
 
@@ -121,7 +123,7 @@ Both installers can write local `local_config.py` files containing the user's pr
 | 13 | `integration.py` | session id + policy | `IntegrationResult` | packet-only/full finalize orchestration |
 | 14 | `promotion.py` | packet / unit summary | wiki Markdown pages | legacy page promotion + backlink |
 | 15 | `lint.py` | wiki + packet exports | lint JSON/MD | wiki quality + internal graph 검증 |
-| 16 | `recovery.py` | ledger + packet | recovery JSON | 다음 세션용 compact brief |
+| 16 | `recovery.py` | ledger + packet | recovery JSON + quality gate | 다음 세션용 compact brief와 재개 품질 검사 |
 | 17 | `retrieval.py` | query + roots | retrieval hits/details | read-only knowledge/graph search |
 
 ## 3. 데이터 모델
@@ -523,6 +525,19 @@ status: active
 - active page는 navigation/index에서 찾을 수 있다.
 - generated/session-id/numeric page는 active human-facing graph에 두지 않는다.
 
+### Recovery brief level
+
+- recovery brief는 `task_title`, `macro_context`, 마지막 work state(`decisions` 또는 `progress`), active context(`critical_files` 또는 `related_pages`), next step(`next_actions` 또는 `open_questions`), `provenance`를 quality gate로 검사한다.
+- `quality_gate.ok`는 score가 0.8 이상이고 error issue가 없을 때만 true다.
+- quality gate는 artifact에 기록되어 다음 세션에서 brief 신뢰도를 바로 볼 수 있게 한다.
+
+### Semantic substrate level
+
+- 모든 promotion candidate는 evidence ref와 review 가능한 target 상태를 가진다.
+- 모든 wiki patch operation은 존재하는 promotion candidate를 가리킨다.
+- applied 상태의 wiki patch operation은 `data/wiki_patches/applied.jsonl` record를 가진다.
+- applied 상태의 promotion candidate는 대응 applied patch log를 가진다.
+
 ## 12. 확장 포인트
 
 우선순위가 높은 후속 작업:
@@ -530,9 +545,12 @@ status: active
 1. Atom layer 확장
    - 현재 claim 중심에서 decision/entity/concept/question JSONL까지 확장
 2. Semantic lint 확장
-   - `claim_without_source`, `duplicate_concept`, `stale_claim`, `contradiction_unresolved`, `promotion_backlog` 등 추가
+   - structural MVP는 `claim_without_source`, `patch_without_candidate`, `applied_patch_missing_log`, `applied_promotion_without_applied_patch`, `promotion_backlog` 중심으로 유지
+   - 단순 normalized-name `duplicate_concept` warning은 유지하되, `stale_claim`, `contradiction_unresolved` 같은 ontology/freshness 검사는 similarity 정책 이후 future로 보류
 3. Wiki patch operation 확장
-   - `append_section`, `replace_section`, `add_link`, `mark_stale`, `merge_pages`, `split_page` 등 review-first로 추가
+   - alpha 기본 apply는 `create_page`, `insert_claim_block`, `append_managed_section`, `append_section`에 고정
+   - `add_link`, `mark_stale`는 실험/후속 opt-in 후보로 유지
+   - `replace_section`, `merge_pages`, `split_page` 같은 broad edit은 review/rollback UX 이후 future로 보류
 4. LLM safety hardening
    - JSON repair 1회, 입력 길이 제한 CLI, redaction 정책 CLI 옵션, 더 엄격한 summary lint
 5. Language-aware template renderer
