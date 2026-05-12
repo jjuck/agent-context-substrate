@@ -32,11 +32,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - Build-context-packet summary routing, LLM safety option, and V2 export glue now live with the build-context command handler instead of `cli.py`.
 - Legacy promotion packet loading and slug default helpers now live with the legacy promotion command handler instead of `cli.py`.
 - Retrieval hit-id encoding/decoding now lives in `retrieval_ids.py` as the first retrieval decomposition seam.
+- Retrieval JSON/text source loading helpers now live in `retrieval_sources.py`, keeping source IO separate from retrieval scoring and ranking.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `216 passed`.
+- Project test suite: `219 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 

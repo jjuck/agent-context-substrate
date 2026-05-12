@@ -10,6 +10,15 @@ import sqlite3
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
 from .retrieval_ids import decode_hit_id, encode_hit_id
+from .retrieval_sources import (
+    iter_jsonl_objects,
+    json_search_text,
+    load_context_packet,
+    load_json_list,
+    load_json_object,
+    load_jsonl_record,
+    read_text_lossy,
+)
 from .safe_paths import is_safe_project_artifact_path, is_safe_wiki_page_path
 
 
@@ -245,7 +254,7 @@ def expand_hit(
 
     if source_type == "applied_patch":
         path = _resolve_project_path(project_root, source_path, source_type=source_type)
-        record = _load_jsonl_record(path, int(payload.get("line_index", -1)))
+        record = load_jsonl_record(path, int(payload.get("line_index", -1)))
         content = json.dumps(record, ensure_ascii=False, indent=2)
         hit = _hit_from_payload(payload, content=_make_snippet(content, _tokenize(content)[:1]))
         return RetrievalHitDetail(
@@ -274,7 +283,7 @@ def _search_wiki(terms: list[str], wiki_root: Path) -> list[RetrievalHit]:
     for path in sorted(wiki_root.rglob("*.md")):
         if not is_safe_wiki_page_path(path, wiki_root):
             continue
-        content = _safe_read_text(path)
+        content = read_text_lossy(path)
         score = _score_text(content, terms)
         if score <= 0:
             continue
@@ -309,7 +318,7 @@ def _search_recovery_briefs(terms: list[str], project_root: Path) -> list[Retrie
     for path in sorted(recovery_dir.glob("*.json")):
         if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["recovery_brief"]):
             continue
-        payload = _load_json_object(path)
+        payload = load_json_object(path)
         if payload is None:
             continue
         content = _recovery_brief_search_text(payload)
@@ -352,7 +361,7 @@ def _search_recovery_packets(terms: list[str], project_root: Path) -> list[Retri
     for path in sorted(packet_dir.glob("*.json")):
         if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["recovery_packet"]):
             continue
-        packet = _load_packet(path)
+        packet = load_context_packet(path)
         if packet is None:
             continue
         content = _packet_recovery_search_text(packet)
@@ -390,7 +399,7 @@ def _search_packets(terms: list[str], project_root: Path) -> list[RetrievalHit]:
     for path in sorted(packet_dir.glob("*.json")):
         if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["packet"]):
             continue
-        packet = _load_packet(path)
+        packet = load_context_packet(path)
         if packet is None:
             continue
         rel_path = path.relative_to(project_root).as_posix()
@@ -496,7 +505,7 @@ def _search_topic_map(terms: list[str], project_root: Path, *, graph_depth: int 
     for path in sorted(index_dir.glob("topic_map*.json")):
         if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["topic_map_node"]):
             continue
-        payload = _load_json_object(path)
+        payload = load_json_object(path)
         if not payload:
             continue
         rel_path = path.relative_to(project_root).as_posix()
@@ -506,7 +515,7 @@ def _search_topic_map(terms: list[str], project_root: Path, *, graph_depth: int 
         seed_node_ids: set[str] = set()
 
         for node in nodes:
-            content = _json_search_text(node)
+            content = json_search_text(node)
             score = _score_text(content, terms)
             if score <= 0:
                 continue
@@ -515,7 +524,7 @@ def _search_topic_map(terms: list[str], project_root: Path, *, graph_depth: int 
             seed_node_ids.add(str(node.get("node_id", "")))
 
         for edge in edges:
-            content = _json_search_text(edge)
+            content = json_search_text(edge)
             score = _score_text(content, terms)
             if score <= 0:
                 continue
@@ -563,7 +572,7 @@ def _topic_map_node_hit(
         source_type="topic_map_node",
         source_path=rel_path,
         title=title,
-        snippet=_make_snippet(_json_search_text(node), terms),
+        snippet=_make_snippet(json_search_text(node), terms),
         score=score,
         provenance=provenance,
     )
@@ -597,7 +606,7 @@ def _topic_map_edge_hit(
         source_type="topic_map_edge",
         source_path=rel_path,
         title=title,
-        snippet=_make_snippet(_json_search_text(edge), terms),
+        snippet=_make_snippet(json_search_text(edge), terms),
         score=score,
         provenance=provenance,
     )
@@ -749,17 +758,14 @@ def _search_promotions(terms: list[str], project_root: Path) -> list[RetrievalHi
     for path in sorted(promotions_dir.glob("*.json")):
         if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["promotion_candidate"]):
             continue
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(payload, list):
+        payload = load_json_list(path)
+        if payload is None:
             continue
         rel_path = path.relative_to(project_root).as_posix()
         for candidate in payload:
             if not isinstance(candidate, dict):
                 continue
-            content = _json_search_text(candidate)
+            content = json_search_text(candidate)
             score = _score_text(content, terms)
             if score <= 0:
                 continue
@@ -798,18 +804,15 @@ def _search_wiki_patches(terms: list[str], project_root: Path) -> list[Retrieval
     for path in sorted(wiki_patches_dir.glob("*.json")):
         if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["wiki_patch"]):
             continue
-        try:
-            proposal = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(proposal, dict):
+        proposal = load_json_object(path)
+        if proposal is None:
             continue
         rel_path = path.relative_to(project_root).as_posix()
         packet_id = str(proposal.get("packet_id", ""))
         for operation in proposal.get("operations", []):
             if not isinstance(operation, dict):
                 continue
-            content = _json_search_text(operation)
+            content = json_search_text(operation)
             score = _score_text(content, terms)
             if score <= 0:
                 continue
@@ -847,16 +850,8 @@ def _search_wiki_patches(terms: list[str], project_root: Path) -> list[Retrieval
 def _search_applied_patch_log(terms: list[str], project_root: Path, path: Path) -> list[RetrievalHit]:
     hits: list[RetrievalHit] = []
     rel_path = path.relative_to(project_root).as_posix()
-    for line_index, line in enumerate(path.read_text(encoding="utf-8").splitlines()):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except Exception:
-            continue
-        if not isinstance(record, dict):
-            continue
-        content = _json_search_text(record)
+    for line_index, record in iter_jsonl_objects(path):
+        content = json_search_text(record)
         score = _score_text(content, terms)
         if score <= 0:
             continue
@@ -943,28 +938,8 @@ def _search_raw_messages(terms: list[str], project_root: Path) -> list[Retrieval
 
 
 
-def _load_packet(path: Path) -> ContextPacket | None:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        return ContextPacket.from_dict(payload)
-    except Exception:
-        return None
-
-
-def _json_search_text(payload: dict[str, object]) -> str:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
-
-
-def _load_json_object(path: Path) -> dict[str, object] | None:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
 def _find_topic_map_node(path: Path, node_id: str) -> dict[str, object]:
-    payload = _load_json_object(path)
+    payload = load_json_object(path)
     if payload is None:
         raise ValueError(f"Expected topic map object in {path}")
     for node in payload.get("nodes", []):
@@ -974,7 +949,7 @@ def _find_topic_map_node(path: Path, node_id: str) -> dict[str, object]:
 
 
 def _find_topic_map_edge(path: Path, *, source: str, target: str, edge_type: str) -> dict[str, object]:
-    payload = _load_json_object(path)
+    payload = load_json_object(path)
     if payload is None:
         raise ValueError(f"Expected topic map object in {path}")
     for edge in payload.get("edges", []):
@@ -990,8 +965,8 @@ def _find_topic_map_edge(path: Path, *, source: str, target: str, edge_type: str
 
 
 def _find_json_list_item(path: Path, key: str, value: str) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, list):
+    payload = load_json_list(path)
+    if payload is None:
         raise ValueError(f"Expected JSON list in {path}")
     for item in payload:
         if isinstance(item, dict) and str(item.get(key, "")) == value:
@@ -1000,25 +975,13 @@ def _find_json_list_item(path: Path, key: str, value: str) -> dict[str, object]:
 
 
 def _find_wiki_patch_operation(path: Path, patch_id: str) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
+    payload = load_json_object(path)
+    if payload is None:
         raise ValueError(f"Expected wiki patch proposal object in {path}")
     for operation in payload.get("operations", []):
         if isinstance(operation, dict) and str(operation.get("patch_id", "")) == patch_id:
             return operation
     raise KeyError(f"Missing patch_id={patch_id!r} in {path}")
-
-
-def _load_jsonl_record(path: Path, line_index: int) -> dict[str, object]:
-    if line_index < 0:
-        raise KeyError(f"Invalid JSONL line_index={line_index}")
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if line_index >= len(lines):
-        raise KeyError(f"Missing JSONL line_index={line_index} in {path}")
-    record = json.loads(lines[line_index])
-    if not isinstance(record, dict):
-        raise ValueError(f"Expected JSON object at {path}:{line_index}")
-    return record
 
 
 def _recovery_brief_search_text(payload: dict[str, object]) -> str:
@@ -1139,13 +1102,6 @@ def _extract_markdown_title(content: str) -> str | None:
         if stripped.startswith("# "):
             return stripped[2:].strip()
     return None
-
-
-def _safe_read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="utf-8", errors="ignore")
 
 
 def _format_pointer(pointer: RawSessionReference | None) -> str:

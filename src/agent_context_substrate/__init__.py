@@ -75,6 +75,15 @@ from .recovery import (
 )
 from .retrieval import RetrievalHit, RetrievalHitDetail, expand_hit, search_knowledge
 from .retrieval_ids import decode_hit_id, encode_hit_id
+from .retrieval_sources import (
+    iter_jsonl_objects,
+    json_search_text,
+    load_context_packet,
+    load_json_list,
+    load_json_object,
+    load_jsonl_record,
+    read_text_lossy,
+)
 from .semantic_lint import (
     SemanticLintIssue,
     SemanticLintReport,
@@ -185,6 +194,13 @@ __all__ = [
     "expand_hit",
     "decode_hit_id",
     "encode_hit_id",
+    "iter_jsonl_objects",
+    "json_search_text",
+    "load_context_packet",
+    "load_json_list",
+    "load_json_object",
+    "load_jsonl_record",
+    "read_text_lossy",
     "render_context_packet_markdown",
     "get_summarizer_backend",
     "lint_wiki",
