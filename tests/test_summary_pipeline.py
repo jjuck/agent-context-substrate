@@ -226,6 +226,28 @@ def test_build_v2_summary_artifacts_rejects_unsafe_packet_id_before_export(tmp_p
     assert not (paths.project_root / "data").exists()
 
 
+def test_build_v2_summary_artifacts_rejects_mismatched_session_id_before_export(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="other-session",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep generated summary artifacts tied to the source session.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="session_id"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
+        )
+
+    assert calls == []
+    assert not (paths.project_root / "data").exists()
+
+
 def test_build_v2_summary_artifacts_rejects_unit_summary_with_unknown_micro_reference(tmp_path: Path) -> None:
     paths = HarnessPaths(project_root=tmp_path / "project")
     options = SummaryOptions(

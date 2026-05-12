@@ -68,6 +68,7 @@ def build_v2_summary_artifacts(
     """Build and export evidence plus V2 micro/unit summary artifacts."""
 
     artifact_ids = _summary_artifact_ids(options=options)
+    _validate_summary_source_session(raw_bundle=raw_bundle, options=options)
     evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id=artifact_ids.micro_id)
     _validate_evidence_artifact_ids(session_id=evidence.session_id, micro_id=evidence.micro_id)
     evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
@@ -134,6 +135,16 @@ def _summary_artifact_ids(*, options: SummaryOptions) -> _SummaryArtifactIds:
     except ValueError as exc:
         raise SummaryPipelineInvariantError(str(exc)) from exc
     return _SummaryArtifactIds(packet_id=packet_id, micro_id=micro_id, unit_id=unit_id)
+
+
+def _validate_summary_source_session(*, raw_bundle: dict[str, Any], options: SummaryOptions) -> None:
+    raw_session = raw_bundle.get("session")
+    raw_session_id = str(raw_session.get("id")) if isinstance(raw_session, dict) and raw_session.get("id") is not None else None
+    if raw_session_id == options.session_id:
+        return
+    raise SummaryPipelineInvariantError(
+        f"SummaryOptions session_id {options.session_id!r} does not match raw_bundle session_id {raw_session_id!r}"
+    )
 
 
 def _validate_evidence_artifact_ids(*, session_id: str, micro_id: str) -> None:
