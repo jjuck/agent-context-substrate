@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .models import ContextPacket, MicroSummary, UnitSummary
 from .paths import HarnessPaths
-from .safe_paths import safe_child_path
+from .safe_paths import safe_artifact_stem, safe_child_path
 
 
 class ContextPacketInvariantError(ValueError):
@@ -102,12 +102,17 @@ def render_context_packet_markdown(packet: ContextPacket) -> str:
 
 
 def export_context_packet(packet: ContextPacket, paths: HarnessPaths) -> tuple[Path, Path]:
+    try:
+        packet_id = safe_artifact_stem(packet.packet_id, label="packet id")
+    except ValueError as exc:
+        raise ContextPacketInvariantError(str(exc)) from exc
+
     paths.ensure_project_dirs()
     export_dir = paths.exports_dir / "context_packets"
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    json_path = safe_child_path(export_dir, packet.packet_id, ".json", label="packet id")
-    markdown_path = safe_child_path(export_dir, packet.packet_id, ".md", label="packet id")
+    json_path = safe_child_path(export_dir, packet_id, ".json", label="packet id")
+    markdown_path = safe_child_path(export_dir, packet_id, ".md", label="packet id")
 
     json_path.write_text(
         json.dumps(packet.to_dict(), ensure_ascii=False, indent=2),

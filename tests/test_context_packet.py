@@ -129,6 +129,40 @@ def test_build_context_packet_rejects_unknown_micro_references() -> None:
         )
 
 
+def test_export_context_packet_rejects_unsafe_packet_id_before_export_dirs(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+    paths = HarnessPaths(project_root=project_root)
+    micro = _sample_micro(
+        micro_id="micro-a",
+        message_ids=[1, 2],
+        files=["pyproject.toml"],
+        concepts=["context-packet"],
+    )
+    unit = UnitSummary(
+        unit_id="unit-1",
+        session_id="session-1",
+        title="Build context packet support",
+        goal="Create a reusable resumption packet",
+        micro_ids=["micro-a"],
+    )
+    packet = build_context_packet(
+        packet_id="../escape",
+        task_title="Resume harness work",
+        macro_context="Need a compact packet for future session recovery",
+        unit_summary=unit,
+        micro_summaries=[micro],
+    )
+
+    with pytest.raises(ContextPacketInvariantError, match="Unsafe packet id"):
+        export_context_packet(packet=packet, paths=paths)
+
+    assert not (project_root / "data").exists()
+
+
 def test_export_context_packet_writes_json_and_markdown(tmp_path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
