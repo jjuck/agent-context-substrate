@@ -118,7 +118,12 @@ from .summarizer_backends import (
     get_summarizer_backend,
 )
 from .summary_lint import SummaryLintIssue, SummaryLintReport, lint_micro_summary_v2
-from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
+from .summary_pipeline import (
+    SummaryArtifactResult,
+    SummaryOptions,
+    SummaryPipelineInvariantError,
+    build_v2_summary_artifacts,
+)
 from .summarizer import (
     build_micro_summary,
     build_micro_summary_v2,
@@ -165,6 +170,7 @@ __all__ = [
     "SummaryLintReport",
     "SummaryArtifactResult",
     "SummaryOptions",
+    "SummaryPipelineInvariantError",
     "SummarizerBackend",
     "RecoveryBrief",
     "RecoveryQualityIssue",

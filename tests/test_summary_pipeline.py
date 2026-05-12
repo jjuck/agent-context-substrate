@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -11,7 +13,11 @@ if str(SRC) not in sys.path:
 
 from agent_context_substrate.models import MicroSummaryV2, SummaryMetadata, UnitSummaryV2  # noqa: E402
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
-from agent_context_substrate.summary_pipeline import SummaryOptions, build_v2_summary_artifacts  # noqa: E402
+from agent_context_substrate.summary_pipeline import (  # noqa: E402
+    SummaryOptions,
+    SummaryPipelineInvariantError,
+    build_v2_summary_artifacts,
+)
 
 
 class CountingBackend:
@@ -61,6 +67,38 @@ class CountingBackend:
             related_pages=list(related_pages or []),
             metadata=SummaryMetadata(
                 mode="test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+
+class InvalidUnitReferenceBackend(CountingBackend):
+    def summarize_unit(
+        self,
+        *,
+        unit_id: str,
+        session_id: str,
+        title: str,
+        goal: str,
+        micro_summaries: list[MicroSummaryV2],
+        schema_version: str,
+        related_pages: list[str] | None = None,
+    ) -> UnitSummaryV2:
+        self.calls.append("unit")
+        return UnitSummaryV2(
+            unit_id=unit_id,
+            session_id=session_id,
+            title=title,
+            goal=goal,
+            state="Invalid unit summary references a missing micro summary.",
+            micro_ids=["missing-micro"],
+            related_pages=list(related_pages or []),
+            metadata=SummaryMetadata(
+                mode="invalid-test-backend",
                 schema_version=schema_version,
                 prompt_version=None,
                 model=None,
@@ -134,3 +172,25 @@ def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache
     assert second_result.unit_path.exists()
     assert second_result.evidence_path == first_result.evidence_path
     assert calls == ["micro", "unit"]
+
+
+def test_build_v2_summary_artifacts_rejects_unit_summary_with_unknown_micro_reference(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep V2 summary artifacts valid.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="missing-micro"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: InvalidUnitReferenceBackend(calls),
+        )
+
+    assert calls == ["micro", "unit"]
+    assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-unit-v2.json").exists()

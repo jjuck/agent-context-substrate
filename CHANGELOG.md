@@ -37,11 +37,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - Retrieval hit result dataclasses now live in `retrieval_types.py`, keeping public retrieval types separate from the facade.
 - Retrieval topic-map search, graph neighbor traversal, and readable path hit helpers now live in `retrieval_graph.py`.
 - Context packet construction now rejects unit summaries that reference missing micro summaries before export.
+- V2 summary artifact construction now rejects unit summaries that reference missing micro summaries before writing summary/cache artifacts.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `230 passed`.
+- Project test suite: `231 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 

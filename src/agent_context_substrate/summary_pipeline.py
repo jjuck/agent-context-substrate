@@ -21,6 +21,10 @@ BackendFactory = Callable[
 ]
 
 
+class SummaryPipelineInvariantError(ValueError):
+    """Raised when V2 summary artifacts violate pipeline-level invariants."""
+
+
 @dataclass(frozen=True)
 class SummaryOptions:
     session_id: str
@@ -63,6 +67,7 @@ def build_v2_summary_artifacts(
 
     if options.summary_cache and cache_path.exists():
         micro_summary, unit_summary = _load_summary_cache(cache_path)
+        _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
         micro_path, unit_path = _export_summary_files(
             paths=paths,
             packet_id=options.packet_id,
@@ -82,6 +87,7 @@ def build_v2_summary_artifacts(
         schema_version="unit_summary_v2",
         related_pages=list(options.related_pages),
     )
+    _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
     micro_path, unit_path = _export_summary_files(
         paths=paths,
         packet_id=options.packet_id,
@@ -97,6 +103,15 @@ def build_v2_summary_artifacts(
             unit_summary=unit_summary,
         )
     return SummaryArtifactResult(micro_path=micro_path, unit_path=unit_path, evidence_path=evidence_path)
+
+
+def _validate_unit_micro_references(*, unit_summary: UnitSummaryV2, micro_summaries: list[MicroSummaryV2]) -> None:
+    valid_micro_ids = {summary.micro_id for summary in micro_summaries}
+    missing_micro_ids = [micro_id for micro_id in unit_summary.micro_ids if micro_id not in valid_micro_ids]
+    if missing_micro_ids:
+        raise SummaryPipelineInvariantError(
+            f"UnitSummaryV2 {unit_summary.unit_id!r} references unknown micro_ids: {missing_micro_ids}"
+        )
 
 
 def _build_backend(*, options: SummaryOptions, backend_factory: BackendFactory | None) -> SummarizerBackend:
