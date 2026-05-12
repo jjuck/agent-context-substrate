@@ -10,6 +10,7 @@ from agent_context_substrate.models import ContextPacket
 from agent_context_substrate.paths import HarnessPaths
 from agent_context_substrate.safe_paths import (
     is_safe_project_artifact_path,
+    is_safe_wiki_page_path,
     safe_artifact_stem,
     safe_child_path,
     safe_wiki_target_path,
@@ -57,6 +58,32 @@ def test_safe_project_artifact_path_rejects_symlinked_allowed_directory(tmp_path
     (data_dir / "promotions").symlink_to(outside_promotions, target_is_directory=True)
 
     assert is_safe_project_artifact_path(outside_artifact, project_root, "data", "promotions") is False
+
+
+def test_safe_wiki_page_path_rejects_system_hidden_non_markdown_and_escape(tmp_path: Path) -> None:
+    wiki_root = tmp_path / "wiki"
+    page = wiki_root / "concepts" / "summarization.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("# Summarization\n", encoding="utf-8")
+    hidden = wiki_root / ".hidden" / "page.md"
+    hidden.parent.mkdir(parents=True)
+    hidden.write_text("# Hidden\n", encoding="utf-8")
+    system = wiki_root / "_system" / "secret.md"
+    system.parent.mkdir(parents=True)
+    system.write_text("# Secret\n", encoding="utf-8")
+    non_markdown = wiki_root / "concepts" / "data.json"
+    non_markdown.write_text("{}", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("# Outside\n", encoding="utf-8")
+    escaping_link = wiki_root / "concepts" / "linked.md"
+    escaping_link.symlink_to(outside)
+
+    assert is_safe_wiki_page_path(page, wiki_root) is True
+    assert is_safe_wiki_page_path(hidden, wiki_root) is False
+    assert is_safe_wiki_page_path(system, wiki_root) is False
+    assert is_safe_wiki_page_path(non_markdown, wiki_root) is False
+    assert is_safe_wiki_page_path(outside, wiki_root) is False
+    assert is_safe_wiki_page_path(escaping_link, wiki_root) is False
 
 
 def test_safe_wiki_target_path_rejects_system_hidden_non_markdown_and_escape(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@ import re
 
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
-from .safe_paths import safe_child_path
+from .safe_paths import is_safe_wiki_page_path, safe_child_path
 
 _RELATED_SECTION_HEADING = "## Related Pages"
 _UPDATED_PATTERN = re.compile(r"^updated:\s*.+$", re.MULTILINE)
@@ -57,7 +57,9 @@ def _find_existing_page(wiki_root: Path, slug: str) -> Path | None:
     normalized_slug = _normalize_page_name(slug)
     if not normalized_slug:
         return None
-    matches = sorted(path for path in wiki_root.rglob("*.md") if path.stem == normalized_slug)
+    matches = sorted(
+        path for path in wiki_root.rglob("*.md") if path.stem == normalized_slug and is_safe_wiki_page_path(path, wiki_root)
+    )
     return matches[0] if matches else None
 
 

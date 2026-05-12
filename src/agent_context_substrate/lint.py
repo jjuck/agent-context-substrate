@@ -7,7 +7,7 @@ import re
 
 from .models import ContextPacket
 from .paths import HarnessPaths
-from .safe_paths import safe_child_path
+from .safe_paths import is_safe_wiki_page_path, safe_child_path
 
 _DURABLE_DIRS = (
     "entities",
@@ -271,7 +271,9 @@ def _collect_durable_pages(wiki_root: Path) -> list[Path]:
         directory = wiki_root / directory_name
         if not directory.exists():
             continue
-        pages.extend(sorted(directory.rglob("*.md")))
+        pages.extend(
+            path for path in sorted(directory.rglob("*.md")) if is_safe_wiki_page_path(path, wiki_root)
+        )
     return sorted(pages)
 
 

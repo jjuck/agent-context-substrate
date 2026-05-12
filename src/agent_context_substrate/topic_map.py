@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import re
 
-from .safe_paths import is_safe_project_artifact_path, safe_child_path
+from .safe_paths import is_safe_project_artifact_path, is_safe_wiki_page_path, safe_child_path
 
 
 @dataclass(frozen=True)
@@ -374,7 +374,7 @@ def _add_applied_patch_log(builder: _TopicMapBuilder, project_root: Path) -> Non
 def _add_wiki_pages(builder: _TopicMapBuilder, wiki_root: Path) -> None:
     if not wiki_root.exists():
         return
-    pages = sorted(path for path in wiki_root.rglob("*.md") if _is_searchable_wiki_path(path, wiki_root))
+    pages = sorted(path for path in wiki_root.rglob("*.md") if is_safe_wiki_page_path(path, wiki_root))
     stem_index = {path.stem: path.relative_to(wiki_root).as_posix() for path in pages}
     for path in pages:
         rel_path = path.relative_to(wiki_root).as_posix()
@@ -388,16 +388,6 @@ def _add_wiki_pages(builder: _TopicMapBuilder, wiki_root: Path) -> None:
             target_node = f"wiki_page:{resolved}"
             builder.add_node(target_node, "wiki_page", Path(resolved).stem, source_path=resolved)
             builder.add_edge(page_node, target_node, "links_to")
-
-
-def _is_searchable_wiki_path(path: Path, wiki_root: Path) -> bool:
-    try:
-        resolved_root = wiki_root.resolve()
-        resolved_path = path.resolve()
-        parts = resolved_path.relative_to(resolved_root).parts
-    except (OSError, ValueError):
-        return False
-    return bool(parts) and not any(part.startswith(".") for part in parts) and parts[0] not in {"_system", "90 보관"}
 
 
 def _resolve_wikilink_target(target: str, stem_index: dict[str, str]) -> str | None:

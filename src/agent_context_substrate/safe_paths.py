@@ -59,21 +59,31 @@ def is_safe_project_artifact_path(path: Path, project_root: Path, *relative_root
     return True
 
 
+def is_safe_wiki_page_path(path: Path, wiki_root: Path) -> bool:
+    """Return True when a wiki page is readable and stays inside the human wiki boundary."""
+
+    candidate = Path(path)
+    if candidate.suffix != ".md":
+        return False
+    try:
+        root = Path(wiki_root).resolve()
+        resolved = candidate.resolve()
+        parts = resolved.relative_to(root).parts
+    except (OSError, ValueError):
+        return False
+    if not parts:
+        return False
+    return not any(part.startswith(".") for part in parts) and parts[0] not in {"_system", "90 보관"}
+
+
 def safe_wiki_target_path(*, wiki_root: Path, target: str) -> Path | None:
     """Resolve a reviewable wiki patch target or return None when unsafe."""
 
     target_path = Path(target)
     if target_path.is_absolute() or ".." in target_path.parts:
         return None
-    if target_path.suffix != ".md":
-        return None
-    parts = target_path.parts
-    if not parts or any(part.startswith(".") for part in parts) or parts[0] in {"_system", "90 보관"}:
-        return None
     root = Path(wiki_root).resolve()
     resolved = (root / target_path).resolve()
-    try:
-        resolved.relative_to(root)
-    except ValueError:
+    if not is_safe_wiki_page_path(resolved, root):
         return None
     return resolved

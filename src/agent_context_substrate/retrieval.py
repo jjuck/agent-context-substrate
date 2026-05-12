@@ -10,7 +10,7 @@ import sqlite3
 
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
-from .safe_paths import is_safe_project_artifact_path
+from .safe_paths import is_safe_project_artifact_path, is_safe_wiki_page_path
 
 
 @dataclass(frozen=True)
@@ -267,29 +267,12 @@ def expand_hit(
     raise ValueError(f"Unknown retrieval hit source_type={source_type!r}")
 
 
-def _is_searchable_wiki_path(path: Path, wiki_root: Path) -> bool:
-    try:
-        resolved_root = wiki_root.resolve()
-        resolved_path = path.resolve()
-        relative_parts = resolved_path.relative_to(resolved_root).parts
-    except (OSError, ValueError):
-        return False
-    if any(part.startswith(".") for part in relative_parts):
-        return False
-    if not relative_parts:
-        return False
-    top_level = relative_parts[0]
-    if top_level in {"_system", "90 보관"}:
-        return False
-    return True
-
-
 def _search_wiki(terms: list[str], wiki_root: Path) -> list[RetrievalHit]:
     hits: list[RetrievalHit] = []
     if not wiki_root.exists():
         return hits
     for path in sorted(wiki_root.rglob("*.md")):
-        if not _is_searchable_wiki_path(path, wiki_root):
+        if not is_safe_wiki_page_path(path, wiki_root):
             continue
         content = _safe_read_text(path)
         score = _score_text(content, terms)
@@ -1232,7 +1215,7 @@ _PROJECT_SOURCE_PREFIXES = {
 
 def _resolve_wiki_path(wiki_root: Path, value: str) -> Path:
     resolved = _resolve_child_path(wiki_root, value, "wiki")
-    if not _is_searchable_wiki_path(resolved, wiki_root.resolve()):
+    if not is_safe_wiki_page_path(resolved, wiki_root.resolve()):
         raise ValueError(f"Unsafe wiki path: {value!r}")
     return resolved
 

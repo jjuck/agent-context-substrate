@@ -45,7 +45,13 @@ from .models import (
 from .naming import derive_goal, derive_task_title, derive_unit_title, slugify_label
 from .packet_builder import PacketBuildOptions, PacketBuildResult, build_packet_from_session
 from .paths import HarnessPaths
-from .safe_paths import is_safe_project_artifact_path, safe_artifact_stem, safe_child_path, safe_wiki_target_path
+from .safe_paths import (
+    is_safe_project_artifact_path,
+    is_safe_wiki_page_path,
+    safe_artifact_stem,
+    safe_child_path,
+    safe_wiki_target_path,
+)
 from .policy import should_process_bundle
 from .promotion import (
     promote_context_packet_to_plan,
@@ -191,6 +197,7 @@ __all__ = [
     "safe_child_path",
     "safe_wiki_target_path",
     "is_safe_project_artifact_path",
+    "is_safe_wiki_page_path",
     "build_recovery_brief",
     "evaluate_recovery_brief_quality",
     "export_recovery_brief",
