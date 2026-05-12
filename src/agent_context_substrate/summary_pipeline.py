@@ -77,9 +77,17 @@ def build_v2_summary_artifacts(
 
     if options.summary_cache and cache_path.exists():
         micro_summary, unit_summary = _load_summary_cache(cache_path)
-        _validate_micro_summary(raw_bundle=raw_bundle, micro_summary=micro_summary)
+        _validate_micro_summary(
+            raw_bundle=raw_bundle,
+            micro_summary=micro_summary,
+            expected_session_id=options.session_id,
+        )
         _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
-        _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
+        _validate_unit_summary(
+            unit_summary=unit_summary,
+            micro_summaries=[micro_summary],
+            expected_session_id=options.session_id,
+        )
         evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
         micro_path, unit_path = _export_summary_files(
             paths=paths,
@@ -91,7 +99,11 @@ def build_v2_summary_artifacts(
 
     backend = _build_backend(options=options, backend_factory=backend_factory)
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
-    _validate_micro_summary(raw_bundle=raw_bundle, micro_summary=micro_summary)
+    _validate_micro_summary(
+        raw_bundle=raw_bundle,
+        micro_summary=micro_summary,
+        expected_session_id=options.session_id,
+    )
     unit_summary = backend.summarize_unit(
         unit_id=artifact_ids.unit_id,
         session_id=options.session_id,
@@ -102,7 +114,11 @@ def build_v2_summary_artifacts(
         related_pages=list(options.related_pages),
     )
     _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
-    _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
+    _validate_unit_summary(
+        unit_summary=unit_summary,
+        micro_summaries=[micro_summary],
+        expected_session_id=options.session_id,
+    )
     evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
     micro_path, unit_path = _export_summary_files(
         paths=paths,
@@ -156,14 +172,42 @@ def _validate_evidence_artifact_ids(*, session_id: str, micro_id: str) -> None:
         raise SummaryPipelineInvariantError(str(exc)) from exc
 
 
-def _validate_micro_summary(*, raw_bundle: dict[str, Any], micro_summary: MicroSummaryV2) -> None:
+def _validate_summary_session_id(*, artifact: str, summary_session_id: str, expected_session_id: str) -> None:
+    if summary_session_id == expected_session_id:
+        return
+    raise SummaryPipelineInvariantError(
+        f"{artifact} session_id {summary_session_id!r} does not match expected session_id {expected_session_id!r}"
+    )
+
+
+def _validate_micro_summary(
+    *,
+    raw_bundle: dict[str, Any],
+    micro_summary: MicroSummaryV2,
+    expected_session_id: str,
+) -> None:
+    _validate_summary_session_id(
+        artifact="micro_summary",
+        summary_session_id=micro_summary.session_id,
+        expected_session_id=expected_session_id,
+    )
     _raise_for_lint_issues(
         artifact="micro_summary",
         report=lint_micro_summary_v2(micro_summary, raw_bundle=raw_bundle),
     )
 
 
-def _validate_unit_summary(*, unit_summary: UnitSummaryV2, micro_summaries: list[MicroSummaryV2]) -> None:
+def _validate_unit_summary(
+    *,
+    unit_summary: UnitSummaryV2,
+    micro_summaries: list[MicroSummaryV2],
+    expected_session_id: str,
+) -> None:
+    _validate_summary_session_id(
+        artifact="unit_summary",
+        summary_session_id=unit_summary.session_id,
+        expected_session_id=expected_session_id,
+    )
     _raise_for_lint_issues(
         artifact="unit_summary",
         report=lint_unit_summary_v2(unit_summary, micro_summaries=micro_summaries),

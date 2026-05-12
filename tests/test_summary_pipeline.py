@@ -169,6 +169,61 @@ class StringConfidenceBackend(CountingBackend):
         )
 
 
+class MismatchedMicroSessionBackend(CountingBackend):
+    def summarize_micro(self, evidence, *, schema_version: str) -> MicroSummaryV2:
+        self.calls.append("micro")
+        return MicroSummaryV2(
+            micro_id=evidence.micro_id,
+            session_id="other-session",
+            message_ids=list(evidence.message_ids),
+            recovery_summary="Recovered implementation context.",
+            knowledge_summary="A reusable SummaryPipeline service is being introduced.",
+            retrieval_summary="SummaryPipeline service build_v2_summary_artifacts",
+            user_intent="Introduce SummaryPipeline.",
+            assistant_outcome="Created service-level v2 summary artifacts.",
+            metadata=SummaryMetadata(
+                mode="invalid-test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+
+class MismatchedUnitSessionBackend(CountingBackend):
+    def summarize_unit(
+        self,
+        *,
+        unit_id: str,
+        session_id: str,
+        title: str,
+        goal: str,
+        micro_summaries: list[MicroSummaryV2],
+        schema_version: str,
+        related_pages: list[str] | None = None,
+    ) -> UnitSummaryV2:
+        self.calls.append("unit")
+        return UnitSummaryV2(
+            unit_id=unit_id,
+            session_id="other-session",
+            title=title,
+            goal=goal,
+            state="Invalid unit summary belongs to a different session.",
+            micro_ids=[summary.micro_id for summary in micro_summaries],
+            related_pages=list(related_pages or []),
+            metadata=SummaryMetadata(
+                mode="invalid-test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+
 def _raw_bundle() -> dict[str, object]:
     return {
         "session": {"id": "session-1", "source": "telegram", "title": "SummaryPipeline"},
@@ -385,6 +440,54 @@ def test_build_v2_summary_artifacts_rejects_micro_summary_with_non_numeric_confi
 
     assert calls == ["micro"]
     assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json").exists()
+
+
+def test_build_v2_summary_artifacts_rejects_micro_summary_with_mismatched_session_id(
+    tmp_path: Path,
+) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep V2 summary backend output tied to the source session.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="session_id"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: MismatchedMicroSessionBackend(calls),
+        )
+
+    assert calls == ["micro"]
+    assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json").exists()
+
+
+def test_build_v2_summary_artifacts_rejects_unit_summary_with_mismatched_session_id(
+    tmp_path: Path,
+) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep V2 unit summary backend output tied to the source session.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="session_id"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: MismatchedUnitSessionBackend(calls),
+        )
+
+    assert calls == ["micro", "unit"]
+    assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-unit-v2.json").exists()
 
 
 def test_build_v2_summary_artifacts_rejects_unit_summary_with_unknown_micro_reference(tmp_path: Path) -> None:
