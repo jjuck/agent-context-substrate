@@ -75,6 +75,7 @@ from .recovery import (
 )
 from .retrieval import RetrievalHit, RetrievalHitDetail, expand_hit, search_knowledge
 from .retrieval_ids import decode_hit_id, encode_hit_id
+from .retrieval_scoring import make_snippet, rank_hits, score_text, source_rank, tokenize_query
 from .retrieval_sources import (
     iter_jsonl_objects,
     json_search_text,
@@ -194,6 +195,11 @@ __all__ = [
     "expand_hit",
     "decode_hit_id",
     "encode_hit_id",
+    "make_snippet",
+    "rank_hits",
+    "score_text",
+    "source_rank",
+    "tokenize_query",
     "iter_jsonl_objects",
     "json_search_text",
     "load_context_packet",

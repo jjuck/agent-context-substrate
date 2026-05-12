@@ -201,7 +201,7 @@ The current public alpha baseline has been verified from the published repositor
 
 | Check | Current result |
 | --- | --- |
-| Project tests | `219 passed` |
+| Project tests | `224 passed` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Hermes attachment | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools loaded |

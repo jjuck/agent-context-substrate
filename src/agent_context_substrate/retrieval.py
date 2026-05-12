@@ -4,12 +4,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import json
-import re
 import sqlite3
 
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
 from .retrieval_ids import decode_hit_id, encode_hit_id
+from .retrieval_scoring import (
+    make_snippet as _make_snippet,
+    rank_hits,
+    score_text as _score_text,
+    tokenize_query as _tokenize,
+)
 from .retrieval_sources import (
     iter_jsonl_objects,
     json_search_text,
@@ -87,13 +92,11 @@ def search_knowledge(
     hits: list[RetrievalHit] = []
     if normalized_mode == "graph":
         hits.extend(_search_topic_map(terms, project_root, graph_depth=graph_depth))
-        hits.sort(key=lambda hit: (-hit.score, _source_rank(hit.source_type), hit.title, hit.hit_id))
-        return hits[: max(0, limit)]
+        return rank_hits(hits)[: max(0, limit)]
     if normalized_mode == "recovery":
         hits.extend(_search_recovery_briefs(terms, project_root))
         hits.extend(_search_recovery_packets(terms, project_root))
-        hits.sort(key=lambda hit: (_source_rank(hit.source_type), -hit.score, hit.title, hit.hit_id))
-        return hits[: max(0, limit)]
+        return rank_hits(hits, source_priority_first=True)[: max(0, limit)]
 
     hits.extend(_search_wiki(terms, wiki_root))
     hits.extend(_search_packets(terms, project_root))
@@ -103,8 +106,7 @@ def search_knowledge(
     if include_raw:
         hits.extend(_search_raw_messages(terms, project_root))
 
-    hits.sort(key=lambda hit: (-hit.score, _source_rank(hit.source_type), hit.title, hit.hit_id))
-    return hits[: max(0, limit)]
+    return rank_hits(hits)[: max(0, limit)]
 
 
 def expand_hit(
@@ -1065,37 +1067,6 @@ def _packet_search_text(packet: ContextPacket) -> str:
     return "\n".join(piece for piece in pieces if piece)
 
 
-def _tokenize(query: str) -> list[str]:
-    tokens = re.findall(r"[\w가-힣.-]+", query.lower())
-    return [token for token in tokens if len(token) > 1]
-
-
-def _score_text(text: str, terms: list[str]) -> float:
-    lower = text.lower()
-    score = 0.0
-    for term in terms:
-        count = lower.count(term)
-        if count:
-            score += 1.0 + min(count - 1, 3) * 0.25
-    if terms and all(term in lower for term in terms):
-        score += 2.0
-    return score
-
-
-def _make_snippet(text: str, terms: list[str], radius: int = 180) -> str:
-    compact = re.sub(r"\s+", " ", text).strip()
-    lower = compact.lower()
-    positions = [lower.find(term) for term in terms if lower.find(term) >= 0]
-    if not positions:
-        return compact[: radius * 2]
-    center = min(positions)
-    start = max(0, center - radius)
-    end = min(len(compact), center + radius)
-    prefix = "..." if start else ""
-    suffix = "..." if end < len(compact) else ""
-    return f"{prefix}{compact[start:end]}{suffix}"
-
-
 def _extract_markdown_title(content: str) -> str | None:
     for line in content.splitlines():
         stripped = line.strip()
@@ -1109,24 +1080,6 @@ def _format_pointer(pointer: RawSessionReference | None) -> str:
         return ""
     message_ids = ",".join(str(message_id) for message_id in pointer.message_ids)
     return f"hermes-session:{pointer.session_id}#messages={message_ids}"
-
-
-def _source_rank(source_type: str) -> int:
-    return {
-        "recovery_brief": 0,
-        "recovery_packet": 1,
-        "wiki": 2,
-        "packet": 3,
-        "unit_summary": 4,
-        "micro_summary": 5,
-        "topic_map_node": 6,
-        "topic_map_edge": 7,
-        "topic_map_path": 8,
-        "promotion_candidate": 9,
-        "wiki_patch": 10,
-        "applied_patch": 11,
-        "raw_message": 12,
-    }.get(source_type, 99)
 
 
 def _hit_from_payload(payload: dict[str, Any], *, content: str) -> RetrievalHit:
