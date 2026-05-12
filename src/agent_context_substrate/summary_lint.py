@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from .models import EvidenceBackedText, MicroSummaryV2, UnitSummaryV2
@@ -49,10 +50,17 @@ def _normalize_semantic_text(value: str) -> str:
     return " ".join(str(value).casefold().split())
 
 
-def _confidence_issue(*, field: str, value: float | None) -> SummaryLintIssue | None:
+def _confidence_issue(*, field: str, value: Any | None) -> SummaryLintIssue | None:
     if value is None:
         return None
-    if 0.0 <= float(value) <= 1.0:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return SummaryLintIssue(
+            code="confidence_calibrated",
+            field=field,
+            message=f"{field} confidence must be a numeric value between 0.0 and 1.0, got {value!r}",
+        )
+    confidence = float(value)
+    if math.isfinite(confidence) and 0.0 <= confidence <= 1.0:
         return None
     return SummaryLintIssue(
         code="confidence_calibrated",

@@ -139,6 +139,36 @@ class InvalidUnitReferenceBackend(CountingBackend):
         )
 
 
+class StringConfidenceBackend(CountingBackend):
+    def summarize_micro(self, evidence, *, schema_version: str) -> MicroSummaryV2:
+        self.calls.append("micro")
+        return MicroSummaryV2(
+            micro_id=evidence.micro_id,
+            session_id=evidence.session_id,
+            message_ids=list(evidence.message_ids),
+            recovery_summary="Recovered implementation context.",
+            knowledge_summary="A reusable SummaryPipeline service is being introduced.",
+            retrieval_summary="SummaryPipeline service build_v2_summary_artifacts",
+            user_intent="Introduce SummaryPipeline.",
+            assistant_outcome="Created service-level v2 summary artifacts.",
+            decisions=[
+                EvidenceBackedText(
+                    text="Decision has a confidence value with the wrong runtime type.",
+                    evidence_message_ids=[1],
+                    confidence="0.8",  # type: ignore[arg-type]
+                )
+            ],
+            metadata=SummaryMetadata(
+                mode="invalid-test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+
 def _raw_bundle() -> dict[str, object]:
     return {
         "session": {"id": "session-1", "source": "telegram", "title": "SummaryPipeline"},
@@ -330,6 +360,30 @@ def test_build_v2_summary_artifacts_rejects_malformed_cached_summary_before_expo
 
     assert calls == ["micro", "unit"]
     assert not (paths.project_root / "data" / "exports" / "evidence").exists()
+    assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json").exists()
+
+
+def test_build_v2_summary_artifacts_rejects_micro_summary_with_non_numeric_confidence(
+    tmp_path: Path,
+) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep V2 summary confidence values strictly numeric.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="confidence_calibrated"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: StringConfidenceBackend(calls),
+        )
+
+    assert calls == ["micro"]
     assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json").exists()
 
 
