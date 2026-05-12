@@ -9,7 +9,13 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from agent_context_substrate.integration import run_session_finalize_pipeline  # noqa: E402
-from agent_context_substrate.recovery import build_recovery_brief  # noqa: E402
+from agent_context_substrate.recovery import (  # noqa: E402
+    RecoveryBrief,
+    RecoveryQualityIssue,
+    RecoveryQualityReport,
+    build_recovery_brief,
+    evaluate_recovery_brief_quality,
+)
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -121,3 +127,62 @@ def test_build_recovery_brief_reads_packet_and_exports_json(tmp_path, monkeypatc
     assert payload["packet_id"] == "session-1"
     assert payload["task_title"] == "Recovery brief planning"
     assert payload["related_pages"] == brief.related_pages
+    assert payload["quality_gate"] == brief.quality_gate.to_dict()
+    assert payload["quality_gate"]["ok"] is True
+    assert payload["quality_gate"]["score"] >= 0.8
+
+
+def test_evaluate_recovery_brief_quality_reports_missing_resume_fields(tmp_path) -> None:
+    brief = RecoveryBrief(
+        session_id="session-1",
+        packet_id="packet-1",
+        task_title="",
+        macro_context="",
+        decisions=[],
+        progress=[],
+        critical_files=[],
+        open_questions=[],
+        next_actions=[],
+        related_pages=[],
+        provenance=[],
+        recovery_json_path=tmp_path / "recovery.json",
+    )
+
+    report = evaluate_recovery_brief_quality(brief)
+
+    assert report == RecoveryQualityReport(
+        score=0.0,
+        issues=[
+            RecoveryQualityIssue(
+                code="missing_task_title",
+                severity="error",
+                message="Recovery brief needs a task title so the user can identify the workstream.",
+            ),
+            RecoveryQualityIssue(
+                code="missing_macro_context",
+                severity="error",
+                message="Recovery brief needs macro_context describing what was happening.",
+            ),
+            RecoveryQualityIssue(
+                code="missing_work_state",
+                severity="error",
+                message="Recovery brief needs decisions or progress to show the last concrete state.",
+            ),
+            RecoveryQualityIssue(
+                code="missing_active_context",
+                severity="warning",
+                message="Recovery brief should include critical files or related pages for fast re-entry.",
+            ),
+            RecoveryQualityIssue(
+                code="missing_next_step",
+                severity="warning",
+                message="Recovery brief should include next_actions or open_questions for the next safe action.",
+            ),
+            RecoveryQualityIssue(
+                code="missing_provenance",
+                severity="error",
+                message="Recovery brief needs provenance back to raw session messages or packet evidence.",
+            ),
+        ],
+    )
+    assert not report.ok

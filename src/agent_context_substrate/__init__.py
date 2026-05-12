@@ -59,7 +59,14 @@ from .promotions import (
     render_promotion_candidates_markdown,
 )
 from .raw_extract import export_session_bundle
-from .recovery import RecoveryBrief, build_recovery_brief, export_recovery_brief
+from .recovery import (
+    RecoveryBrief,
+    RecoveryQualityIssue,
+    RecoveryQualityReport,
+    build_recovery_brief,
+    evaluate_recovery_brief_quality,
+    export_recovery_brief,
+)
 from .retrieval import RetrievalHit, RetrievalHitDetail, expand_hit, search_knowledge
 from .semantic_lint import (
     SemanticLintIssue,
@@ -136,6 +143,8 @@ __all__ = [
     "SummaryOptions",
     "SummarizerBackend",
     "RecoveryBrief",
+    "RecoveryQualityIssue",
+    "RecoveryQualityReport",
     "RetrievalHit",
     "RetrievalHitDetail",
     "TopicMap",
@@ -183,6 +192,7 @@ __all__ = [
     "safe_wiki_target_path",
     "is_safe_project_artifact_path",
     "build_recovery_brief",
+    "evaluate_recovery_brief_quality",
     "export_recovery_brief",
     "should_process_bundle",
     "export_lint_report",
