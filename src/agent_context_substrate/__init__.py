@@ -74,9 +74,10 @@ from .recovery import (
     export_recovery_brief,
 )
 from .retrieval import expand_hit, search_knowledge
+from .retrieval_graph import find_topic_map_edge, find_topic_map_node, format_topic_map_path, search_topic_map
 from .retrieval_ids import decode_hit_id, encode_hit_id
-from .retrieval_types import RetrievalHit, RetrievalHitDetail
 from .retrieval_scoring import make_snippet, rank_hits, score_text, source_rank, tokenize_query
+from .retrieval_types import RetrievalHit, RetrievalHitDetail
 from .retrieval_sources import (
     iter_jsonl_objects,
     json_search_text,
@@ -194,6 +195,9 @@ __all__ = [
     "extract_entity_atoms",
     "extract_question_atoms",
     "expand_hit",
+    "find_topic_map_edge",
+    "find_topic_map_node",
+    "format_topic_map_path",
     "decode_hit_id",
     "encode_hit_id",
     "make_snippet",
@@ -219,6 +223,7 @@ __all__ = [
     "run_session_finalize_pipeline",
     "should_process_session",
     "search_knowledge",
+    "search_topic_map",
     "safe_artifact_stem",
     "safe_child_path",
     "safe_wiki_target_path",
