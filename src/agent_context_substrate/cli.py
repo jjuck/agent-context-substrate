@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import date
 import json
 from pathlib import Path
 import re
@@ -52,6 +51,7 @@ from .paths import HarnessPaths
 from .raw_extract import build_session_bundle
 from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from .summary_pipeline import SummaryOptions, build_v2_summary_artifacts
+from .wiki_registration import append_log_entry, register_promoted_page, upsert_index_entry
 
 
 def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
@@ -127,49 +127,6 @@ def _export_v2_summary_artifacts(
     return result.as_tuple()
 
 
-def _upsert_index_entry(index_path: Path, section_heading: str, entry_line: str) -> None:
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    if not index_path.exists():
-        index_path.write_text("# Wiki Index\n", encoding="utf-8")
-    lines = index_path.read_text(encoding="utf-8").splitlines()
-    if entry_line in lines:
-        return
-
-    section_line = f"## {section_heading}"
-    try:
-        section_index = lines.index(section_line)
-    except ValueError:
-        if lines and lines[-1] != "":
-            lines.append("")
-        lines.extend([section_line, entry_line])
-        index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return
-
-    section_end = section_index + 1
-    while section_end < len(lines) and not lines[section_end].startswith("## "):
-        section_end += 1
-
-    empty_marker = "<!-- empty -->"
-    if empty_marker in lines[section_index + 1:section_end]:
-        empty_index = lines.index(empty_marker, section_index + 1, section_end)
-        lines[empty_index] = entry_line
-        while empty_index + 1 < len(lines) and lines[empty_index + 1] == "":
-            del lines[empty_index + 1]
-        index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return
-
-    lines.insert(section_end, entry_line)
-    index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _append_log_entry(log_path: Path, heading: str, bullet_lines: list[str]) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = log_path.read_text(encoding="utf-8") if log_path.exists() else "# Wiki Log\n"
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    entry = "\n".join([heading, *bullet_lines]) + "\n"
-    log_path.write_text(existing + ("\n" if existing.strip() else "") + entry, encoding="utf-8")
-
 
 def _add_registration_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -177,30 +134,6 @@ def _add_registration_argument(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Update wiki index.md and log.md for this promotion (default: enabled)",
-    )
-
-
-def _register_promoted_page(
-    *,
-    paths: HarnessPaths,
-    section_heading: str,
-    slug: str,
-    summary: str,
-    output_path: Path,
-    command_name: str,
-    extra_lines: list[str] | None = None,
-) -> None:
-    _upsert_index_entry(
-        paths.wiki_root / "index.md",
-        section_heading,
-        f"- [[{slug}]] — {summary}",
-    )
-    bullet_lines = [f"- Created/updated: `{output_path.relative_to(paths.wiki_root).as_posix()}`"]
-    bullet_lines.extend(list(extra_lines or []))
-    _append_log_entry(
-        paths.wiki_root / "log.md",
-        f"## [{date.today().isoformat()}] {command_name} | {slug}",
-        bullet_lines,
     )
 
 
@@ -707,7 +640,7 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             paths=paths,
             load_packet=_load_packet,
-            register_promoted_page=_register_promoted_page,
+            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "promote-packet-plan":
@@ -715,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             paths=paths,
             load_packet=_load_packet,
-            register_promoted_page=_register_promoted_page,
+            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "promote-unit-concept":
@@ -724,7 +657,7 @@ def main(argv: list[str] | None = None) -> int:
             parser=parser,
             paths=paths,
             load_packet=_load_packet,
-            register_promoted_page=_register_promoted_page,
+            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "promote-unit-architecture":
@@ -733,7 +666,7 @@ def main(argv: list[str] | None = None) -> int:
             parser=parser,
             paths=paths,
             load_packet=_load_packet,
-            register_promoted_page=_register_promoted_page,
+            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "run-e2e-pipeline":
@@ -741,8 +674,8 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             paths=paths,
             slugify=_slugify,
-            upsert_index_entry=_upsert_index_entry,
-            append_log_entry=_append_log_entry,
+            upsert_index_entry=upsert_index_entry,
+            append_log_entry=append_log_entry,
         )
 
     if args.command == "lint-wiki":
