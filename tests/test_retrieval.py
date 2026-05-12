@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 
 import pytest
 from agent_context_substrate.retrieval import expand_hit, search_knowledge
+from agent_context_substrate.retrieval_ids import encode_hit_id
 
 
 def test_search_knowledge_returns_wiki_hits_with_provenance(tmp_path: Path) -> None:
@@ -727,8 +727,7 @@ def test_search_knowledge_can_query_raw_evidence_sqlite(tmp_path: Path, monkeypa
 
 
 def _forged_hit_id(payload: dict[str, object]) -> str:
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return encode_hit_id(payload)
 
 
 def test_expand_hit_rejects_forged_wiki_path_traversal(tmp_path: Path) -> None:

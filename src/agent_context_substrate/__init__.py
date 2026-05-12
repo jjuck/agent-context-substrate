@@ -74,6 +74,7 @@ from .recovery import (
     export_recovery_brief,
 )
 from .retrieval import RetrievalHit, RetrievalHitDetail, expand_hit, search_knowledge
+from .retrieval_ids import decode_hit_id, encode_hit_id
 from .semantic_lint import (
     SemanticLintIssue,
     SemanticLintReport,
@@ -182,6 +183,8 @@ __all__ = [
     "extract_entity_atoms",
     "extract_question_atoms",
     "expand_hit",
+    "decode_hit_id",
+    "encode_hit_id",
     "render_context_packet_markdown",
     "get_summarizer_backend",
     "lint_wiki",

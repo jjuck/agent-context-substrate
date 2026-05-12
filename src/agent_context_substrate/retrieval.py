@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-import base64
 import json
 import re
 import sqlite3
 
 from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
+from .retrieval_ids import decode_hit_id, encode_hit_id
 from .safe_paths import is_safe_project_artifact_path, is_safe_wiki_page_path
 
 
@@ -104,7 +104,7 @@ def expand_hit(
     project_root: Path,
     wiki_root: Path,
 ) -> RetrievalHitDetail:
-    payload = _decode_hit_id(hit_id)
+    payload = decode_hit_id(hit_id)
     source_type = str(payload["source_type"])
     source_path = str(payload.get("source_path", ""))
     project_root = Path(project_root)
@@ -289,7 +289,7 @@ def _search_wiki(terms: list[str], wiki_root: Path) -> list[RetrievalHit]:
         }
         hits.append(
             RetrievalHit(
-                hit_id=_encode_hit_id(payload),
+                hit_id=encode_hit_id(payload),
                 source_type="wiki",
                 source_path=rel_path,
                 title=title,
@@ -332,7 +332,7 @@ def _search_recovery_briefs(terms: list[str], project_root: Path) -> list[Retrie
         }
         hits.append(
             RetrievalHit(
-                hit_id=_encode_hit_id(hit_payload),
+                hit_id=encode_hit_id(hit_payload),
                 source_type="recovery_brief",
                 source_path=rel_path,
                 title=title,
@@ -370,7 +370,7 @@ def _search_recovery_packets(terms: list[str], project_root: Path) -> list[Retri
         }
         hits.append(
             RetrievalHit(
-                hit_id=_encode_hit_id(hit_payload),
+                hit_id=encode_hit_id(hit_payload),
                 source_type="recovery_packet",
                 source_path=rel_path,
                 title=packet.task_title,
@@ -407,7 +407,7 @@ def _search_packets(terms: list[str], project_root: Path) -> list[RetrievalHit]:
             }
             hits.append(
                 RetrievalHit(
-                    hit_id=_encode_hit_id(payload),
+                    hit_id=encode_hit_id(payload),
                     source_type="packet",
                     source_path=rel_path,
                     title=packet.task_title,
@@ -477,7 +477,7 @@ def _summary_hit_if_match(
     }
     return [
         RetrievalHit(
-            hit_id=_encode_hit_id(payload),
+            hit_id=encode_hit_id(payload),
             source_type=source_type,
             source_path=rel_path,
             title=title,
@@ -559,7 +559,7 @@ def _topic_map_node_hit(
         "provenance": provenance,
     }
     return RetrievalHit(
-        hit_id=_encode_hit_id(payload),
+        hit_id=encode_hit_id(payload),
         source_type="topic_map_node",
         source_path=rel_path,
         title=title,
@@ -593,7 +593,7 @@ def _topic_map_edge_hit(
         "provenance": provenance,
     }
     return RetrievalHit(
-        hit_id=_encode_hit_id(payload),
+        hit_id=encode_hit_id(payload),
         source_type="topic_map_edge",
         source_path=rel_path,
         title=title,
@@ -698,7 +698,7 @@ def _topic_map_path_hit(
         "provenance": provenance,
     }
     return RetrievalHit(
-        hit_id=_encode_hit_id(payload),
+        hit_id=encode_hit_id(payload),
         source_type="topic_map_path",
         source_path=rel_path,
         title=title,
@@ -778,7 +778,7 @@ def _search_promotions(terms: list[str], project_root: Path) -> list[RetrievalHi
             }
             hits.append(
                 RetrievalHit(
-                    hit_id=_encode_hit_id(hit_payload),
+                    hit_id=encode_hit_id(hit_payload),
                     source_type="promotion_candidate",
                     source_path=rel_path,
                     title=title,
@@ -829,7 +829,7 @@ def _search_wiki_patches(terms: list[str], project_root: Path) -> list[Retrieval
             }
             hits.append(
                 RetrievalHit(
-                    hit_id=_encode_hit_id(hit_payload),
+                    hit_id=encode_hit_id(hit_payload),
                     source_type="wiki_patch",
                     source_path=rel_path,
                     title=title,
@@ -877,7 +877,7 @@ def _search_applied_patch_log(terms: list[str], project_root: Path, path: Path) 
         }
         hits.append(
             RetrievalHit(
-                hit_id=_encode_hit_id(payload),
+                hit_id=encode_hit_id(payload),
                 source_type="applied_patch",
                 source_path=rel_path,
                 title=title,
@@ -930,7 +930,7 @@ def _search_raw_messages(terms: list[str], project_root: Path) -> list[Retrieval
         }
         hits.append(
             RetrievalHit(
-                hit_id=_encode_hit_id(payload),
+                hit_id=encode_hit_id(payload),
                 source_type="raw_message",
                 source_path=f"state.db:{session_id}:{message_id}",
                 title=title,
@@ -1173,23 +1173,9 @@ def _source_rank(source_type: str) -> int:
     }.get(source_type, 99)
 
 
-def _encode_hit_id(payload: dict[str, object]) -> str:
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-
-
-def _decode_hit_id(hit_id: str) -> dict[str, Any]:
-    padding = "=" * (-len(hit_id) % 4)
-    raw = base64.urlsafe_b64decode((hit_id + padding).encode("ascii"))
-    payload = json.loads(raw.decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid retrieval hit id")
-    return payload
-
-
 def _hit_from_payload(payload: dict[str, Any], *, content: str) -> RetrievalHit:
     return RetrievalHit(
-        hit_id=_encode_hit_id(payload),
+        hit_id=encode_hit_id(payload),
         source_type=str(payload["source_type"]),
         source_path=str(payload.get("source_path", "")),
         title=str(payload.get("title", "")),
