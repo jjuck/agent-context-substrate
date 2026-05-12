@@ -27,6 +27,13 @@ class SummaryPipelineInvariantError(ValueError):
 
 
 @dataclass(frozen=True)
+class _SummaryArtifactIds:
+    packet_id: str
+    micro_id: str
+    unit_id: str
+
+
+@dataclass(frozen=True)
 class SummaryOptions:
     session_id: str
     packet_id: str
@@ -60,7 +67,9 @@ def build_v2_summary_artifacts(
 ) -> SummaryArtifactResult:
     """Build and export evidence plus V2 micro/unit summary artifacts."""
 
-    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id=f"{options.packet_id}-micro-1")
+    artifact_ids = _summary_artifact_ids(options=options)
+    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id=artifact_ids.micro_id)
+    _validate_evidence_artifact_ids(session_id=evidence.session_id, micro_id=evidence.micro_id)
     evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
     cache_input = _summary_cache_input(options=options, evidence_dict=evidence.to_dict())
     cache_key = _summary_cache_key(cache_input)
@@ -73,7 +82,7 @@ def build_v2_summary_artifacts(
         _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
         micro_path, unit_path = _export_summary_files(
             paths=paths,
-            packet_id=options.packet_id,
+            packet_id=artifact_ids.packet_id,
             micro_summary=micro_summary,
             unit_summary=unit_summary,
         )
@@ -83,7 +92,7 @@ def build_v2_summary_artifacts(
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
     _validate_micro_summary(raw_bundle=raw_bundle, micro_summary=micro_summary)
     unit_summary = backend.summarize_unit(
-        unit_id=f"{options.packet_id}-unit-1",
+        unit_id=artifact_ids.unit_id,
         session_id=options.session_id,
         title=options.unit_title,
         goal=options.goal,
@@ -95,7 +104,7 @@ def build_v2_summary_artifacts(
     _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
     micro_path, unit_path = _export_summary_files(
         paths=paths,
-        packet_id=options.packet_id,
+        packet_id=artifact_ids.packet_id,
         micro_summary=micro_summary,
         unit_summary=unit_summary,
     )
@@ -115,6 +124,24 @@ def _raise_for_lint_issues(*, artifact: str, report: SummaryLintReport) -> None:
         return
     codes = ",".join(issue.code for issue in report.issues)
     raise SummaryPipelineInvariantError(f"{artifact} failed summary lint: {codes}")
+
+
+def _summary_artifact_ids(*, options: SummaryOptions) -> _SummaryArtifactIds:
+    try:
+        packet_id = safe_artifact_stem(options.packet_id, label="packet id")
+        micro_id = safe_artifact_stem(f"{packet_id}-micro-1", label="micro id")
+        unit_id = safe_artifact_stem(f"{packet_id}-unit-1", label="unit id")
+    except ValueError as exc:
+        raise SummaryPipelineInvariantError(str(exc)) from exc
+    return _SummaryArtifactIds(packet_id=packet_id, micro_id=micro_id, unit_id=unit_id)
+
+
+def _validate_evidence_artifact_ids(*, session_id: str, micro_id: str) -> None:
+    try:
+        safe_artifact_stem(session_id, label="session id")
+        safe_artifact_stem(micro_id, label="micro id")
+    except ValueError as exc:
+        raise SummaryPipelineInvariantError(str(exc)) from exc
 
 
 def _validate_micro_summary(*, raw_bundle: dict[str, Any], micro_summary: MicroSummaryV2) -> None:

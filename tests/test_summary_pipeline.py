@@ -204,6 +204,28 @@ def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache
     assert calls == ["micro", "unit"]
 
 
+def test_build_v2_summary_artifacts_rejects_unsafe_packet_id_before_export(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="../escape",
+        unit_title="Unit",
+        goal="Keep generated summary artifact ids safe.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="Unsafe packet id"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
+        )
+
+    assert calls == []
+    assert not (paths.project_root / "data").exists()
+
+
 def test_build_v2_summary_artifacts_rejects_unit_summary_with_unknown_micro_reference(tmp_path: Path) -> None:
     paths = HarnessPaths(project_root=tmp_path / "project")
     options = SummaryOptions(
