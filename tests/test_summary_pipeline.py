@@ -11,7 +11,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from agent_context_substrate.models import MicroSummaryV2, SummaryMetadata, UnitSummaryV2  # noqa: E402
+from agent_context_substrate.models import EvidenceBackedText, MicroSummaryV2, SummaryMetadata, UnitSummaryV2  # noqa: E402
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 from agent_context_substrate.summary_pipeline import (  # noqa: E402
     SummaryOptions,
@@ -67,6 +67,36 @@ class CountingBackend:
             related_pages=list(related_pages or []),
             metadata=SummaryMetadata(
                 mode="test-backend",
+                schema_version=schema_version,
+                prompt_version=None,
+                model=None,
+                input_hash="input",
+                created_at="2026-05-08T00:00:00+00:00",
+            ),
+        )
+
+
+class InvalidMicroEvidenceBackend(CountingBackend):
+    def summarize_micro(self, evidence, *, schema_version: str) -> MicroSummaryV2:
+        self.calls.append("micro")
+        return MicroSummaryV2(
+            micro_id=evidence.micro_id,
+            session_id=evidence.session_id,
+            message_ids=list(evidence.message_ids),
+            recovery_summary="Recovered implementation context.",
+            knowledge_summary="A reusable SummaryPipeline service is being introduced.",
+            retrieval_summary="SummaryPipeline service build_v2_summary_artifacts",
+            user_intent="Introduce SummaryPipeline.",
+            assistant_outcome="Created service-level v2 summary artifacts.",
+            decisions=[
+                EvidenceBackedText(
+                    text="Decision cites a non-existent message.",
+                    evidence_message_ids=[999],
+                    confidence=0.8,
+                )
+            ],
+            metadata=SummaryMetadata(
+                mode="invalid-test-backend",
                 schema_version=schema_version,
                 prompt_version=None,
                 model=None,
@@ -194,3 +224,25 @@ def test_build_v2_summary_artifacts_rejects_unit_summary_with_unknown_micro_refe
 
     assert calls == ["micro", "unit"]
     assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-unit-v2.json").exists()
+
+
+def test_build_v2_summary_artifacts_rejects_micro_summary_with_unknown_evidence_id(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep V2 summary artifacts grounded.",
+    )
+    calls: list[str] = []
+
+    with pytest.raises(SummaryPipelineInvariantError, match="evidence_exists"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: InvalidMicroEvidenceBackend(calls),
+        )
+
+    assert calls == ["micro"]
+    assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json").exists()

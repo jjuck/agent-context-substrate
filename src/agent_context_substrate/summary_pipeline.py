@@ -13,6 +13,7 @@ from .models import MicroSummaryV2, UnitSummaryV2
 from .paths import HarnessPaths
 from .safe_paths import safe_artifact_stem, safe_child_path
 from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions, SummarizerBackend, get_summarizer_backend
+from .summary_lint import SummaryLintReport, lint_micro_summary_v2, lint_unit_summary_v2
 
 
 BackendFactory = Callable[
@@ -67,7 +68,9 @@ def build_v2_summary_artifacts(
 
     if options.summary_cache and cache_path.exists():
         micro_summary, unit_summary = _load_summary_cache(cache_path)
+        _validate_micro_summary(raw_bundle=raw_bundle, micro_summary=micro_summary)
         _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
+        _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
         micro_path, unit_path = _export_summary_files(
             paths=paths,
             packet_id=options.packet_id,
@@ -78,6 +81,7 @@ def build_v2_summary_artifacts(
 
     backend = _build_backend(options=options, backend_factory=backend_factory)
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+    _validate_micro_summary(raw_bundle=raw_bundle, micro_summary=micro_summary)
     unit_summary = backend.summarize_unit(
         unit_id=f"{options.packet_id}-unit-1",
         session_id=options.session_id,
@@ -88,6 +92,7 @@ def build_v2_summary_artifacts(
         related_pages=list(options.related_pages),
     )
     _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
+    _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
     micro_path, unit_path = _export_summary_files(
         paths=paths,
         packet_id=options.packet_id,
@@ -103,6 +108,27 @@ def build_v2_summary_artifacts(
             unit_summary=unit_summary,
         )
     return SummaryArtifactResult(micro_path=micro_path, unit_path=unit_path, evidence_path=evidence_path)
+
+
+def _raise_for_lint_issues(*, artifact: str, report: SummaryLintReport) -> None:
+    if report.ok:
+        return
+    codes = ",".join(issue.code for issue in report.issues)
+    raise SummaryPipelineInvariantError(f"{artifact} failed summary lint: {codes}")
+
+
+def _validate_micro_summary(*, raw_bundle: dict[str, Any], micro_summary: MicroSummaryV2) -> None:
+    _raise_for_lint_issues(
+        artifact="micro_summary",
+        report=lint_micro_summary_v2(micro_summary, raw_bundle=raw_bundle),
+    )
+
+
+def _validate_unit_summary(*, unit_summary: UnitSummaryV2, micro_summaries: list[MicroSummaryV2]) -> None:
+    _raise_for_lint_issues(
+        artifact="unit_summary",
+        report=lint_unit_summary_v2(unit_summary, micro_summaries=micro_summaries),
+    )
 
 
 def _validate_unit_micro_references(*, unit_summary: UnitSummaryV2, micro_summaries: list[MicroSummaryV2]) -> None:
