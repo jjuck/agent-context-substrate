@@ -42,11 +42,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - V2 summary artifact IDs are validated before evidence, summary, or cache paths are constructed.
 - Context packet export validates packet IDs before creating export directories.
 - V2 summary artifact construction rejects source/session ID mismatches before writing evidence or summary artifacts.
+- Cached V2 summaries are validated before re-exporting evidence or summary artifacts.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `235 passed`.
+- Project test suite: `236 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 

@@ -71,7 +71,6 @@ def build_v2_summary_artifacts(
     _validate_summary_source_session(raw_bundle=raw_bundle, options=options)
     evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id=artifact_ids.micro_id)
     _validate_evidence_artifact_ids(session_id=evidence.session_id, micro_id=evidence.micro_id)
-    evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
     cache_input = _summary_cache_input(options=options, evidence_dict=evidence.to_dict())
     cache_key = _summary_cache_key(cache_input)
     cache_path = _summary_cache_path(paths=paths, cache_key=cache_key)
@@ -81,6 +80,7 @@ def build_v2_summary_artifacts(
         _validate_micro_summary(raw_bundle=raw_bundle, micro_summary=micro_summary)
         _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
         _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
+        evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
         micro_path, unit_path = _export_summary_files(
             paths=paths,
             packet_id=artifact_ids.packet_id,
@@ -103,6 +103,7 @@ def build_v2_summary_artifacts(
     )
     _validate_unit_micro_references(unit_summary=unit_summary, micro_summaries=[micro_summary])
     _validate_unit_summary(unit_summary=unit_summary, micro_summaries=[micro_summary])
+    evidence_path = export_micro_evidence_bundle(bundle=evidence, exports_dir=paths.exports_dir)
     micro_path, unit_path = _export_summary_files(
         paths=paths,
         packet_id=artifact_ids.packet_id,

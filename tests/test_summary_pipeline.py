@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import sys
 
 import pytest
@@ -246,6 +247,51 @@ def test_build_v2_summary_artifacts_rejects_mismatched_session_id_before_export(
 
     assert calls == []
     assert not (paths.project_root / "data").exists()
+
+
+def test_build_v2_summary_artifacts_rejects_invalid_cached_summary_before_export(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Keep V2 cached summary artifacts valid before export.",
+        summary_cache=True,
+    )
+    calls: list[str] = []
+
+    build_v2_summary_artifacts(
+        raw_bundle=_raw_bundle(),
+        paths=paths,
+        options=options,
+        backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
+    )
+    cache_files = list((paths.project_root / "data" / "cache" / "summaries").glob("*.json"))
+    assert len(cache_files) == 1
+    cache_payload = json.loads(cache_files[0].read_text(encoding="utf-8"))
+    cache_payload["micro_summary"]["decisions"] = [
+        {
+            "text": "Cached decision cites a non-existent message.",
+            "evidence_message_ids": [999],
+            "confidence": 0.8,
+        }
+    ]
+    cache_files[0].write_text(json.dumps(cache_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    shutil.rmtree(paths.project_root / "data" / "exports")
+
+    with pytest.raises(SummaryPipelineInvariantError, match="evidence_exists"):
+        build_v2_summary_artifacts(
+            raw_bundle=_raw_bundle(),
+            paths=paths,
+            options=options,
+            backend_factory=lambda mode, command, router, routing_hints, llm_safety: (_ for _ in ()).throw(
+                AssertionError("cache miss")
+            ),
+        )
+
+    assert calls == ["micro", "unit"]
+    assert not (paths.project_root / "data" / "exports" / "evidence").exists()
+    assert not (paths.project_root / "data" / "exports" / "summaries" / "packet-1-micro-v2.json").exists()
 
 
 def test_build_v2_summary_artifacts_rejects_unit_summary_with_unknown_micro_reference(tmp_path: Path) -> None:
