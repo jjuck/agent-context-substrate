@@ -73,8 +73,9 @@ from .recovery import (
     evaluate_recovery_brief_quality,
     export_recovery_brief,
 )
-from .retrieval import RetrievalHit, RetrievalHitDetail, expand_hit, search_knowledge
+from .retrieval import expand_hit, search_knowledge
 from .retrieval_ids import decode_hit_id, encode_hit_id
+from .retrieval_types import RetrievalHit, RetrievalHitDetail
 from .retrieval_scoring import make_snippet, rank_hits, score_text, source_rank, tokenize_query
 from .retrieval_sources import (
     iter_jsonl_objects,

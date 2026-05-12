@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import json
@@ -25,42 +24,7 @@ from .retrieval_sources import (
     read_text_lossy,
 )
 from .safe_paths import is_safe_project_artifact_path, is_safe_wiki_page_path
-
-
-@dataclass(frozen=True)
-class RetrievalHit:
-    hit_id: str
-    source_type: str
-    source_path: str
-    title: str
-    snippet: str
-    score: float
-    provenance: list[str]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "hit_id": self.hit_id,
-            "source_type": self.source_type,
-            "source_path": self.source_path,
-            "title": self.title,
-            "snippet": self.snippet,
-            "score": self.score,
-            "provenance": list(self.provenance),
-        }
-
-
-@dataclass(frozen=True)
-class RetrievalHitDetail:
-    hit: RetrievalHit
-    content: str
-    metadata: dict[str, object]
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "hit": self.hit.to_dict(),
-            "content": self.content,
-            "metadata": dict(self.metadata),
-        }
+from .retrieval_types import RetrievalHit, RetrievalHitDetail
 
 
 def search_knowledge(

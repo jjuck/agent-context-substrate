@@ -13,7 +13,7 @@ The issues below are **not blockers for the current Hermes-only workflow**, but 
 At the time this note was written, the local WSL/Hermes-focused baseline was green:
 
 ```text
-python -m pytest -q  # 224 passed
+python -m pytest -q  # 226 passed
 ruff check .         # All checks passed
 ```
 
