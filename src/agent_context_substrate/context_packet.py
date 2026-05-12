@@ -8,6 +8,10 @@ from .paths import HarnessPaths
 from .safe_paths import safe_child_path
 
 
+class ContextPacketInvariantError(ValueError):
+    """Raised when context packet builder inputs violate known invariants."""
+
+
 def build_context_packet(
     packet_id: str,
     task_title: str,
@@ -15,8 +19,14 @@ def build_context_packet(
     unit_summary: UnitSummary,
     micro_summaries: list[MicroSummary],
 ) -> ContextPacket:
+    micro_by_id = {summary.micro_id: summary for summary in micro_summaries}
+    missing_micro_ids = [micro_id for micro_id in unit_summary.micro_ids if micro_id not in micro_by_id]
+    if missing_micro_ids:
+        raise ContextPacketInvariantError(
+            f"UnitSummary {unit_summary.unit_id!r} references unknown micro_ids: {missing_micro_ids}"
+        )
     relevant_micro_summaries = [
-        summary for summary in micro_summaries if summary.micro_id in unit_summary.micro_ids
+        micro_by_id[micro_id] for micro_id in unit_summary.micro_ids
     ]
 
     critical_files = sorted(

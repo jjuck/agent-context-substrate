@@ -10,7 +10,12 @@ from .atoms import (
     extract_entity_atoms,
     extract_question_atoms,
 )
-from .context_packet import build_context_packet, export_context_packet, render_context_packet_markdown
+from .context_packet import (
+    ContextPacketInvariantError,
+    build_context_packet,
+    export_context_packet,
+    render_context_packet_markdown,
+)
 from .distribution import (
     DoctorReport,
     FreshInstallSmokeResult,
@@ -246,6 +251,7 @@ __all__ = [
     "render_wiki_patch_proposal_markdown",
     "BrokenWikilink",
     "ContextPacket",
+    "ContextPacketInvariantError",
     "EvidenceBackedText",
     "EvidenceMessage",
     "HarnessPaths",

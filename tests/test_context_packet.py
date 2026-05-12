@@ -2,12 +2,15 @@ from pathlib import Path
 import json
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from agent_context_substrate.context_packet import (  # noqa: E402
+    ContextPacketInvariantError,
     build_context_packet,
     export_context_packet,
 )
@@ -99,6 +102,31 @@ def test_build_context_packet_filters_to_relevant_micro_summaries() -> None:
     ]
     assert [pointer.message_ids for pointer in packet.raw_pointers] == [[1, 2], [3]]
     assert packet.open_questions == ["Should Markdown exports include raw message ids?"]
+
+
+def test_build_context_packet_rejects_unknown_micro_references() -> None:
+    micro = _sample_micro(
+        micro_id="micro-a",
+        message_ids=[1, 2],
+        files=["pyproject.toml"],
+        concepts=["context-packet"],
+    )
+    unit = UnitSummary(
+        unit_id="unit-1",
+        session_id="session-1",
+        title="Build context packet support",
+        goal="Create a reusable resumption packet",
+        micro_ids=["micro-a", "missing-micro"],
+    )
+
+    with pytest.raises(ContextPacketInvariantError, match="missing-micro"):
+        build_context_packet(
+            packet_id="packet-1",
+            task_title="Resume harness work",
+            macro_context="Need a compact packet for future session recovery",
+            unit_summary=unit,
+            micro_summaries=[micro],
+        )
 
 
 def test_export_context_packet_writes_json_and_markdown(tmp_path, monkeypatch) -> None:
