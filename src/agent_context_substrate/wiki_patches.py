@@ -10,6 +10,12 @@ from .safe_paths import safe_wiki_target_path
 MANAGED_CLAIMS_START = "<!-- acs:auto:claims:start -->"
 MANAGED_CLAIMS_END = "<!-- acs:auto:claims:end -->"
 
+ALPHA_WIKI_PATCH_OPERATIONS = frozenset({"create_page", "insert_claim_block", "append_section", "append_managed_section"})
+EXPERIMENTAL_WIKI_PATCH_OPERATIONS = frozenset({"add_link", "mark_stale"})
+FUTURE_WIKI_PATCH_OPERATIONS = frozenset(
+    {"replace_section", "add_alias", "mark_deprecated", "merge_pages", "split_page"}
+)
+
 
 @dataclass(frozen=True)
 class WikiPatchApplyResult:
@@ -190,7 +196,7 @@ def apply_wiki_patch_proposal(
             continue
         planned_patch_ids.append(operation.patch_id)
         target_path = _safe_target_path(wiki_root=wiki_root, target=operation.target)
-        if target_path is None or operation.operation not in {"insert_claim_block", "create_page", "append_section", "add_link", "mark_stale"}:
+        if target_path is None or operation.operation not in ALPHA_WIKI_PATCH_OPERATIONS:
             skipped_patch_ids.append(operation.patch_id)
             continue
         if dry_run:
@@ -249,21 +255,16 @@ def _apply_operation(*, operation: WikiPatchOperation, target_path: Path) -> Non
     existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
     if operation.operation in {"insert_claim_block", "create_page"}:
         updated = _replace_or_append_claim_block(markdown=existing, claim_block=after)
-    elif operation.operation == "append_section":
+    elif operation.operation in {"append_section", "append_managed_section"}:
         updated = _append_to_section(
             markdown=existing,
             section=operation.diff.get("section", ""),
             addition=after,
         )
-    elif operation.operation == "add_link":
-        updated = _add_related_link(markdown=existing, link=after)
-    elif operation.operation == "mark_stale":
-        updated = _mark_page_stale(markdown=existing)
     else:
         return
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(updated, encoding="utf-8")
-
 
 
 
@@ -296,40 +297,6 @@ def _append_to_section(*, markdown: str, section: str, addition: str) -> str:
     lines.insert(insert_index, addition)
     return "\n".join(lines) + "\n"
 
-
-def _add_related_link(*, markdown: str, link: str) -> str:
-    link = link.strip()
-    if not link or link in markdown:
-        return markdown
-    bullet = link if link.startswith("- ") else f"- {link}"
-    return _append_to_section(markdown=markdown, section="Related Pages", addition=bullet)
-
-
-def _mark_page_stale(*, markdown: str) -> str:
-    if markdown.startswith("---\n"):
-        end = markdown.find("\n---", 4)
-        if end != -1:
-            frontmatter = markdown[4:end].splitlines()
-            body = markdown[end + 4 :]
-            updated: list[str] = []
-            saw_status = False
-            saw_review = False
-            for line in frontmatter:
-                if line.startswith("status:"):
-                    updated.append("status: stale")
-                    saw_status = True
-                elif line.startswith("review_needed:"):
-                    updated.append("review_needed: true")
-                    saw_review = True
-                else:
-                    updated.append(line)
-            if not saw_status:
-                updated.append("status: stale")
-            if not saw_review:
-                updated.append("review_needed: true")
-            return "---\n" + "\n".join(updated) + "\n---" + body
-    base = markdown.rstrip()
-    return "---\nstatus: stale\nreview_needed: true\n---\n" + (base + "\n" if base else "")
 
 def _replace_or_append_claim_block(*, markdown: str, claim_block: str) -> str:
     start = markdown.find(MANAGED_CLAIMS_START)

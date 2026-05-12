@@ -113,6 +113,68 @@ def test_lint_promotion_substrate_accepts_applied_promotion_with_log() -> None:
     assert report.issues == []
 
 
+def test_lint_promotion_substrate_reports_patch_candidate_and_log_integrity() -> None:
+    report = lint_promotion_substrate(
+        promotions=[
+            {
+                "candidate_id": "packet-1-candidate-1",
+                "packet_id": "packet-1",
+                "status": "pending",
+                "target_page": "summarization",
+                "evidence": ["claim:packet-1-claim-1"],
+            }
+        ],
+        patch_proposals=[
+            WikiPatchProposal(
+                proposal_id="packet-1-wiki-patch-proposal",
+                packet_id="packet-1",
+                status="proposed",
+                operations=[
+                    WikiPatchOperation(
+                        patch_id="packet-1-patch-missing-candidate",
+                        candidate_id="packet-1-candidate-missing",
+                        target="concepts/summarization.md",
+                        operation="insert_claim_block",
+                        rationale="Candidate id should exist.",
+                        evidence=["claim:packet-1-claim-1"],
+                        risk="low",
+                        diff={"before": "", "after": "managed block"},
+                        status="proposed",
+                    ),
+                    WikiPatchOperation(
+                        patch_id="packet-1-patch-applied-without-log",
+                        candidate_id="packet-1-candidate-1",
+                        target="concepts/summarization.md",
+                        operation="insert_claim_block",
+                        rationale="Applied patches need an applied log record.",
+                        evidence=["claim:packet-1-claim-1"],
+                        risk="low",
+                        diff={"before": "", "after": "managed block"},
+                        status="applied",
+                    ),
+                ],
+            )
+        ],
+        applied_patch_records=[],
+    )
+
+    assert report.issues == [
+        SemanticLintIssue(
+            code="patch_without_candidate",
+            severity="error",
+            ref="wiki_patch:packet-1-patch-missing-candidate",
+            message="Wiki patch operation references a missing promotion candidate: packet-1-candidate-missing.",
+        ),
+        SemanticLintIssue(
+            code="applied_patch_missing_log",
+            severity="error",
+            ref="wiki_patch:packet-1-patch-applied-without-log",
+            message="Wiki patch operation is marked applied but has no applied patch log record.",
+        ),
+    ]
+    assert not report.ok
+
+
 def test_lint_promotion_substrate_reports_claims_without_source_and_duplicate_concepts() -> None:
     report = lint_promotion_substrate(
         promotions=[],

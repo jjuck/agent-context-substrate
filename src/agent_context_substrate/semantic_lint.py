@@ -45,7 +45,9 @@ def lint_promotion_substrate(
     promotion_backlog_threshold: int | None = None,
 ) -> SemanticLintReport:
     issues: list[SemanticLintIssue] = []
+    promotion_candidate_ids = {str(candidate.get("candidate_id", "")) for candidate in promotions}
     applied_candidate_ids = {str(record.get("candidate_id", "")) for record in applied_patch_records}
+    applied_patch_ids = {str(record.get("patch_id", "")) for record in applied_patch_records}
 
     for candidate in promotions:
         candidate_id = str(candidate.get("candidate_id", ""))
@@ -78,12 +80,51 @@ def lint_promotion_substrate(
                 )
             )
 
+    issues.extend(_lint_patch_proposals(
+        patch_proposals,
+        promotion_candidate_ids=promotion_candidate_ids,
+        applied_patch_ids=applied_patch_ids,
+    ))
     issues.extend(_lint_claim_atoms(claim_atoms or []))
     issues.extend(_lint_duplicate_concepts(concept_atoms or []))
     if promotion_backlog_threshold is not None:
         issues.extend(_lint_promotion_backlog(promotions, threshold=promotion_backlog_threshold))
 
     return SemanticLintReport(issues=issues)
+
+
+def _lint_patch_proposals(
+    patch_proposals: list[WikiPatchProposal],
+    *,
+    promotion_candidate_ids: set[str],
+    applied_patch_ids: set[str],
+) -> list[SemanticLintIssue]:
+    issues: list[SemanticLintIssue] = []
+    for proposal in patch_proposals:
+        for operation in proposal.operations:
+            ref = f"wiki_patch:{operation.patch_id}"
+            if operation.candidate_id not in promotion_candidate_ids:
+                issues.append(
+                    SemanticLintIssue(
+                        code="patch_without_candidate",
+                        severity="error",
+                        ref=ref,
+                        message=(
+                            "Wiki patch operation references a missing promotion candidate: "
+                            f"{operation.candidate_id}."
+                        ),
+                    )
+                )
+            if operation.status == "applied" and operation.patch_id not in applied_patch_ids:
+                issues.append(
+                    SemanticLintIssue(
+                        code="applied_patch_missing_log",
+                        severity="error",
+                        ref=ref,
+                        message="Wiki patch operation is marked applied but has no applied patch log record.",
+                    )
+                )
+    return issues
 
 
 def _lint_claim_atoms(claim_atoms: list[dict[str, object]]) -> list[SemanticLintIssue]:

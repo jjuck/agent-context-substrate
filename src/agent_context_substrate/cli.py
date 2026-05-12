@@ -578,13 +578,16 @@ def build_parser() -> argparse.ArgumentParser:
     plan_wiki_patches.add_argument("--wiki-root", help="Wiki root used to inspect existing target pages")
     _add_project_root_argument(plan_wiki_patches)
 
-    apply_wiki_patch = subparsers.add_parser("apply-wiki-patch", help="Apply or dry-run a wiki patch proposal")
+    apply_wiki_patch = subparsers.add_parser(
+        "apply-wiki-patch",
+        help="Apply or dry-run alpha-safe wiki patch operations from a proposal",
+    )
     apply_wiki_patch.add_argument("--patch-file", required=True, help="Path to data/wiki_patches/<packet_id>.json")
     apply_wiki_patch.add_argument("--wiki-root", help="Wiki root containing target pages")
     apply_wiki_patch.add_argument(
         "--apply",
         action="store_true",
-        help="Actually write safe managed-block changes. Default is dry-run.",
+        help="Actually write alpha-safe managed-block/append changes. Default is dry-run.",
     )
     _add_project_root_argument(apply_wiki_patch)
 

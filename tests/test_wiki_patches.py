@@ -229,7 +229,7 @@ def test_apply_wiki_patch_proposal_skips_unsupported_operations(tmp_path) -> Non
 
 
 
-def test_apply_wiki_patch_proposal_supports_append_section_add_link_and_mark_stale(tmp_path) -> None:
+def test_apply_wiki_patch_proposal_defaults_to_alpha_operation_subset(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
     target = wiki_root / "concepts" / "summarization.md"
     target.parent.mkdir(parents=True)
@@ -288,42 +288,14 @@ def test_apply_wiki_patch_proposal_supports_append_section_add_link_and_mark_sta
 
     result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
 
-    assert result.applied_patch_ids == ["packet-1-patch-append", "packet-1-patch-link", "packet-1-patch-stale"]
+    assert result.applied_patch_ids == ["packet-1-patch-append"]
+    assert result.skipped_patch_ids == ["packet-1-patch-link", "packet-1-patch-stale"]
     updated = target.read_text(encoding="utf-8")
-    assert "status: stale" in updated
-    assert "review_needed: true" in updated
+    assert "status: active" in updated
+    assert "review_needed: true" not in updated
     assert "## Notes\nExisting note.\n- New evidence-backed note.\n\n## Related Pages" in updated
     assert "- [[Context Packet]]" in updated
-    assert "- [[LLM Wiki]]" in updated
-
-
-def test_apply_wiki_patch_add_link_is_idempotent(tmp_path) -> None:
-    wiki_root = tmp_path / "wiki"
-    target = wiki_root / "concepts" / "summarization.md"
-    target.parent.mkdir(parents=True)
-    target.write_text("# Summarization\n\n## Related Pages\n- [[LLM Wiki]]\n", encoding="utf-8")
-    proposal = WikiPatchProposal(
-        proposal_id="packet-1-wiki-patch-proposal",
-        packet_id="packet-1",
-        status="proposed",
-        operations=[
-            WikiPatchOperation(
-                patch_id="packet-1-patch-link",
-                candidate_id="packet-1-candidate-1",
-                target="concepts/summarization.md",
-                operation="add_link",
-                rationale="Link related page.",
-                evidence=["claim:packet-1-claim-1"],
-                risk="low",
-                diff={"after": "[[LLM Wiki]]"},
-                status="proposed",
-            )
-        ],
-    )
-
-    apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
-
-    assert target.read_text(encoding="utf-8").count("[[LLM Wiki]]") == 1
+    assert "- [[LLM Wiki]]" not in updated
 
 
 def test_plan_wiki_patch_proposal_never_reads_unsafe_target_page(tmp_path) -> None:
