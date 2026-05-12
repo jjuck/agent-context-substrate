@@ -30,11 +30,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - Artifact, promotion queue, wiki patch, and semantic-lint helper logic now lives in `artifact_pipeline.py` instead of `cli.py`.
 - Legacy promotion registration updates now live in `wiki_registration.py` instead of `cli.py`.
 - Build-context-packet summary routing, LLM safety option, and V2 export glue now live with the build-context command handler instead of `cli.py`.
+- Legacy promotion packet loading and slug default helpers now live with the legacy promotion command handler instead of `cli.py`.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `211 passed`.
+- Project test suite: `213 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 

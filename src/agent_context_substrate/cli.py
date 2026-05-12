@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
-import re
 
 from .artifact_pipeline import (
     apply_wiki_patch_file,
@@ -50,10 +48,7 @@ from .commands.wiki_patches import (
     handle_plan_wiki_patches_command,
 )
 from .packet_builder import build_packet_from_session
-from .lint import count_lint_issues
-from .models import ContextPacket
 from .paths import HarnessPaths
-from .wiki_registration import append_log_entry, register_promoted_page, upsert_index_entry
 
 
 def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
@@ -64,19 +59,6 @@ def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _load_packet(packet_json_path: str | Path) -> ContextPacket:
-    payload = json.loads(Path(packet_json_path).read_text(encoding="utf-8"))
-    return ContextPacket.from_dict(payload)
-
-
-
-def _slugify(value: str) -> str:
-    lowered = value.strip().lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
-    return slug or "artifact"
-
-
-
 def _add_registration_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--register",
@@ -84,11 +66,6 @@ def _add_registration_argument(parser: argparse.ArgumentParser) -> None:
         default=True,
         help="Update wiki index.md and log.md for this promotion (default: enabled)",
     )
-
-
-def _lint_issue_count(report) -> int:
-    return count_lint_issues(report)
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-context-substrate")
@@ -588,16 +565,12 @@ def main(argv: list[str] | None = None) -> int:
         return handle_promote_packet_query_command(
             args=args,
             paths=paths,
-            load_packet=_load_packet,
-            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "promote-packet-plan":
         return handle_promote_packet_plan_command(
             args=args,
             paths=paths,
-            load_packet=_load_packet,
-            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "promote-unit-concept":
@@ -605,8 +578,6 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             parser=parser,
             paths=paths,
-            load_packet=_load_packet,
-            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "promote-unit-architecture":
@@ -614,17 +585,12 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             parser=parser,
             paths=paths,
-            load_packet=_load_packet,
-            register_promoted_page=register_promoted_page,
         )
 
     if args.command == "run-e2e-pipeline":
         return handle_run_e2e_pipeline_command(
             args=args,
             paths=paths,
-            slugify=_slugify,
-            upsert_index_entry=upsert_index_entry,
-            append_log_entry=append_log_entry,
         )
 
     if args.command == "lint-wiki":

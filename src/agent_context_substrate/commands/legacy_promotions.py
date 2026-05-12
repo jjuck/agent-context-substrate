@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
+import json
 from pathlib import Path
+import re
 from typing import Any
 
 from ..lint import export_lint_report, lint_wiki
+from ..models import ContextPacket
 from ..packet_builder import PacketBuildOptions, build_packet_from_session
 from ..paths import HarnessPaths
 from ..promotion import (
@@ -13,6 +16,11 @@ from ..promotion import (
     promote_context_packet_to_query,
     promote_unit_summary_to_architecture,
     promote_unit_summary_to_concept,
+)
+from ..wiki_registration import (
+    append_log_entry as default_append_log_entry,
+    register_promoted_page as default_register_promoted_page,
+    upsert_index_entry as default_upsert_index_entry,
 )
 
 LoadPacket = Callable[..., Any]
@@ -22,8 +30,23 @@ UpsertIndexEntry = Callable[[Path, str, str], None]
 AppendLogEntry = Callable[[Path, str, list[str]], None]
 
 
+def load_context_packet(packet_json_path: str | Path) -> ContextPacket:
+    payload = json.loads(Path(packet_json_path).read_text(encoding="utf-8"))
+    return ContextPacket.from_dict(payload)
+
+
+def slugify_promotion_stem(value: str) -> str:
+    lowered = value.strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    return slug or "artifact"
+
+
 def handle_promote_packet_query_command(
-    *, args: Any, paths: HarnessPaths, load_packet: LoadPacket, register_promoted_page: RegisterPromotedPage
+    *,
+    args: Any,
+    paths: HarnessPaths,
+    load_packet: LoadPacket = load_context_packet,
+    register_promoted_page: RegisterPromotedPage = default_register_promoted_page,
 ) -> int:
     packet = load_packet(args.packet_json)
     output_path = promote_context_packet_to_query(
@@ -50,7 +73,11 @@ def handle_promote_packet_query_command(
 
 
 def handle_promote_packet_plan_command(
-    *, args: Any, paths: HarnessPaths, load_packet: LoadPacket, register_promoted_page: RegisterPromotedPage
+    *,
+    args: Any,
+    paths: HarnessPaths,
+    load_packet: LoadPacket = load_context_packet,
+    register_promoted_page: RegisterPromotedPage = default_register_promoted_page,
 ) -> int:
     packet = load_packet(args.packet_json)
     output_path = promote_context_packet_to_plan(
@@ -77,7 +104,12 @@ def handle_promote_packet_plan_command(
 
 
 def handle_promote_unit_concept_command(
-    *, args: Any, parser: Any, paths: HarnessPaths, load_packet: LoadPacket, register_promoted_page: RegisterPromotedPage
+    *,
+    args: Any,
+    parser: Any,
+    paths: HarnessPaths,
+    load_packet: LoadPacket = load_context_packet,
+    register_promoted_page: RegisterPromotedPage = default_register_promoted_page,
 ) -> int:
     packet = load_packet(args.packet_json)
     if not packet.unit_summaries:
@@ -107,7 +139,12 @@ def handle_promote_unit_concept_command(
 
 
 def handle_promote_unit_architecture_command(
-    *, args: Any, parser: Any, paths: HarnessPaths, load_packet: LoadPacket, register_promoted_page: RegisterPromotedPage
+    *,
+    args: Any,
+    parser: Any,
+    paths: HarnessPaths,
+    load_packet: LoadPacket = load_context_packet,
+    register_promoted_page: RegisterPromotedPage = default_register_promoted_page,
 ) -> int:
     packet = load_packet(args.packet_json)
     if not packet.unit_summaries:
@@ -140,9 +177,9 @@ def handle_run_e2e_pipeline_command(
     *,
     args: Any,
     paths: HarnessPaths,
-    slugify: Slugify,
-    upsert_index_entry: UpsertIndexEntry,
-    append_log_entry: AppendLogEntry,
+    slugify: Slugify = slugify_promotion_stem,
+    upsert_index_entry: UpsertIndexEntry = default_upsert_index_entry,
+    append_log_entry: AppendLogEntry = default_append_log_entry,
 ) -> int:
     packet_build = build_packet_from_session(
         paths=paths,
