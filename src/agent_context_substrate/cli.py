@@ -22,7 +22,12 @@ from .commands.artifacts import (
     handle_lint_promotions_command,
     handle_propose_promotions_command,
 )
-from .commands.build_context_packet import handle_build_context_packet_command
+from .commands.build_context_packet import (
+    build_llm_safety_options,
+    build_summary_routing_hints,
+    export_v2_summary_artifacts,
+    handle_build_context_packet_command,
+)
 from .commands.distribution import (
     handle_doctor_command,
     handle_fresh_install_smoke_command,
@@ -48,9 +53,6 @@ from .packet_builder import build_packet_from_session
 from .lint import count_lint_issues
 from .models import ContextPacket
 from .paths import HarnessPaths
-from .raw_extract import build_session_bundle
-from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
-from .summary_pipeline import SummaryOptions, build_v2_summary_artifacts
 from .wiki_registration import append_log_entry, register_promoted_page, upsert_index_entry
 
 
@@ -72,59 +74,6 @@ def _slugify(value: str) -> str:
     lowered = value.strip().lower()
     slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
     return slug or "artifact"
-
-
-def _summary_routing_hints(*, summary_model: str | None, summary_budget: str | None) -> dict[str, object]:
-    hints: dict[str, object] = {}
-    if summary_model:
-        hints["model"] = summary_model
-    if summary_budget:
-        hints["budget"] = summary_budget
-    return hints
-
-
-def _llm_safety_options(*, llm_redact: str, llm_max_input_chars: int, llm_allow_code_snippets: str) -> LLMInputSafetyOptions:
-    return LLMInputSafetyOptions(
-        redact=llm_redact == "on",
-        max_input_chars=llm_max_input_chars,
-        allow_code_snippets=llm_allow_code_snippets == "on",
-    )
-
-
-def _export_v2_summary_artifacts(
-    *,
-    session_id: str,
-    packet_id: str,
-    unit_title: str,
-    goal: str,
-    related_pages: list[str],
-    summary_mode: str,
-    summarizer_command: str | None,
-    paths: HarnessPaths,
-    agent_llm_router: AgentLLMRouter | None = None,
-    routing_hints: dict[str, object] | None = None,
-    summary_cache: bool = False,
-    llm_safety: LLMInputSafetyOptions | None = None,
-) -> tuple[Path, Path, Path]:
-    raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
-    result = build_v2_summary_artifacts(
-        raw_bundle=raw_bundle,
-        paths=paths,
-        options=SummaryOptions(
-            session_id=session_id,
-            packet_id=packet_id,
-            unit_title=unit_title,
-            goal=goal,
-            related_pages=list(related_pages),
-            summary_mode=summary_mode,
-            summarizer_command=summarizer_command,
-            routing_hints=dict(routing_hints or {}),
-            summary_cache=summary_cache,
-            agent_llm_router=agent_llm_router,
-            llm_safety=llm_safety or LLMInputSafetyOptions(),
-        ),
-    )
-    return result.as_tuple()
 
 
 
@@ -630,9 +579,9 @@ def main(argv: list[str] | None = None) -> int:
             parser=parser,
             paths=paths,
             build_packet_from_session=build_packet_from_session,
-            export_v2_summary_artifacts=_export_v2_summary_artifacts,
-            summary_routing_hints=_summary_routing_hints,
-            llm_safety_options=_llm_safety_options,
+            export_v2_summary_artifacts=export_v2_summary_artifacts,
+            summary_routing_hints=build_summary_routing_hints,
+            llm_safety_options=build_llm_safety_options,
         )
 
     if args.command == "promote-packet-query":

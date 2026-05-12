@@ -43,7 +43,7 @@ python -m pytest -q
 ruff check .
 ```
 
-Expected current public alpha baseline: `210 passed` and `All checks passed!` from Ruff.
+Expected current public alpha baseline: `211 passed` and `All checks passed!` from Ruff.
 
 For the current Hermes-focused release, WSL/Linux green is sufficient. Before advertising native Windows or non-Hermes agent support, review `docs/AGENT_PORTABILITY_NOTES.md` and resolve the documented portability findings.
 
@@ -154,7 +154,7 @@ Latest verified local baseline for the v0.2.0 release candidate after spec pipel
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: public
-project tests: 210 passed
+project tests: 211 passed
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
 live runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted

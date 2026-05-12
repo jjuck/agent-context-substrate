@@ -9,7 +9,11 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from agent_context_substrate.commands.build_context_packet import handle_build_context_packet_command  # noqa: E402
+from agent_context_substrate.commands.build_context_packet import (  # noqa: E402
+    build_llm_safety_options,
+    build_summary_routing_hints,
+    handle_build_context_packet_command,
+)
 from agent_context_substrate.packet_builder import PacketBuildOptions, PacketBuildResult  # noqa: E402
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 
@@ -18,6 +22,24 @@ class _FakePacket:
     micro_summaries = [object()]
     unit_summaries = [object()]
     critical_files = ["src/example.py"]
+
+
+def test_build_context_packet_helpers_build_routing_hints_and_llm_safety_options() -> None:
+    assert build_summary_routing_hints(summary_model="sonnet", summary_budget="small") == {
+        "model": "sonnet",
+        "budget": "small",
+    }
+    assert build_summary_routing_hints(summary_model=None, summary_budget=None) == {}
+
+    safety = build_llm_safety_options(
+        llm_redact="off",
+        llm_max_input_chars=1234,
+        llm_allow_code_snippets="on",
+    )
+
+    assert safety.redact is False
+    assert safety.max_input_chars == 1234
+    assert safety.allow_code_snippets is True
 
 
 def test_build_context_packet_handler_uses_packet_builder_options(tmp_path, capsys) -> None:
