@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any
+from typing import Any, Mapping
 
 from .models import EvidenceBackedText, MicroSummaryV2, UnitSummaryV2
+from .session_bundle import SessionBundle, ensure_session_bundle
 from .summarizer import _extract_files, _extract_follow_up_questions
 
 
@@ -38,12 +39,16 @@ class SummaryLintReport:
         }
 
 
-def _raw_message_ids(raw_bundle: dict[str, Any]) -> set[int]:
-    return {int(message["id"]) for message in raw_bundle.get("messages", [])}
+def _bundle_message_ids(bundle: SessionBundle) -> set[int]:
+    return {int(message.id) for message in bundle.messages}
 
 
-def _raw_text(raw_bundle: dict[str, Any]) -> str:
-    return "\n".join(str(message.get("content") or "") for message in raw_bundle.get("messages", []))
+def _bundle_text(bundle: SessionBundle) -> str:
+    return "\n".join(message.content for message in bundle.messages)
+
+
+def _bundle_raw_messages(bundle: SessionBundle) -> list[dict[str, Any]]:
+    return [message.to_dict() for message in bundle.messages]
 
 
 def _normalize_semantic_text(value: str) -> str:
@@ -123,8 +128,8 @@ def _lint_new_entities(summary: MicroSummaryV2, *, raw_text: str) -> list[Summar
     ]
 
 
-def _lint_unresolved_questions(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]) -> list[SummaryLintIssue]:
-    expected_questions = _extract_follow_up_questions(list(raw_bundle.get("messages", [])))
+def _lint_unresolved_questions(summary: MicroSummaryV2, *, bundle: SessionBundle) -> list[SummaryLintIssue]:
+    expected_questions = _extract_follow_up_questions(_bundle_raw_messages(bundle))
     normalized_open_questions = {_normalize_semantic_text(question) for question in summary.open_questions}
     missing_questions = [
         question
@@ -171,8 +176,13 @@ def _lint_evidence_items(
     return issues
 
 
-def lint_micro_summary_v2(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]) -> SummaryLintReport:
-    valid_message_ids = _raw_message_ids(raw_bundle)
+def lint_micro_summary_v2(
+    summary: MicroSummaryV2,
+    *,
+    raw_bundle: Mapping[str, Any] | SessionBundle,
+) -> SummaryLintReport:
+    bundle = ensure_session_bundle(raw_bundle)
+    valid_message_ids = _bundle_message_ids(bundle)
     issues: list[SummaryLintIssue] = []
 
     if not summary.recovery_summary.strip() or not summary.knowledge_summary.strip() or not summary.retrieval_summary.strip():
@@ -191,7 +201,7 @@ def lint_micro_summary_v2(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]
     ):
         issues.extend(_lint_evidence_items(items, field=field, valid_message_ids=valid_message_ids))
 
-    raw_text = _raw_text(raw_bundle)
+    raw_text = _bundle_text(bundle)
     source_files = set(_extract_files(raw_text))
     invented_files = [file_path for file_path in summary.files if file_path not in source_files]
     if invented_files:
@@ -205,7 +215,7 @@ def lint_micro_summary_v2(summary: MicroSummaryV2, *, raw_bundle: dict[str, Any]
 
     issues.extend(_lint_new_entities(summary, raw_text=raw_text))
     issues.extend(_lint_retrieval_keywords(summary, raw_text=raw_text))
-    issues.extend(_lint_unresolved_questions(summary, raw_bundle=raw_bundle))
+    issues.extend(_lint_unresolved_questions(summary, bundle=bundle))
     for field, items in (
         ("decisions", summary.decisions),
         ("claims", summary.claims),

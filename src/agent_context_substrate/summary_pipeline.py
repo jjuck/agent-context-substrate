@@ -69,7 +69,6 @@ def build_v2_summary_artifacts(
     """Build and export evidence plus V2 micro/unit summary artifacts."""
 
     session_bundle = ensure_session_bundle(raw_bundle)
-    raw_bundle_payload = session_bundle.to_raw_bundle()
     artifact_ids = _summary_artifact_ids(options=options)
     _validate_summary_source_session(raw_bundle=session_bundle, options=options)
     evidence = build_micro_evidence_bundle(raw_bundle=session_bundle, micro_id=artifact_ids.micro_id)
@@ -81,7 +80,7 @@ def build_v2_summary_artifacts(
     if options.summary_cache and cache_path.exists():
         micro_summary, unit_summary = _load_summary_cache(cache_path)
         _validate_micro_summary(
-            raw_bundle=raw_bundle_payload,
+            raw_bundle=session_bundle,
             micro_summary=micro_summary,
             expected_session_id=options.session_id,
         )
@@ -103,7 +102,7 @@ def build_v2_summary_artifacts(
     backend = _build_backend(options=options, backend_factory=backend_factory)
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
     _validate_micro_summary(
-        raw_bundle=raw_bundle_payload,
+        raw_bundle=session_bundle,
         micro_summary=micro_summary,
         expected_session_id=options.session_id,
     )
@@ -185,7 +184,7 @@ def _validate_summary_session_id(*, artifact: str, summary_session_id: str, expe
 
 def _validate_micro_summary(
     *,
-    raw_bundle: dict[str, Any],
+    raw_bundle: Mapping[str, Any] | SessionBundle,
     micro_summary: MicroSummaryV2,
     expected_session_id: str,
 ) -> None:

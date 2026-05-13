@@ -22,6 +22,11 @@ from agent_context_substrate.summary_pipeline import (  # noqa: E402
 )
 
 
+class NoRawRoundTripSessionBundle(SessionBundle):
+    def to_raw_bundle(self) -> dict[str, object]:
+        raise AssertionError("summary pipeline should keep typed session bundle through lint validation")
+
+
 class CountingBackend:
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
@@ -271,6 +276,29 @@ def test_build_v2_summary_artifacts_accepts_typed_session_bundle(tmp_path: Path)
     assert evidence_payload["session_id"] == "session-1"
     assert result.micro_path.name == "packet-typed-micro-v2.json"
     assert result.unit_path.name == "packet-typed-unit-v2.json"
+
+
+def test_build_v2_summary_artifacts_lints_typed_session_without_raw_round_trip(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-typed-lint",
+        unit_title="Unit",
+        goal="Keep summary pipeline lint on typed session boundaries.",
+        summary_mode="heuristic",
+    )
+    calls: list[str] = []
+
+    result = build_v2_summary_artifacts(
+        raw_bundle=NoRawRoundTripSessionBundle.from_raw_bundle(_raw_bundle()),
+        paths=paths,
+        options=options,
+        backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
+    )
+
+    assert calls == ["micro", "unit"]
+    assert result.micro_path.exists()
+    assert result.unit_path.exists()
 
 
 def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache(tmp_path: Path) -> None:
