@@ -6,6 +6,9 @@ from agent_context_substrate import (
     build_micro_evidence_bundle,
     build_micro_summary,
     build_micro_summary_v2,
+    derive_task_title,
+    derive_unit_title,
+    should_process_bundle,
 )
 
 
@@ -73,3 +76,30 @@ def test_evidence_and_summary_builders_accept_typed_session_bundle() -> None:
     assert summary.provenance.source == "telegram"
     assert v2_summary.session_id == "session-typed"
     assert v2_summary.files == ["README.md"]
+
+
+def test_naming_and_policy_helpers_accept_typed_session_bundle() -> None:
+    typed_bundle = SessionBundle.from_raw_bundle(_raw_bundle())
+
+    task_title = derive_task_title(typed_bundle, "session-typed")
+    unit_title = derive_unit_title(typed_bundle, task_title)
+
+    assert task_title == "Typed session boundary"
+    assert unit_title == "Please inspect README.md"
+    assert should_process_bundle(
+        typed_bundle,
+        min_message_count=3,
+        allowed_sources=["telegram"],
+        skip_title_patterns=[r"^scratch"],
+    )
+    assert not should_process_bundle(
+        typed_bundle,
+        min_message_count=4,
+        allowed_sources=["telegram"],
+    )
+    assert not should_process_bundle(
+        typed_bundle,
+        min_message_count=3,
+        allowed_sources=["telegram"],
+        skip_title_patterns=[r"^Typed session boundary$"],
+    )

@@ -1,26 +1,28 @@
 from __future__ import annotations
 
 import re
+from typing import Any, Mapping
+
+from .session_bundle import SessionBundle, ensure_session_bundle
 
 
 def should_process_bundle(
-    raw_bundle: dict,
+    raw_bundle: Mapping[str, Any] | SessionBundle,
     *,
     min_message_count: int,
     allowed_sources: list[str] | None = None,
     skip_title_patterns: list[str] | None = None,
 ) -> bool:
-    session = raw_bundle.get("session", {})
-    messages = list(raw_bundle.get("messages", []))
+    bundle = ensure_session_bundle(raw_bundle)
 
-    if len(messages) < min_message_count:
+    if len(bundle.messages) < min_message_count:
         return False
 
-    source = str(session.get("source") or "")
+    source = bundle.source
     if allowed_sources is not None and source not in set(allowed_sources):
         return False
 
-    title = str(session.get("title") or "").strip()
+    title = str(bundle.title or "").strip()
     for pattern in skip_title_patterns or []:
         if re.search(pattern, title):
             return False

@@ -1,31 +1,34 @@
 from __future__ import annotations
 
 import re
+from typing import Any, Mapping
 
 from .models import MicroSummary
+from .session_bundle import SessionBundle, ensure_session_bundle
 
 
-def derive_task_title(raw_bundle: dict, session_id: str) -> str:
-    session = raw_bundle.get("session", {})
-    title = str(session.get("title") or "").strip()
+def derive_task_title(raw_bundle: Mapping[str, Any] | SessionBundle, session_id: str) -> str:
+    bundle = ensure_session_bundle(raw_bundle)
+    title = str(bundle.title or "").strip()
     if title:
         return title
 
-    for message in raw_bundle.get("messages", []):
-        if str(message.get("role") or "") != "user":
+    for message in bundle.messages:
+        if message.role != "user":
             continue
-        content = str(message.get("content") or "").strip()
+        content = message.content.strip()
         if content:
             return content[:120]
 
     return f"Resume session {session_id}"
 
 
-def derive_unit_title(raw_bundle: dict, task_title: str) -> str:
-    for message in raw_bundle.get("messages", []):
-        if str(message.get("role") or "") != "user":
+def derive_unit_title(raw_bundle: Mapping[str, Any] | SessionBundle, task_title: str) -> str:
+    bundle = ensure_session_bundle(raw_bundle)
+    for message in bundle.messages:
+        if message.role != "user":
             continue
-        content = str(message.get("content") or "").strip()
+        content = message.content.strip()
         if content:
             return content[:120]
     return task_title

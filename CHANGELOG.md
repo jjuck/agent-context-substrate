@@ -48,11 +48,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - V2 summary backend outputs must keep micro and unit `session_id` values tied to the source session before export.
 - Session boundary typing now provides `SessionBundle` / `SessionMessage` conversion helpers, with evidence and summary builders accepting typed bundles while preserving raw bundle compatibility.
 - Raw session extraction now exposes `build_typed_session_bundle(...)`, and packet construction uses the typed session boundary by default while preserving legacy raw JSON exports.
+- Naming and session-processing policy helpers now accept typed `SessionBundle` inputs while preserving raw bundle compatibility.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `243 passed`.
+- Project test suite: `244 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 
