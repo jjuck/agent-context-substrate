@@ -69,7 +69,7 @@ from .promotions import (
     propose_promotion_candidates,
     render_promotion_candidates_markdown,
 )
-from .raw_extract import export_session_bundle
+from .raw_extract import build_typed_session_bundle, export_session_bundle
 from .recovery import (
     RecoveryBrief,
     RecoveryQualityIssue,
@@ -190,6 +190,7 @@ __all__ = [
     "build_packet_from_session",
     "build_v2_summary_artifacts",
     "build_topic_map",
+    "build_typed_session_bundle",
     "build_unit_summary",
     "build_unit_summary_v2",
     "derive_goal",

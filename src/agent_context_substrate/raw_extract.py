@@ -6,6 +6,7 @@ from typing import Any
 
 from .paths import HarnessPaths
 from .safe_paths import safe_child_path
+from .session_bundle import SessionBundle
 from .session_store import SessionStore
 
 
@@ -36,6 +37,22 @@ def build_session_bundle(
         },
         "message_count": len(messages),
     }
+
+
+def build_typed_session_bundle(
+    session_id: str,
+    paths: HarnessPaths,
+    start_message_id: int | None = None,
+    end_message_id: int | None = None,
+) -> SessionBundle:
+    return SessionBundle.from_raw_bundle(
+        build_session_bundle(
+            session_id=session_id,
+            paths=paths,
+            start_message_id=start_message_id,
+            end_message_id=end_message_id,
+        )
+    )
 
 
 def export_session_bundle(

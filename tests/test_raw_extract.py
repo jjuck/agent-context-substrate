@@ -11,8 +11,10 @@ if str(SRC) not in sys.path:
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
 from agent_context_substrate.raw_extract import (  # noqa: E402
     build_session_bundle,
+    build_typed_session_bundle,
     export_session_bundle,
 )
+from agent_context_substrate.session_bundle import SessionBundle  # noqa: E402
 from agent_context_substrate.session_store import SessionStore  # noqa: E402
 
 
@@ -155,3 +157,28 @@ def test_build_session_bundle_can_slice_by_message_id_range(tmp_path, monkeypatc
     assert [message["id"] for message in payload["messages"]] == [2, 3]
     assert payload["slice"] == {"start_message_id": 2, "end_message_id": 3}
     assert payload["message_count"] == 2
+
+
+def test_build_typed_session_bundle_returns_session_boundary(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setenv("WIKI_PATH", str(tmp_path / "wiki"))
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+
+    paths = HarnessPaths(project_root=project_root)
+
+    bundle = build_typed_session_bundle("session-1", paths=paths, start_message_id=1, end_message_id=1)
+
+    assert isinstance(bundle, SessionBundle)
+    assert bundle.session_id == "session-1"
+    assert bundle.source == "telegram"
+    assert bundle.title == "Harness planning"
+    assert bundle.slice_start_message_id == 1
+    assert bundle.slice_end_message_id == 1
+    assert [message.id for message in bundle.messages] == [1]
+    assert bundle.to_raw_bundle()["message_count"] == 1

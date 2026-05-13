@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from .context_packet import build_context_packet, export_context_packet
 from .models import ContextPacket, MicroSummary, UnitSummary
 from .paths import HarnessPaths
-from .raw_extract import build_session_bundle, export_session_bundle
+from .raw_extract import build_typed_session_bundle, export_session_bundle
+from .session_bundle import SessionBundle
 from .summarizer import build_micro_summary, build_unit_summary
 
 
@@ -33,7 +34,7 @@ class PacketBuildResult:
         return self.packet, self.raw_export_path, self.packet_json_path, self.packet_markdown_path
 
 
-BuildSessionBundle = Callable[..., dict[str, Any]]
+BuildSessionBundle = Callable[..., SessionBundle]
 ExportSessionBundle = Callable[..., Path]
 BuildMicroSummary = Callable[..., MicroSummary]
 BuildUnitSummary = Callable[..., UnitSummary]
@@ -45,7 +46,7 @@ def build_packet_from_session(
     *,
     paths: HarnessPaths,
     options: PacketBuildOptions,
-    build_session_bundle_func: BuildSessionBundle = build_session_bundle,
+    build_session_bundle_func: BuildSessionBundle = build_typed_session_bundle,
     export_session_bundle_func: ExportSessionBundle = export_session_bundle,
     build_micro_summary_func: BuildMicroSummary = build_micro_summary,
     build_unit_summary_func: BuildUnitSummary = build_unit_summary,
