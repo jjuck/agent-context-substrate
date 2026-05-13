@@ -46,11 +46,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - Malformed V2 summary cache payloads are converted into stable pipeline invariant errors before artifact re-export.
 - V2 summary confidence values must be numeric, finite, and in the `0.0..1.0` range before export.
 - V2 summary backend outputs must keep micro and unit `session_id` values tied to the source session before export.
+- Session boundary typing now provides `SessionBundle` / `SessionMessage` conversion helpers, with evidence and summary builders accepting typed bundles while preserving raw bundle compatibility.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `240 passed`.
+- Project test suite: `242 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 

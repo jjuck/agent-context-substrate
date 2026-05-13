@@ -98,6 +98,7 @@ from .semantic_lint import (
     lint_promotion_substrate,
     render_semantic_lint_report,
 )
+from .session_bundle import SessionBundle, SessionMessage, ensure_session_bundle
 from .session_store import SessionStore
 from .wiki_patches import (
     WikiPatchApplyResult,
@@ -165,7 +166,9 @@ __all__ = [
     "LedgerRecord",
     "SemanticLintIssue",
     "SemanticLintReport",
+    "SessionBundle",
     "SessionLedger",
+    "SessionMessage",
     "SummaryLintIssue",
     "SummaryLintReport",
     "SummaryArtifactResult",
@@ -240,6 +243,7 @@ __all__ = [
     "safe_wiki_target_path",
     "is_safe_project_artifact_path",
     "is_safe_wiki_page_path",
+    "ensure_session_bundle",
     "build_recovery_brief",
     "evaluate_recovery_brief_quality",
     "export_recovery_brief",

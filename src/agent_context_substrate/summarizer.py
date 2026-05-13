@@ -15,6 +15,7 @@ from .models import (
     UnitSummary,
     UnitSummaryV2,
 )
+from .session_bundle import SessionBundle, ensure_session_bundle
 
 _FILE_PATTERN = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+")
 _ALLOWED_FILE_EXTENSIONS = {
@@ -341,10 +342,11 @@ def _extract_concepts(text: str) -> list[str]:
 
 
 def build_micro_summary(
-    raw_bundle: dict[str, Any],
+    raw_bundle: dict[str, Any] | SessionBundle,
     micro_id: str,
     parent_unit_id: str | None = None,
 ) -> MicroSummary:
+    raw_bundle = ensure_session_bundle(raw_bundle).to_raw_bundle()
     session = raw_bundle["session"]
     messages = list(raw_bundle.get("messages", []))
     salient_messages = _select_salient_messages(messages)
@@ -498,10 +500,11 @@ def _knowledge_summary(*, summary: MicroSummary) -> str:
 
 
 def build_micro_summary_v2(
-    raw_bundle: dict[str, Any],
+    raw_bundle: dict[str, Any] | SessionBundle,
     micro_id: str,
     parent_unit_id: str | None = None,
 ) -> MicroSummaryV2:
+    raw_bundle = ensure_session_bundle(raw_bundle).to_raw_bundle()
     legacy_summary = build_micro_summary(
         raw_bundle=raw_bundle,
         micro_id=micro_id,
