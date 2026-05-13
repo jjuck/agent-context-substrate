@@ -78,6 +78,38 @@ def test_evidence_and_summary_builders_accept_typed_session_bundle() -> None:
     assert v2_summary.files == ["README.md"]
 
 
+class NoRawRoundTripSessionBundle(SessionBundle):
+    def to_raw_bundle(self) -> dict[str, object]:
+        raise AssertionError("typed builders should not round-trip through raw bundle payloads")
+
+
+def test_evidence_and_summary_builders_use_typed_session_fields_without_raw_round_trip() -> None:
+    typed_bundle = NoRawRoundTripSessionBundle(
+        session_id="session-typed",
+        source="telegram",
+        title="Typed session boundary",
+        started_at=1.25,
+        ended_at=2.5,
+        slice_start_message_id=10,
+        slice_end_message_id=12,
+        messages=[
+            SessionMessage(id=10, role="user", content="Please inspect README.md", metadata={"tool_name": None}),
+            SessionMessage(id=11, role="assistant", content="Done. README.md is relevant.", metadata={"tool_name": None}),
+            SessionMessage(id=12, role="tool", content="noisy tool output", metadata={"tool_name": "terminal"}),
+        ],
+    )
+
+    evidence = build_micro_evidence_bundle(raw_bundle=typed_bundle, micro_id="micro-typed")
+    summary = build_micro_summary(raw_bundle=typed_bundle, micro_id="micro-typed", parent_unit_id="unit-typed")
+    v2_summary = build_micro_summary_v2(raw_bundle=typed_bundle, micro_id="micro-typed-v2", parent_unit_id="unit-typed")
+
+    assert evidence.files == ["README.md"]
+    assert summary.session_id == "session-typed"
+    assert summary.provenance is not None
+    assert summary.provenance.source == "telegram"
+    assert v2_summary.files == ["README.md"]
+
+
 def test_naming_and_policy_helpers_accept_typed_session_bundle() -> None:
     typed_bundle = SessionBundle.from_raw_bundle(_raw_bundle())
 

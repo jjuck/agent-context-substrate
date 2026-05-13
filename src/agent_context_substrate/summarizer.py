@@ -15,7 +15,7 @@ from .models import (
     UnitSummary,
     UnitSummaryV2,
 )
-from .session_bundle import SessionBundle, ensure_session_bundle
+from .session_bundle import SessionBundle, SessionMessage, ensure_session_bundle
 
 _FILE_PATTERN = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+")
 _ALLOWED_FILE_EXTENSIONS = {
@@ -69,6 +69,33 @@ _SECTION_STOP_MARKERS = ("evidence", "proof", "원하면", "next step", "next st
 
 def _collect_text(messages: list[dict[str, Any]]) -> str:
     return " ".join(str(message.get("content") or "").strip() for message in messages).strip()
+
+
+def _raw_message_payloads(messages: list[SessionMessage]) -> list[dict[str, Any]]:
+    return [message.to_dict() for message in messages]
+
+
+def _session_bundle_payload(bundle: SessionBundle) -> dict[str, Any]:
+    session: dict[str, Any] = {
+        "id": bundle.session_id,
+        "source": bundle.source,
+        **dict(bundle.metadata),
+    }
+    if bundle.title is not None:
+        session["title"] = bundle.title
+    if bundle.started_at is not None:
+        session["started_at"] = bundle.started_at
+    if bundle.ended_at is not None:
+        session["ended_at"] = bundle.ended_at
+    return {
+        "session": session,
+        "messages": _raw_message_payloads(list(bundle.messages)),
+        "slice": {
+            "start_message_id": bundle.slice_start_message_id,
+            "end_message_id": bundle.slice_end_message_id,
+        },
+        "message_count": len(bundle.messages),
+    }
 
 
 def _normalize_text(text: str) -> str:
@@ -346,7 +373,7 @@ def build_micro_summary(
     micro_id: str,
     parent_unit_id: str | None = None,
 ) -> MicroSummary:
-    raw_bundle = ensure_session_bundle(raw_bundle).to_raw_bundle()
+    raw_bundle = _session_bundle_payload(ensure_session_bundle(raw_bundle))
     session = raw_bundle["session"]
     messages = list(raw_bundle.get("messages", []))
     salient_messages = _select_salient_messages(messages)
@@ -504,7 +531,7 @@ def build_micro_summary_v2(
     micro_id: str,
     parent_unit_id: str | None = None,
 ) -> MicroSummaryV2:
-    raw_bundle = ensure_session_bundle(raw_bundle).to_raw_bundle()
+    raw_bundle = _session_bundle_payload(ensure_session_bundle(raw_bundle))
     legacy_summary = build_micro_summary(
         raw_bundle=raw_bundle,
         micro_id=micro_id,

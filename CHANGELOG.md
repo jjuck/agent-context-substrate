@@ -51,11 +51,12 @@ All notable changes to Agent Context Substrate are summarized here.
 - Naming and session-processing policy helpers now accept typed `SessionBundle` inputs while preserving raw bundle compatibility.
 - Session finalize integration now uses typed session bundles for process filtering and packet artifact construction.
 - V2 summary pipeline and build-context command export now accept/use typed `SessionBundle` inputs while keeping raw bundle compatibility.
+- Evidence and summary builders now read typed `SessionBundle` fields directly instead of round-tripping typed inputs through raw bundle payloads.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `247 passed`.
+- Project test suite: `248 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 
