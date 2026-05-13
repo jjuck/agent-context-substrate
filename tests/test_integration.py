@@ -21,6 +21,7 @@ from agent_context_substrate.naming import (  # noqa: E402
     derive_unit_title,
 )
 from agent_context_substrate.policy import should_process_bundle  # noqa: E402
+from agent_context_substrate.session_bundle import SessionBundle, SessionMessage  # noqa: E402
 from agent_context_substrate.summarizer import build_micro_summary  # noqa: E402
 
 
@@ -422,6 +423,28 @@ def test_should_process_session_applies_threshold_and_source_allowlist(tmp_path,
     assert should_process_session("session-1", min_message_count=3, allowed_sources=["telegram"])
     assert not should_process_session("session-1", min_message_count=5, allowed_sources=["telegram"])
     assert not should_process_session("session-1", min_message_count=3, allowed_sources=["cli"])
+
+
+def test_should_process_session_uses_typed_session_boundary(monkeypatch) -> None:
+    calls: list[str] = []
+    typed_bundle = SessionBundle(
+        session_id="session-typed",
+        source="telegram",
+        title="Typed integration",
+        messages=[
+            SessionMessage(id=1, role="user", content="Start"),
+            SessionMessage(id=2, role="assistant", content="Done"),
+        ],
+    )
+
+    def fake_build_typed_session_bundle(*, session_id, paths):
+        calls.append(session_id)
+        return typed_bundle
+
+    monkeypatch.setattr(integration_module, "build_typed_session_bundle", fake_build_typed_session_bundle)
+
+    assert should_process_session("session-typed", min_message_count=2, allowed_sources=["telegram"])
+    assert calls == ["session-typed"]
 
 
 def test_naming_helpers_derive_titles_goal_and_policy_from_raw_bundle(tmp_path, monkeypatch) -> None:

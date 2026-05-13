@@ -18,7 +18,7 @@ from .promotion import (
     promote_unit_summary_to_concept,
 )
 from .recovery import build_recovery_brief
-from .raw_extract import build_session_bundle, export_session_bundle
+from .raw_extract import build_typed_session_bundle, export_session_bundle
 from .summarizer import build_micro_summary, build_unit_summary
 
 
@@ -221,14 +221,14 @@ def _build_packet_artifacts(
     related_pages: list[str],
 ) -> PacketBuildArtifacts:
     raw_export_path = export_session_bundle(session_id=session_id, paths=paths)
-    raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
+    session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
 
-    resolved_task_title = task_title or derive_task_title(raw_bundle, session_id)
-    resolved_unit_title = unit_title or derive_unit_title(raw_bundle, resolved_task_title)
+    resolved_task_title = task_title or derive_task_title(session_bundle, session_id)
+    resolved_unit_title = unit_title or derive_unit_title(session_bundle, resolved_task_title)
     unit_id = f"{packet_id}-unit-1"
 
     micro_summary = build_micro_summary(
-        raw_bundle=raw_bundle,
+        raw_bundle=session_bundle,
         micro_id=f"{packet_id}-micro-1",
         parent_unit_id=unit_id,
     )
@@ -467,12 +467,12 @@ def should_process_session(
 ) -> bool:
     paths = HarnessPaths(project_root=Path.cwd())
     try:
-        raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
+        session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
     except KeyError:
         return False
 
     return should_process_bundle(
-        raw_bundle,
+        session_bundle,
         min_message_count=min_message_count,
         allowed_sources=allowed_sources,
         skip_title_patterns=skip_title_patterns,
