@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..packet_builder import PacketBuildOptions, PacketBuildResult
-from ..raw_extract import build_session_bundle
+from ..raw_extract import build_typed_session_bundle
 from ..summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from ..summary_pipeline import SummaryOptions, build_v2_summary_artifacts
 
@@ -54,9 +54,9 @@ def export_v2_summary_artifacts(
     summary_cache: bool = False,
     llm_safety: LLMInputSafetyOptions | None = None,
 ) -> tuple[Path, Path, Path]:
-    raw_bundle = build_session_bundle(session_id=session_id, paths=paths)
+    session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
     result = build_v2_summary_artifacts(
-        raw_bundle=raw_bundle,
+        raw_bundle=session_bundle,
         paths=paths,
         options=SummaryOptions(
             session_id=session_id,

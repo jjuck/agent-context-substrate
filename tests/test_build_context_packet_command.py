@@ -9,13 +9,16 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from agent_context_substrate.commands import build_context_packet as build_context_packet_module  # noqa: E402
 from agent_context_substrate.commands.build_context_packet import (  # noqa: E402
     build_llm_safety_options,
     build_summary_routing_hints,
+    export_v2_summary_artifacts,
     handle_build_context_packet_command,
 )
 from agent_context_substrate.packet_builder import PacketBuildOptions, PacketBuildResult  # noqa: E402
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.session_bundle import SessionBundle, SessionMessage  # noqa: E402
 
 
 class _FakePacket:
@@ -40,6 +43,52 @@ def test_build_context_packet_helpers_build_routing_hints_and_llm_safety_options
     assert safety.redact is False
     assert safety.max_input_chars == 1234
     assert safety.allow_code_snippets is True
+
+
+def test_export_v2_summary_artifacts_uses_typed_session_bundle(monkeypatch, tmp_path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    typed_bundle = SessionBundle(
+        session_id="session-typed",
+        source="telegram",
+        title="Typed CLI",
+        messages=[SessionMessage(id=1, role="user", content="typed summary", metadata={"timestamp": 1.0})],
+    )
+    observed: dict[str, object] = {}
+
+    def fake_build_typed_session_bundle(*, session_id, paths):
+        observed["session_id"] = session_id
+        observed["paths"] = paths
+        return typed_bundle
+
+    def fake_build_v2_summary_artifacts(*, raw_bundle, paths, options):
+        observed["raw_bundle"] = raw_bundle
+        observed["options"] = options
+        micro_path = paths.project_root / "micro.json"
+        unit_path = paths.project_root / "unit.json"
+        evidence_path = paths.project_root / "evidence.json"
+        return SimpleNamespace(as_tuple=lambda: (micro_path, unit_path, evidence_path))
+
+    monkeypatch.setattr(build_context_packet_module, "build_typed_session_bundle", fake_build_typed_session_bundle)
+    monkeypatch.setattr(build_context_packet_module, "build_v2_summary_artifacts", fake_build_v2_summary_artifacts)
+
+    micro_path, unit_path, evidence_path = export_v2_summary_artifacts(
+        session_id="session-typed",
+        packet_id="packet-1",
+        unit_title="Unit",
+        goal="Goal",
+        related_pages=["Architecture"],
+        summary_mode="heuristic",
+        summarizer_command=None,
+        paths=paths,
+    )
+
+    assert observed["raw_bundle"] is typed_bundle
+    assert observed["session_id"] == "session-typed"
+    assert observed["paths"] is paths
+    assert observed["options"].session_id == "session-typed"
+    assert micro_path.name == "micro.json"
+    assert unit_path.name == "unit.json"
+    assert evidence_path.name == "evidence.json"
 
 
 def test_build_context_packet_handler_uses_packet_builder_options(tmp_path, capsys) -> None:

@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 
 from agent_context_substrate.models import EvidenceBackedText, MicroSummaryV2, SummaryMetadata, UnitSummaryV2  # noqa: E402
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.session_bundle import SessionBundle  # noqa: E402
 from agent_context_substrate.summary_pipeline import (  # noqa: E402
     SummaryOptions,
     SummaryPipelineInvariantError,
@@ -244,6 +245,32 @@ def _raw_bundle() -> dict[str, object]:
         "slice": {"start_message_id": 1, "end_message_id": 2},
         "message_count": 2,
     }
+
+
+def test_build_v2_summary_artifacts_accepts_typed_session_bundle(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-typed",
+        unit_title="Unit",
+        goal="Keep summary pipeline on typed session boundaries.",
+        related_pages=["Architecture"],
+        summary_mode="heuristic",
+    )
+    calls: list[str] = []
+
+    result = build_v2_summary_artifacts(
+        raw_bundle=SessionBundle.from_raw_bundle(_raw_bundle()),
+        paths=paths,
+        options=options,
+        backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
+    )
+
+    assert calls == ["micro", "unit"]
+    evidence_payload = json.loads(result.evidence_path.read_text(encoding="utf-8"))
+    assert evidence_payload["session_id"] == "session-1"
+    assert result.micro_path.name == "packet-typed-micro-v2.json"
+    assert result.unit_path.name == "packet-typed-unit-v2.json"
 
 
 def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache(tmp_path: Path) -> None:
