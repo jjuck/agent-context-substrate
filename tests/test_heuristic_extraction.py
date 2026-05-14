@@ -8,6 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from agent_context_substrate import heuristic_extraction as heuristic_module  # noqa: E402
 from agent_context_substrate import summarizer as summarizer_module  # noqa: E402
 from agent_context_substrate.heuristic_extraction import (  # noqa: E402
     analyze_heuristic_messages,
@@ -57,6 +58,44 @@ Evidence:
         "Key points: README.md documents the context packet path.; Hermes keeps recovery context grounded. "
         "Open question: Should we tune summarization next?"
     )
+
+
+def test_extract_recovery_fields_is_a_named_stage() -> None:
+    messages = [
+        {"role": "user", "content": "Summarize README.md."},
+        {
+            "role": "assistant",
+            "content": """Done.
+- README.md explains recovery flow.
+- Context packets stay grounded.
+""",
+        },
+        {"role": "user", "content": "Should we refine extraction next?"},
+    ]
+
+    fields = heuristic_module.extract_recovery_fields(messages)
+
+    assert fields.request == "Summarize README.md."
+    assert fields.outcome == "Done."
+    assert fields.key_points == [
+        "README.md explains recovery flow.",
+        "Context packets stay grounded.",
+    ]
+    assert fields.follow_up_questions == ["Should we refine extraction next?"]
+    assert fields.recovery_summary == compose_recovery_summary(
+        messages=messages,
+        request=fields.request,
+        outcome=fields.outcome,
+        key_points=fields.key_points,
+        follow_up_questions=fields.follow_up_questions,
+    )
+
+    analysis = analyze_heuristic_messages(messages)
+    assert analysis.request == fields.request
+    assert analysis.outcome == fields.outcome
+    assert analysis.key_points == fields.key_points
+    assert analysis.follow_up_questions == fields.follow_up_questions
+    assert analysis.recovery_summary == fields.recovery_summary
 
 
 def test_compose_recovery_summary_is_a_named_stage() -> None:

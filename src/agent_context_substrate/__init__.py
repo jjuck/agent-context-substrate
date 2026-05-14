@@ -27,7 +27,13 @@ from .distribution import (
     run_fresh_install_smoke,
 )
 from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
-from .heuristic_extraction import HeuristicMessageAnalysis, analyze_heuristic_messages, compose_recovery_summary
+from .heuristic_extraction import (
+    HeuristicMessageAnalysis,
+    HeuristicRecoveryFields,
+    analyze_heuristic_messages,
+    compose_recovery_summary,
+    extract_recovery_fields,
+)
 from .integration import (
     IntegrationResult,
     PipelineRetryExhaustedError,
@@ -154,6 +160,7 @@ __all__ = [
     "HeuristicSummarizerBackend",
     "HybridSummarizerBackend",
     "HeuristicMessageAnalysis",
+    "HeuristicRecoveryFields",
     "LLMInputSafetyOptions",
     "DoctorReport",
     "FreshInstallSmokeResult",
@@ -187,6 +194,7 @@ __all__ = [
     "TopicMapNode",
     "analyze_heuristic_messages",
     "compose_recovery_summary",
+    "extract_recovery_fields",
     "build_context_packet",
     "build_micro_evidence_bundle",
     "build_micro_summary",

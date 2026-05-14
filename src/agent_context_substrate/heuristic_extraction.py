@@ -55,6 +55,15 @@ _SECTION_STOP_MARKERS = ("evidence", "proof", "원하면", "next step", "next st
 
 
 @dataclass(frozen=True)
+class HeuristicRecoveryFields:
+    request: str | None
+    outcome: str | None
+    key_points: list[str]
+    follow_up_questions: list[str]
+    recovery_summary: str
+
+
+@dataclass(frozen=True)
 class HeuristicMessageAnalysis:
     messages: list[dict[str, Any]]
     salient_messages: list[dict[str, Any]]
@@ -79,6 +88,26 @@ def analyze_heuristic_messages(messages: list[dict[str, Any]]) -> HeuristicMessa
     files = _extract_files(text)
     entities = _extract_entities(text)
     concepts = _extract_concepts(text)
+    recovery_fields = extract_recovery_fields(message_list)
+    return HeuristicMessageAnalysis(
+        messages=message_list,
+        salient_messages=salient_messages,
+        text=text,
+        request=recovery_fields.request,
+        outcome=recovery_fields.outcome,
+        key_points=recovery_fields.key_points,
+        follow_up_questions=recovery_fields.follow_up_questions,
+        recovery_summary=recovery_fields.recovery_summary,
+        files=files,
+        entities=entities,
+        concepts=concepts,
+    )
+
+
+def extract_recovery_fields(messages: list[dict[str, Any]]) -> HeuristicRecoveryFields:
+    """Extract request/outcome/key-point fields used by recovery summaries."""
+
+    message_list = list(messages)
     follow_up_questions = _extract_follow_up_questions(message_list)
     request = _extract_request(message_list, follow_up_questions)
     outcome = _extract_outcome(message_list)
@@ -90,18 +119,12 @@ def analyze_heuristic_messages(messages: list[dict[str, Any]]) -> HeuristicMessa
         key_points=key_points,
         follow_up_questions=follow_up_questions,
     )
-    return HeuristicMessageAnalysis(
-        messages=message_list,
-        salient_messages=salient_messages,
-        text=text,
+    return HeuristicRecoveryFields(
         request=request,
         outcome=outcome,
         key_points=key_points,
         follow_up_questions=follow_up_questions,
         recovery_summary=recovery_summary,
-        files=files,
-        entities=entities,
-        concepts=concepts,
     )
 
 
