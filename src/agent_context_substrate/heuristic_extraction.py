@@ -11,16 +11,48 @@ from .heuristic_recovery import HeuristicRecoveryFields, extract_recovery_fields
 @dataclass(frozen=True)
 class HeuristicMessageAnalysis:
     messages: list[dict[str, Any]]
-    salient_messages: list[dict[str, Any]]
-    text: str
-    request: str | None
-    outcome: str | None
-    key_points: list[str]
-    follow_up_questions: list[str]
-    recovery_summary: str
-    files: list[str]
-    entities: list[str]
-    concepts: list[str]
+    metadata_signals: HeuristicMetadataSignals
+    recovery_fields: HeuristicRecoveryFields
+
+    @property
+    def salient_messages(self) -> list[dict[str, Any]]:
+        return self.metadata_signals.salient_messages
+
+    @property
+    def text(self) -> str:
+        return self.metadata_signals.text
+
+    @property
+    def files(self) -> list[str]:
+        return self.metadata_signals.files
+
+    @property
+    def entities(self) -> list[str]:
+        return self.metadata_signals.entities
+
+    @property
+    def concepts(self) -> list[str]:
+        return self.metadata_signals.concepts
+
+    @property
+    def request(self) -> str | None:
+        return self.recovery_fields.request
+
+    @property
+    def outcome(self) -> str | None:
+        return self.recovery_fields.outcome
+
+    @property
+    def key_points(self) -> list[str]:
+        return self.recovery_fields.key_points
+
+    @property
+    def follow_up_questions(self) -> list[str]:
+        return self.recovery_fields.follow_up_questions
+
+    @property
+    def recovery_summary(self) -> str:
+        return self.recovery_fields.recovery_summary
 
 
 def analyze_heuristic_messages(messages: list[dict[str, Any]]) -> HeuristicMessageAnalysis:
@@ -31,16 +63,8 @@ def analyze_heuristic_messages(messages: list[dict[str, Any]]) -> HeuristicMessa
     recovery_fields = extract_recovery_fields(message_list)
     return HeuristicMessageAnalysis(
         messages=message_list,
-        salient_messages=metadata_signals.salient_messages,
-        text=metadata_signals.text,
-        request=recovery_fields.request,
-        outcome=recovery_fields.outcome,
-        key_points=recovery_fields.key_points,
-        follow_up_questions=recovery_fields.follow_up_questions,
-        recovery_summary=recovery_fields.recovery_summary,
-        files=metadata_signals.files,
-        entities=metadata_signals.entities,
-        concepts=metadata_signals.concepts,
+        metadata_signals=metadata_signals,
+        recovery_fields=recovery_fields,
     )
 
 

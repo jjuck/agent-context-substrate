@@ -102,6 +102,7 @@ def test_extract_metadata_signals_is_a_named_stage() -> None:
     assert signals.concepts == ["context-packet", "summarization"]
 
     analysis = analyze_heuristic_messages(messages)
+    assert analysis.metadata_signals == signals
     assert analysis.salient_messages == signals.salient_messages
     assert analysis.text == signals.text
     assert analysis.files == signals.files
@@ -140,6 +141,7 @@ def test_extract_recovery_fields_is_a_named_stage() -> None:
     )
 
     analysis = analyze_heuristic_messages(messages)
+    assert analysis.recovery_fields == fields
     assert analysis.request == fields.request
     assert analysis.outcome == fields.outcome
     assert analysis.key_points == fields.key_points
