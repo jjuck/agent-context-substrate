@@ -149,6 +149,34 @@ def test_extract_recovery_fields_is_a_named_stage() -> None:
     assert analysis.recovery_summary == fields.recovery_summary
 
 
+def test_extract_recovery_fields_stops_key_points_before_status_sections() -> None:
+    messages = [
+        {"role": "user", "content": "Refactor heuristic recovery extraction."},
+        {
+            "role": "assistant",
+            "content": """완료.
+변경:
+- `heuristic_recovery.py` now owns recovery fields.
+- `summary_lint.py` uses public stages.
+검증:
+- `python -m pytest -q` passed.
+커밋:
+- `abc1234 refactor: improve recovery extraction`
+다음 후보:
+1. Tune metadata extraction.
+""",
+        },
+    ]
+
+    fields = heuristic_module.extract_recovery_fields(messages)
+
+    assert fields.outcome == "완료."
+    assert fields.key_points == [
+        "heuristic_recovery.py now owns recovery fields.",
+        "summary_lint.py uses public stages.",
+    ]
+
+
 def test_compose_recovery_summary_is_a_named_stage() -> None:
     messages = [{"role": "assistant", "content": "Fallback transcript text."}]
 

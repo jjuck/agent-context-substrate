@@ -14,7 +14,28 @@ from .heuristic_metadata import (
     _truncate_text,
 )
 
-_SECTION_STOP_MARKERS = ("evidence", "proof", "원하면", "next step", "next steps")
+_SECTION_STOP_MARKERS = (
+    "evidence",
+    "proof",
+    "verification",
+    "verified",
+    "tests",
+    "test status",
+    "commit",
+    "current status",
+    "status",
+    "next candidate",
+    "next step",
+    "next steps",
+    "검증",
+    "테스트",
+    "커밋",
+    "현재 상태",
+    "상태",
+    "다음 후보",
+    "다음 단계",
+    "원하면",
+)
 
 
 @dataclass(frozen=True)
