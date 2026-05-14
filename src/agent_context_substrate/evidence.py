@@ -7,8 +7,8 @@ import re
 from .safe_paths import safe_artifact_stem, safe_child_path
 from typing import Any
 
-from .heuristic_extraction import (
-    _extract_files,
+from .heuristic_metadata import _extract_files
+from .heuristic_recovery import (
     _extract_follow_up_questions,
     _extract_key_points,
     _extract_outcome,

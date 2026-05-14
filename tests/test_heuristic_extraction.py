@@ -60,6 +60,26 @@ Evidence:
     )
 
 
+def test_heuristic_stages_live_in_dedicated_modules() -> None:
+    from agent_context_substrate.heuristic_composition import (
+        compose_recovery_summary as module_compose_recovery_summary,
+    )
+    from agent_context_substrate.heuristic_metadata import (
+        HeuristicMetadataSignals,
+        extract_metadata_signals as module_extract_metadata_signals,
+    )
+    from agent_context_substrate.heuristic_recovery import (
+        HeuristicRecoveryFields,
+        extract_recovery_fields as module_extract_recovery_fields,
+    )
+
+    assert module_extract_metadata_signals is heuristic_module.extract_metadata_signals
+    assert module_extract_recovery_fields is heuristic_module.extract_recovery_fields
+    assert module_compose_recovery_summary is compose_recovery_summary
+    assert HeuristicMetadataSignals is heuristic_module.HeuristicMetadataSignals
+    assert HeuristicRecoveryFields is heuristic_module.HeuristicRecoveryFields
+
+
 def test_extract_metadata_signals_is_a_named_stage() -> None:
     messages = [
         {"role": "system", "content": "ignore setup chatter"},

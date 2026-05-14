@@ -4,7 +4,8 @@ from dataclasses import dataclass
 import math
 from typing import Any, Mapping
 
-from .heuristic_extraction import _extract_files, _extract_follow_up_questions
+from .heuristic_metadata import _extract_files
+from .heuristic_recovery import _extract_follow_up_questions
 from .models import EvidenceBackedText, MicroSummaryV2, UnitSummaryV2
 from .session_bundle import SessionBundle, resolve_session_bundle
 
