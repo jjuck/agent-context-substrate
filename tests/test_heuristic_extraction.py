@@ -168,6 +168,16 @@ def test_compose_recovery_summary_is_a_named_stage() -> None:
     ) == "Fallback transcript text."
 
 
+def test_evidence_and_lint_use_public_heuristic_stages() -> None:
+    for relative_path in [
+        "src/agent_context_substrate/evidence.py",
+        "src/agent_context_substrate/summary_lint.py",
+    ]:
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert "from .heuristic_metadata import _" not in source
+        assert "from .heuristic_recovery import _" not in source
+
+
 def test_summarizer_no_longer_owns_heuristic_extraction_helpers() -> None:
     duplicate_helpers = [
         "_extract_request",

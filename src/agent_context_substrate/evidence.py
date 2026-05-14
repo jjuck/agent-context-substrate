@@ -7,13 +7,8 @@ import re
 from .safe_paths import safe_artifact_stem, safe_child_path
 from typing import Any
 
-from .heuristic_metadata import _extract_files
-from .heuristic_recovery import (
-    _extract_follow_up_questions,
-    _extract_key_points,
-    _extract_outcome,
-    _extract_request,
-)
+from .heuristic_metadata import extract_metadata_signals
+from .heuristic_recovery import extract_recovery_fields
 from .models import EvidenceMessage, MicroEvidenceBundle
 from .session_bundle import SessionBundle, SessionMessage, resolve_session_bundle
 
@@ -108,7 +103,8 @@ def build_micro_evidence_bundle(
     conversation_messages = _conversation_messages(messages)
     text_source = conversation_messages if conversation_messages else messages
     text = _collect_text(text_source)
-    follow_up_questions = _extract_follow_up_questions(raw_messages)
+    metadata_signals = extract_metadata_signals(raw_messages)
+    recovery_fields = extract_recovery_fields(raw_messages)
 
     return MicroEvidenceBundle(
         session_id=typed_bundle.session_id,
@@ -116,10 +112,10 @@ def build_micro_evidence_bundle(
         message_ids=[int(message.id) for message in messages],
         user_messages=_evidence_messages(messages, "user"),
         assistant_messages=_evidence_messages(messages, "assistant"),
-        heuristic_request=_extract_request(raw_messages, follow_up_questions),
-        heuristic_outcome=_strip_heading_marker(_extract_outcome(raw_messages)),
-        heuristic_key_points=_extract_key_points(raw_messages),
-        files=_extract_files(text),
+        heuristic_request=recovery_fields.request,
+        heuristic_outcome=_strip_heading_marker(recovery_fields.outcome),
+        heuristic_key_points=recovery_fields.key_points,
+        files=metadata_signals.files,
         code_blocks=_extract_code_blocks(text),
         urls=_extract_urls(text),
         headings=_extract_headings(text),

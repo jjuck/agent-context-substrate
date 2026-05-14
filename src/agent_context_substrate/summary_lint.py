@@ -4,8 +4,8 @@ from dataclasses import dataclass
 import math
 from typing import Any, Mapping
 
-from .heuristic_metadata import _extract_files
-from .heuristic_recovery import _extract_follow_up_questions
+from .heuristic_metadata import extract_metadata_signals
+from .heuristic_recovery import extract_recovery_fields
 from .models import EvidenceBackedText, MicroSummaryV2, UnitSummaryV2
 from .session_bundle import SessionBundle, resolve_session_bundle
 
@@ -130,7 +130,7 @@ def _lint_new_entities(summary: MicroSummaryV2, *, raw_text: str) -> list[Summar
 
 
 def _lint_unresolved_questions(summary: MicroSummaryV2, *, bundle: SessionBundle) -> list[SummaryLintIssue]:
-    expected_questions = _extract_follow_up_questions(_bundle_raw_messages(bundle))
+    expected_questions = extract_recovery_fields(_bundle_raw_messages(bundle)).follow_up_questions
     normalized_open_questions = {_normalize_semantic_text(question) for question in summary.open_questions}
     missing_questions = [
         question
@@ -204,7 +204,7 @@ def lint_micro_summary_v2(
         issues.extend(_lint_evidence_items(items, field=field, valid_message_ids=valid_message_ids))
 
     raw_text = _bundle_text(bundle)
-    source_files = set(_extract_files(raw_text))
+    source_files = set(extract_metadata_signals(_bundle_raw_messages(bundle)).files)
     invented_files = [file_path for file_path in summary.files if file_path not in source_files]
     if invented_files:
         issues.append(
