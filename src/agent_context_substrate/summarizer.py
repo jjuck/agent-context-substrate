@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from .heuristic_extraction import analyze_heuristic_messages
 from .models import (
     EvidenceBackedText,
     MicroSummary,
@@ -380,25 +381,17 @@ def build_micro_summary(
     raw_bundle = _session_bundle_payload(resolve_session_bundle(raw_bundle, session_bundle=session_bundle))
     session = raw_bundle["session"]
     messages = list(raw_bundle.get("messages", []))
-    salient_messages = _select_salient_messages(messages)
-    text_source = salient_messages if salient_messages else messages
-    text = _collect_text(text_source)
+    analysis = analyze_heuristic_messages(messages)
     message_ids = [int(message["id"]) for message in messages]
-    files = _extract_files(text)
-    entities = _extract_entities(text)
-    concepts = _extract_concepts(text)
-    follow_up_questions = _extract_follow_up_questions(messages)
-    request = _extract_request(messages, follow_up_questions)
-    outcome = _extract_outcome(messages)
-    key_points = _extract_key_points(messages)
+    files = list(analysis.files)
+    entities = list(analysis.entities)
+    concepts = list(analysis.concepts)
+    follow_up_questions = list(analysis.follow_up_questions)
+    request = analysis.request
+    outcome = analysis.outcome
+    key_points = list(analysis.key_points)
 
-    summary_text = _build_summary_text(
-        messages=messages,
-        request=request,
-        outcome=outcome,
-        key_points=key_points,
-        follow_up_questions=follow_up_questions,
-    )
+    summary_text = analysis.recovery_summary
     if not summary_text:
         summary_text = f"Session slice from {session.get('id', 'unknown-session')}"
 

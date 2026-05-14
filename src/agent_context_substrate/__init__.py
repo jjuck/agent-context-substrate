@@ -27,6 +27,7 @@ from .distribution import (
     run_fresh_install_smoke,
 )
 from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
+from .heuristic_extraction import HeuristicMessageAnalysis, analyze_heuristic_messages
 from .integration import (
     IntegrationResult,
     PipelineRetryExhaustedError,
@@ -152,6 +153,7 @@ __all__ = [
     "CustomCommandSummarizerBackend",
     "HeuristicSummarizerBackend",
     "HybridSummarizerBackend",
+    "HeuristicMessageAnalysis",
     "LLMInputSafetyOptions",
     "DoctorReport",
     "FreshInstallSmokeResult",
@@ -183,6 +185,7 @@ __all__ = [
     "TopicMap",
     "TopicMapEdge",
     "TopicMapNode",
+    "analyze_heuristic_messages",
     "build_context_packet",
     "build_micro_evidence_bundle",
     "build_micro_summary",

@@ -7,15 +7,15 @@ import re
 from .safe_paths import safe_artifact_stem, safe_child_path
 from typing import Any
 
-from .models import EvidenceMessage, MicroEvidenceBundle
-from .session_bundle import SessionBundle, SessionMessage, resolve_session_bundle
-from .summarizer import (
+from .heuristic_extraction import (
     _extract_files,
     _extract_follow_up_questions,
     _extract_key_points,
     _extract_outcome,
     _extract_request,
 )
+from .models import EvidenceMessage, MicroEvidenceBundle
+from .session_bundle import SessionBundle, SessionMessage, resolve_session_bundle
 
 _CONVERSATION_ROLES = {"user", "assistant"}
 _CODE_BLOCK_PATTERN = re.compile(r"```(.*?)```", re.DOTALL)
