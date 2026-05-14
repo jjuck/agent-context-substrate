@@ -8,6 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from agent_context_substrate import summarizer as summarizer_module  # noqa: E402
 from agent_context_substrate.heuristic_extraction import analyze_heuristic_messages  # noqa: E402
 
 
@@ -53,3 +54,18 @@ Evidence:
         "Key points: README.md documents the context packet path.; Hermes keeps recovery context grounded. "
         "Open question: Should we tune summarization next?"
     )
+
+
+def test_summarizer_no_longer_owns_heuristic_extraction_helpers() -> None:
+    duplicate_helpers = [
+        "_extract_request",
+        "_extract_outcome",
+        "_extract_key_points",
+        "_extract_follow_up_questions",
+        "_extract_files",
+        "_extract_entities",
+        "_extract_concepts",
+        "_build_summary_text",
+    ]
+
+    assert [name for name in duplicate_helpers if hasattr(summarizer_module, name)] == []
