@@ -29,9 +29,11 @@ from .distribution import (
 from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
 from .heuristic_extraction import (
     HeuristicMessageAnalysis,
+    HeuristicMetadataSignals,
     HeuristicRecoveryFields,
     analyze_heuristic_messages,
     compose_recovery_summary,
+    extract_metadata_signals,
     extract_recovery_fields,
 )
 from .integration import (
@@ -160,6 +162,7 @@ __all__ = [
     "HeuristicSummarizerBackend",
     "HybridSummarizerBackend",
     "HeuristicMessageAnalysis",
+    "HeuristicMetadataSignals",
     "HeuristicRecoveryFields",
     "LLMInputSafetyOptions",
     "DoctorReport",
@@ -194,6 +197,7 @@ __all__ = [
     "TopicMapNode",
     "analyze_heuristic_messages",
     "compose_recovery_summary",
+    "extract_metadata_signals",
     "extract_recovery_fields",
     "build_context_packet",
     "build_micro_evidence_bundle",

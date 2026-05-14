@@ -60,6 +60,35 @@ Evidence:
     )
 
 
+def test_extract_metadata_signals_is_a_named_stage() -> None:
+    messages = [
+        {"role": "system", "content": "ignore setup chatter"},
+        {"role": "user", "content": "Inspect README.md and src/app.py for context packet flow."},
+        {"role": "assistant", "content": "Hermes summarization keeps recovery grounded."},
+    ]
+
+    signals = heuristic_module.extract_metadata_signals(messages)
+
+    assert signals.salient_messages == [
+        {"role": "user", "content": "Inspect README.md and src/app.py for context packet flow."},
+        {"role": "assistant", "content": "Hermes summarization keeps recovery grounded."},
+    ]
+    assert signals.text == (
+        "Inspect README.md and src/app.py for context packet flow. "
+        "Hermes summarization keeps recovery grounded."
+    )
+    assert signals.files == ["README.md", "src/app.py"]
+    assert signals.entities == ["Hermes"]
+    assert signals.concepts == ["context-packet", "summarization"]
+
+    analysis = analyze_heuristic_messages(messages)
+    assert analysis.salient_messages == signals.salient_messages
+    assert analysis.text == signals.text
+    assert analysis.files == signals.files
+    assert analysis.entities == signals.entities
+    assert analysis.concepts == signals.concepts
+
+
 def test_extract_recovery_fields_is_a_named_stage() -> None:
     messages = [
         {"role": "user", "content": "Summarize README.md."},

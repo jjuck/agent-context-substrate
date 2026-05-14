@@ -55,6 +55,15 @@ _SECTION_STOP_MARKERS = ("evidence", "proof", "원하면", "next step", "next st
 
 
 @dataclass(frozen=True)
+class HeuristicMetadataSignals:
+    salient_messages: list[dict[str, Any]]
+    text: str
+    files: list[str]
+    entities: list[str]
+    concepts: list[str]
+
+
+@dataclass(frozen=True)
 class HeuristicRecoveryFields:
     request: str | None
     outcome: str | None
@@ -82,22 +91,36 @@ def analyze_heuristic_messages(messages: list[dict[str, Any]]) -> HeuristicMessa
     """Extract stable heuristic summary stages from raw-compatible messages."""
 
     message_list = list(messages)
+    metadata_signals = extract_metadata_signals(message_list)
+    recovery_fields = extract_recovery_fields(message_list)
+    return HeuristicMessageAnalysis(
+        messages=message_list,
+        salient_messages=metadata_signals.salient_messages,
+        text=metadata_signals.text,
+        request=recovery_fields.request,
+        outcome=recovery_fields.outcome,
+        key_points=recovery_fields.key_points,
+        follow_up_questions=recovery_fields.follow_up_questions,
+        recovery_summary=recovery_fields.recovery_summary,
+        files=metadata_signals.files,
+        entities=metadata_signals.entities,
+        concepts=metadata_signals.concepts,
+    )
+
+
+def extract_metadata_signals(messages: list[dict[str, Any]]) -> HeuristicMetadataSignals:
+    """Extract text and metadata signals from salient conversation messages."""
+
+    message_list = list(messages)
     salient_messages = _select_salient_messages(message_list)
     text_source = salient_messages if salient_messages else message_list
     text = _collect_text(text_source)
     files = _extract_files(text)
     entities = _extract_entities(text)
     concepts = _extract_concepts(text)
-    recovery_fields = extract_recovery_fields(message_list)
-    return HeuristicMessageAnalysis(
-        messages=message_list,
+    return HeuristicMetadataSignals(
         salient_messages=salient_messages,
         text=text,
-        request=recovery_fields.request,
-        outcome=recovery_fields.outcome,
-        key_points=recovery_fields.key_points,
-        follow_up_questions=recovery_fields.follow_up_questions,
-        recovery_summary=recovery_fields.recovery_summary,
         files=files,
         entities=entities,
         concepts=concepts,
