@@ -223,12 +223,12 @@ def _build_packet_artifacts(
     raw_export_path = export_session_bundle(session_id=session_id, paths=paths)
     session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
 
-    resolved_task_title = task_title or derive_task_title(session_bundle, session_id)
-    resolved_unit_title = unit_title or derive_unit_title(session_bundle, resolved_task_title)
+    resolved_task_title = task_title or derive_task_title(session_bundle=session_bundle, session_id=session_id)
+    resolved_unit_title = unit_title or derive_unit_title(session_bundle=session_bundle, task_title=resolved_task_title)
     unit_id = f"{packet_id}-unit-1"
 
     micro_summary = build_micro_summary(
-        raw_bundle=session_bundle,
+        session_bundle=session_bundle,
         micro_id=f"{packet_id}-micro-1",
         parent_unit_id=unit_id,
     )

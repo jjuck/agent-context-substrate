@@ -8,7 +8,7 @@ from .safe_paths import safe_artifact_stem, safe_child_path
 from typing import Any
 
 from .models import EvidenceMessage, MicroEvidenceBundle
-from .session_bundle import SessionBundle, SessionMessage, ensure_session_bundle
+from .session_bundle import SessionBundle, SessionMessage, resolve_session_bundle
 from .summarizer import (
     _extract_files,
     _extract_follow_up_questions,
@@ -94,8 +94,15 @@ def _extract_explicit_questions(text: str) -> list[str]:
     return questions
 
 
-def build_micro_evidence_bundle(raw_bundle: dict[str, Any] | SessionBundle, micro_id: str) -> MicroEvidenceBundle:
-    typed_bundle = ensure_session_bundle(raw_bundle)
+def build_micro_evidence_bundle(
+    raw_bundle: dict[str, Any] | SessionBundle | None = None,
+    micro_id: str | None = None,
+    *,
+    session_bundle: dict[str, Any] | SessionBundle | None = None,
+) -> MicroEvidenceBundle:
+    if micro_id is None:
+        raise TypeError("micro_id is required")
+    typed_bundle = resolve_session_bundle(raw_bundle, session_bundle=session_bundle)
     messages = list(typed_bundle.messages)
     raw_messages = _raw_message_payloads(messages)
     conversation_messages = _conversation_messages(messages)

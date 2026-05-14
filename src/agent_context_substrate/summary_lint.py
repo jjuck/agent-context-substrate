@@ -5,7 +5,7 @@ import math
 from typing import Any, Mapping
 
 from .models import EvidenceBackedText, MicroSummaryV2, UnitSummaryV2
-from .session_bundle import SessionBundle, ensure_session_bundle
+from .session_bundle import SessionBundle, resolve_session_bundle
 from .summarizer import _extract_files, _extract_follow_up_questions
 
 
@@ -179,9 +179,10 @@ def _lint_evidence_items(
 def lint_micro_summary_v2(
     summary: MicroSummaryV2,
     *,
-    raw_bundle: Mapping[str, Any] | SessionBundle,
+    raw_bundle: Mapping[str, Any] | SessionBundle | None = None,
+    session_bundle: Mapping[str, Any] | SessionBundle | None = None,
 ) -> SummaryLintReport:
-    bundle = ensure_session_bundle(raw_bundle)
+    bundle = resolve_session_bundle(raw_bundle, session_bundle=session_bundle)
     valid_message_ids = _bundle_message_ids(bundle)
     issues: list[SummaryLintIssue] = []
 

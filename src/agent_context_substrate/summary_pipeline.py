@@ -12,7 +12,7 @@ from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
 from .models import MicroSummaryV2, UnitSummaryV2
 from .paths import HarnessPaths
 from .safe_paths import safe_artifact_stem, safe_child_path
-from .session_bundle import SessionBundle, ensure_session_bundle
+from .session_bundle import SessionBundle, ensure_session_bundle, resolve_session_bundle
 from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions, SummarizerBackend, get_summarizer_backend
 from .summary_lint import SummaryLintReport, lint_micro_summary_v2, lint_unit_summary_v2
 
@@ -61,17 +61,18 @@ class SummaryArtifactResult:
 
 def build_v2_summary_artifacts(
     *,
-    raw_bundle: Mapping[str, Any] | SessionBundle,
+    raw_bundle: Mapping[str, Any] | SessionBundle | None = None,
+    session_bundle: Mapping[str, Any] | SessionBundle | None = None,
     paths: HarnessPaths,
     options: SummaryOptions,
     backend_factory: BackendFactory | None = None,
 ) -> SummaryArtifactResult:
     """Build and export evidence plus V2 micro/unit summary artifacts."""
 
-    session_bundle = ensure_session_bundle(raw_bundle)
+    session_bundle = resolve_session_bundle(raw_bundle, session_bundle=session_bundle)
     artifact_ids = _summary_artifact_ids(options=options)
-    _validate_summary_source_session(raw_bundle=session_bundle, options=options)
-    evidence = build_micro_evidence_bundle(raw_bundle=session_bundle, micro_id=artifact_ids.micro_id)
+    _validate_summary_source_session(session_bundle=session_bundle, options=options)
+    evidence = build_micro_evidence_bundle(session_bundle=session_bundle, micro_id=artifact_ids.micro_id)
     _validate_evidence_artifact_ids(session_id=evidence.session_id, micro_id=evidence.micro_id)
     cache_input = _summary_cache_input(options=options, evidence_dict=evidence.to_dict())
     cache_key = _summary_cache_key(cache_input)
@@ -80,7 +81,7 @@ def build_v2_summary_artifacts(
     if options.summary_cache and cache_path.exists():
         micro_summary, unit_summary = _load_summary_cache(cache_path)
         _validate_micro_summary(
-            raw_bundle=session_bundle,
+            session_bundle=session_bundle,
             micro_summary=micro_summary,
             expected_session_id=options.session_id,
         )
@@ -102,7 +103,7 @@ def build_v2_summary_artifacts(
     backend = _build_backend(options=options, backend_factory=backend_factory)
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
     _validate_micro_summary(
-        raw_bundle=session_bundle,
+        session_bundle=session_bundle,
         micro_summary=micro_summary,
         expected_session_id=options.session_id,
     )
@@ -156,13 +157,13 @@ def _summary_artifact_ids(*, options: SummaryOptions) -> _SummaryArtifactIds:
     return _SummaryArtifactIds(packet_id=packet_id, micro_id=micro_id, unit_id=unit_id)
 
 
-def _validate_summary_source_session(*, raw_bundle: Mapping[str, Any] | SessionBundle, options: SummaryOptions) -> None:
-    bundle = ensure_session_bundle(raw_bundle)
+def _validate_summary_source_session(*, session_bundle: Mapping[str, Any] | SessionBundle, options: SummaryOptions) -> None:
+    bundle = ensure_session_bundle(session_bundle)
     raw_session_id = bundle.session_id
     if raw_session_id == options.session_id:
         return
     raise SummaryPipelineInvariantError(
-        f"SummaryOptions session_id {options.session_id!r} does not match raw_bundle session_id {raw_session_id!r}"
+        f"SummaryOptions session_id {options.session_id!r} does not match session_bundle session_id {raw_session_id!r}"
     )
 
 
@@ -184,7 +185,7 @@ def _validate_summary_session_id(*, artifact: str, summary_session_id: str, expe
 
 def _validate_micro_summary(
     *,
-    raw_bundle: Mapping[str, Any] | SessionBundle,
+    session_bundle: Mapping[str, Any] | SessionBundle,
     micro_summary: MicroSummaryV2,
     expected_session_id: str,
 ) -> None:
@@ -195,7 +196,7 @@ def _validate_micro_summary(
     )
     _raise_for_lint_issues(
         artifact="micro_summary",
-        report=lint_micro_summary_v2(micro_summary, raw_bundle=raw_bundle),
+        report=lint_micro_summary_v2(micro_summary, session_bundle=session_bundle),
     )
 
 

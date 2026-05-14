@@ -4,11 +4,18 @@ import re
 from typing import Any, Mapping
 
 from .models import MicroSummary
-from .session_bundle import SessionBundle, ensure_session_bundle
+from .session_bundle import SessionBundle, resolve_session_bundle
 
 
-def derive_task_title(raw_bundle: Mapping[str, Any] | SessionBundle, session_id: str) -> str:
-    bundle = ensure_session_bundle(raw_bundle)
+def derive_task_title(
+    raw_bundle: Mapping[str, Any] | SessionBundle | None = None,
+    session_id: str | None = None,
+    *,
+    session_bundle: Mapping[str, Any] | SessionBundle | None = None,
+) -> str:
+    if session_id is None:
+        raise TypeError("session_id is required")
+    bundle = resolve_session_bundle(raw_bundle, session_bundle=session_bundle)
     title = str(bundle.title or "").strip()
     if title:
         return title
@@ -23,8 +30,15 @@ def derive_task_title(raw_bundle: Mapping[str, Any] | SessionBundle, session_id:
     return f"Resume session {session_id}"
 
 
-def derive_unit_title(raw_bundle: Mapping[str, Any] | SessionBundle, task_title: str) -> str:
-    bundle = ensure_session_bundle(raw_bundle)
+def derive_unit_title(
+    raw_bundle: Mapping[str, Any] | SessionBundle | None = None,
+    task_title: str | None = None,
+    *,
+    session_bundle: Mapping[str, Any] | SessionBundle | None = None,
+) -> str:
+    if task_title is None:
+        raise TypeError("task_title is required")
+    bundle = resolve_session_bundle(raw_bundle, session_bundle=session_bundle)
     for message in bundle.messages:
         if message.role != "user":
             continue

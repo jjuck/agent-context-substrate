@@ -56,7 +56,7 @@ def export_v2_summary_artifacts(
 ) -> tuple[Path, Path, Path]:
     session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
     result = build_v2_summary_artifacts(
-        raw_bundle=session_bundle,
+        session_bundle=session_bundle,
         paths=paths,
         options=SummaryOptions(
             session_id=session_id,

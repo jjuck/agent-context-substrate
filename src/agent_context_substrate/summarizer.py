@@ -15,7 +15,7 @@ from .models import (
     UnitSummary,
     UnitSummaryV2,
 )
-from .session_bundle import SessionBundle, SessionMessage, ensure_session_bundle
+from .session_bundle import SessionBundle, SessionMessage, resolve_session_bundle
 
 _FILE_PATTERN = re.compile(r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+")
 _ALLOWED_FILE_EXTENSIONS = {
@@ -369,11 +369,15 @@ def _extract_concepts(text: str) -> list[str]:
 
 
 def build_micro_summary(
-    raw_bundle: dict[str, Any] | SessionBundle,
-    micro_id: str,
+    raw_bundle: dict[str, Any] | SessionBundle | None = None,
+    micro_id: str | None = None,
     parent_unit_id: str | None = None,
+    *,
+    session_bundle: dict[str, Any] | SessionBundle | None = None,
 ) -> MicroSummary:
-    raw_bundle = _session_bundle_payload(ensure_session_bundle(raw_bundle))
+    if micro_id is None:
+        raise TypeError("micro_id is required")
+    raw_bundle = _session_bundle_payload(resolve_session_bundle(raw_bundle, session_bundle=session_bundle))
     session = raw_bundle["session"]
     messages = list(raw_bundle.get("messages", []))
     salient_messages = _select_salient_messages(messages)
@@ -527,11 +531,15 @@ def _knowledge_summary(*, summary: MicroSummary) -> str:
 
 
 def build_micro_summary_v2(
-    raw_bundle: dict[str, Any] | SessionBundle,
-    micro_id: str,
+    raw_bundle: dict[str, Any] | SessionBundle | None = None,
+    micro_id: str | None = None,
     parent_unit_id: str | None = None,
+    *,
+    session_bundle: dict[str, Any] | SessionBundle | None = None,
 ) -> MicroSummaryV2:
-    raw_bundle = _session_bundle_payload(ensure_session_bundle(raw_bundle))
+    if micro_id is None:
+        raise TypeError("micro_id is required")
+    raw_bundle = _session_bundle_payload(resolve_session_bundle(raw_bundle, session_bundle=session_bundle))
     legacy_summary = build_micro_summary(
         raw_bundle=raw_bundle,
         micro_id=micro_id,

@@ -60,8 +60,8 @@ def test_export_v2_summary_artifacts_uses_typed_session_bundle(monkeypatch, tmp_
         observed["paths"] = paths
         return typed_bundle
 
-    def fake_build_v2_summary_artifacts(*, raw_bundle, paths, options):
-        observed["raw_bundle"] = raw_bundle
+    def fake_build_v2_summary_artifacts(*, session_bundle, paths, options):
+        observed["session_bundle"] = session_bundle
         observed["options"] = options
         micro_path = paths.project_root / "micro.json"
         unit_path = paths.project_root / "unit.json"
@@ -82,7 +82,7 @@ def test_export_v2_summary_artifacts_uses_typed_session_bundle(monkeypatch, tmp_
         paths=paths,
     )
 
-    assert observed["raw_bundle"] is typed_bundle
+    assert observed["session_bundle"] is typed_bundle
     assert observed["session_id"] == "session-typed"
     assert observed["paths"] is paths
     assert observed["options"].session_id == "session-typed"

@@ -111,6 +111,20 @@ def ensure_session_bundle(raw_bundle: Mapping[str, Any] | SessionBundle) -> Sess
     return SessionBundle.from_raw_bundle(raw_bundle)
 
 
+def resolve_session_bundle(
+    raw_bundle: Mapping[str, Any] | SessionBundle | None = None,
+    *,
+    session_bundle: Mapping[str, Any] | SessionBundle | None = None,
+) -> SessionBundle:
+    """Resolve legacy raw-bundle and preferred typed-session keyword inputs."""
+
+    if raw_bundle is None and session_bundle is None:
+        raise TypeError("session_bundle is required")
+    if raw_bundle is not None and session_bundle is not None:
+        raise TypeError("pass either session_bundle or raw_bundle, not both")
+    return ensure_session_bundle(session_bundle if session_bundle is not None else raw_bundle)
+
+
 def _optional_int(value: Any) -> int | None:
     if value is None:
         return None

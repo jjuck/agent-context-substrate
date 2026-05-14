@@ -265,7 +265,7 @@ def test_build_v2_summary_artifacts_accepts_typed_session_bundle(tmp_path: Path)
     calls: list[str] = []
 
     result = build_v2_summary_artifacts(
-        raw_bundle=SessionBundle.from_raw_bundle(_raw_bundle()),
+        session_bundle=SessionBundle.from_raw_bundle(_raw_bundle()),
         paths=paths,
         options=options,
         backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),

@@ -56,10 +56,10 @@ def build_packet_from_session(
     """Build and export the legacy packet-only context artifacts for a session."""
 
     raw_export_path = export_session_bundle_func(session_id=options.session_id, paths=paths)
-    raw_bundle = build_session_bundle_func(session_id=options.session_id, paths=paths)
+    session_bundle = build_session_bundle_func(session_id=options.session_id, paths=paths)
     unit_id = f"{options.packet_id}-unit-1"
     micro_summary = build_micro_summary_func(
-        raw_bundle=raw_bundle,
+        session_bundle=session_bundle,
         micro_id=f"{options.packet_id}-micro-1",
         parent_unit_id=unit_id,
     )

@@ -53,15 +53,15 @@ def test_session_bundle_round_trips_raw_hermes_bundle_shape() -> None:
 def test_evidence_and_summary_builders_accept_typed_session_bundle() -> None:
     typed_bundle = SessionBundle.from_raw_bundle(_raw_bundle())
 
-    evidence = build_micro_evidence_bundle(raw_bundle=typed_bundle, micro_id="micro-typed")
+    evidence = build_micro_evidence_bundle(session_bundle=typed_bundle, micro_id="micro-typed")
     summary = build_micro_summary(
-        raw_bundle=typed_bundle,
+        session_bundle=typed_bundle,
         micro_id="micro-typed",
         parent_unit_id="unit-typed",
     )
 
     v2_summary = build_micro_summary_v2(
-        raw_bundle=typed_bundle,
+        session_bundle=typed_bundle,
         micro_id="micro-typed-v2",
         parent_unit_id="unit-typed",
     )
@@ -113,13 +113,13 @@ def test_evidence_and_summary_builders_use_typed_session_fields_without_raw_roun
 def test_naming_and_policy_helpers_accept_typed_session_bundle() -> None:
     typed_bundle = SessionBundle.from_raw_bundle(_raw_bundle())
 
-    task_title = derive_task_title(typed_bundle, "session-typed")
-    unit_title = derive_unit_title(typed_bundle, task_title)
+    task_title = derive_task_title(session_bundle=typed_bundle, session_id="session-typed")
+    unit_title = derive_unit_title(session_bundle=typed_bundle, task_title=task_title)
 
     assert task_title == "Typed session boundary"
     assert unit_title == "Please inspect README.md"
     assert should_process_bundle(
-        typed_bundle,
+        session_bundle=typed_bundle,
         min_message_count=3,
         allowed_sources=["telegram"],
         skip_title_patterns=[r"^scratch"],
