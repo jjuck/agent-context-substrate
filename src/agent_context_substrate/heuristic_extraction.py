@@ -83,7 +83,7 @@ def analyze_heuristic_messages(messages: list[dict[str, Any]]) -> HeuristicMessa
     request = _extract_request(message_list, follow_up_questions)
     outcome = _extract_outcome(message_list)
     key_points = _extract_key_points(message_list)
-    recovery_summary = _build_summary_text(
+    recovery_summary = compose_recovery_summary(
         messages=message_list,
         request=request,
         outcome=outcome,
@@ -265,7 +265,7 @@ def _extract_follow_up_questions(messages: list[dict[str, Any]]) -> list[str]:
     return [question]
 
 
-def _build_summary_text(
+def compose_recovery_summary(
     *,
     messages: list[dict[str, Any]],
     request: str | None,
@@ -273,6 +273,8 @@ def _build_summary_text(
     key_points: list[str],
     follow_up_questions: list[str],
 ) -> str:
+    """Compose the recovery-oriented summary from extracted heuristic fields."""
+
     parts: list[str] = []
     if request:
         parts.append(f"Request: {request}")
