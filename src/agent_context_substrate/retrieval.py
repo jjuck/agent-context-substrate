@@ -5,7 +5,6 @@ from typing import Any
 import json
 import sqlite3
 
-from .models import ContextPacket, MicroSummary, RawSessionReference, UnitSummary
 from .paths import HarnessPaths
 from .retrieval_graph import (
     find_topic_map_edge as _find_topic_map_edge,
@@ -13,6 +12,7 @@ from .retrieval_graph import (
     search_topic_map as _search_topic_map,
 )
 from .retrieval_ids import decode_hit_id, encode_hit_id
+from .retrieval_packets import search_packets as _search_packets
 from .retrieval_recovery import (
     search_recovery_briefs as _search_recovery_briefs,
     search_recovery_packets as _search_recovery_packets,
@@ -28,13 +28,12 @@ from .retrieval_scoring import (
     tokenize_query as _tokenize,
 )
 from .retrieval_sources import (
-    load_context_packet,
     load_json_list,
     load_json_object,
     load_jsonl_record,
     read_text_lossy,
 )
-from .safe_paths import is_safe_project_artifact_path, is_safe_wiki_page_path
+from .safe_paths import is_safe_wiki_page_path
 from .retrieval_types import RetrievalHit, RetrievalHitDetail
 
 
@@ -287,112 +286,6 @@ def _search_wiki(terms: list[str], wiki_root: Path) -> list[RetrievalHit]:
     return hits
 
 
-def _search_packets(terms: list[str], project_root: Path) -> list[RetrievalHit]:
-    packet_dir = project_root / "data" / "exports" / "context_packets"
-    if not packet_dir.exists():
-        return []
-    hits: list[RetrievalHit] = []
-    for path in sorted(packet_dir.glob("*.json")):
-        if not is_safe_project_artifact_path(path, project_root, *_PROJECT_SOURCE_PREFIXES["packet"]):
-            continue
-        packet = load_context_packet(path)
-        if packet is None:
-            continue
-        rel_path = path.relative_to(project_root).as_posix()
-        packet_text = _packet_search_text(packet)
-        packet_score = _score_text(packet_text, terms)
-        if packet_score > 0:
-            provenance = [_format_pointer(pointer) for pointer in packet.raw_pointers]
-            payload = {
-                "source_type": "packet",
-                "source_path": rel_path,
-                "packet_id": packet.packet_id,
-                "title": packet.task_title,
-                "provenance": provenance,
-            }
-            hits.append(
-                RetrievalHit(
-                    hit_id=encode_hit_id(payload),
-                    source_type="packet",
-                    source_path=rel_path,
-                    title=packet.task_title,
-                    snippet=_make_snippet(packet_text, terms),
-                    score=packet_score,
-                    provenance=provenance,
-                )
-            )
-        for unit in packet.unit_summaries:
-            hits.extend(_summary_hit_if_match(terms, project_root, rel_path, packet, unit))
-        for micro in packet.micro_summaries:
-            hits.extend(_summary_hit_if_match(terms, project_root, rel_path, packet, micro))
-    return hits
-
-
-def _summary_hit_if_match(
-    terms: list[str],
-    project_root: Path,
-    rel_path: str,
-    packet: ContextPacket,
-    summary: UnitSummary | MicroSummary,
-) -> list[RetrievalHit]:
-    if isinstance(summary, UnitSummary):
-        source_type = "unit_summary"
-        item_id = summary.unit_id
-        title = summary.title
-        content = "\n".join(
-            [
-                summary.title,
-                summary.goal,
-                *summary.decisions,
-                *summary.progress,
-                *summary.open_questions,
-                *summary.related_pages,
-            ]
-        )
-        provenance = [_format_pointer(summary.provenance)] if summary.provenance else []
-    else:
-        source_type = "micro_summary"
-        item_id = summary.micro_id
-        title = summary.request or summary.summary[:80] or summary.micro_id
-        content = "\n".join(
-            [
-                summary.summary,
-                summary.why_it_matters,
-                summary.request or "",
-                summary.outcome or "",
-                *summary.key_points,
-                *summary.follow_up_questions,
-                *summary.files,
-                *summary.entities,
-                *summary.concepts,
-            ]
-        )
-        provenance = [_format_pointer(summary.provenance)] if summary.provenance else []
-
-    score = _score_text(content, terms)
-    if score <= 0:
-        return []
-    payload = {
-        "source_type": source_type,
-        "source_path": rel_path,
-        "packet_id": packet.packet_id,
-        "item_id": item_id,
-        "title": title,
-        "provenance": provenance,
-    }
-    return [
-        RetrievalHit(
-            hit_id=encode_hit_id(payload),
-            source_type=source_type,
-            source_path=rel_path,
-            title=title,
-            snippet=_make_snippet(content, terms),
-            score=score,
-            provenance=provenance,
-        )
-    ]
-
-
 def _search_raw_messages(terms: list[str], project_root: Path) -> list[RetrievalHit]:
     paths = HarnessPaths(project_root=project_root)
     db_path = paths.state_db_path
@@ -466,42 +359,12 @@ def _find_wiki_patch_operation(path: Path, patch_id: str) -> dict[str, object]:
             return operation
     raise KeyError(f"Missing patch_id={patch_id!r} in {path}")
 
-
-def _packet_search_text(packet: ContextPacket) -> str:
-    pieces: list[str] = [packet.packet_id, packet.task_title, packet.macro_context]
-    pieces.extend(packet.critical_files)
-    pieces.extend(packet.open_questions)
-    for unit in packet.unit_summaries:
-        pieces.extend([unit.title, unit.goal, *unit.decisions, *unit.progress, *unit.open_questions])
-    for micro in packet.micro_summaries:
-        pieces.extend(
-            [
-                micro.summary,
-                micro.why_it_matters,
-                micro.request or "",
-                micro.outcome or "",
-                *micro.key_points,
-                *micro.follow_up_questions,
-                *micro.files,
-                *micro.concepts,
-            ]
-        )
-    return "\n".join(piece for piece in pieces if piece)
-
-
 def _extract_markdown_title(content: str) -> str | None:
     for line in content.splitlines():
         stripped = line.strip()
         if stripped.startswith("# "):
             return stripped[2:].strip()
     return None
-
-
-def _format_pointer(pointer: RawSessionReference | None) -> str:
-    if pointer is None:
-        return ""
-    message_ids = ",".join(str(message_id) for message_id in pointer.message_ids)
-    return f"hermes-session:{pointer.session_id}#messages={message_ids}"
 
 
 def _hit_from_payload(payload: dict[str, Any], *, content: str) -> RetrievalHit:
