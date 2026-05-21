@@ -20,6 +20,8 @@ from .promotion import (
 from .recovery import build_recovery_brief
 from .raw_extract import build_typed_session_bundle, export_session_bundle
 from .summarizer import build_micro_summary, build_unit_summary
+from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
+from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,9 @@ class IntegrationResult:
     recovery_json_path: Path
     lint_issue_count: int
     skipped: bool = False
+    summary_micro_path: Path | None = None
+    summary_unit_path: Path | None = None
+    summary_evidence_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +47,7 @@ class PacketBuildArtifacts:
     raw_export_path: Path
     task_title: str
     unit_title: str
+    goal: str
     unit_summary: object
     packet: object
     packet_json_path: Path
@@ -253,6 +259,7 @@ def _build_packet_artifacts(
         raw_export_path=raw_export_path,
         task_title=resolved_task_title,
         unit_title=resolved_unit_title,
+        goal=resolved_goal,
         unit_summary=unit_summary,
         packet=packet,
         packet_json_path=packet_json_path,
@@ -349,21 +356,82 @@ def _export_lint_artifacts(*, paths: HarnessPaths, packet_id: str) -> LintArtifa
     )
 
 
+def _build_summary_routing_hints(*, summary_model: str | None, summary_budget: str | None) -> dict[str, object]:
+    hints: dict[str, object] = {}
+    if summary_model:
+        hints["model"] = summary_model
+    if summary_budget:
+        hints["budget"] = summary_budget
+    return hints
+
+
+def _export_v2_summary_artifacts(
+    *,
+    packet_artifacts: PacketBuildArtifacts,
+    session_id: str,
+    packet_id: str,
+    paths: HarnessPaths,
+    related_pages: list[str],
+    summary_mode: str,
+    summarizer_command: str | None,
+    agent_llm_router: AgentLLMRouter | None,
+    summary_model: str | None,
+    summary_budget: str | None,
+    summary_cache: bool,
+    llm_safety: LLMInputSafetyOptions | None,
+) -> SummaryArtifactResult:
+    session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
+    return build_v2_summary_artifacts(
+        session_bundle=session_bundle,
+        paths=paths,
+        options=SummaryOptions(
+            session_id=session_id,
+            packet_id=packet_id,
+            unit_title=packet_artifacts.unit_title,
+            goal=packet_artifacts.goal,
+            related_pages=list(related_pages),
+            summary_mode=summary_mode,
+            summarizer_command=summarizer_command,
+            routing_hints=_build_summary_routing_hints(
+                summary_model=summary_model,
+                summary_budget=summary_budget,
+            ),
+            summary_cache=summary_cache,
+            agent_llm_router=agent_llm_router,
+            llm_safety=llm_safety or LLMInputSafetyOptions(),
+        ),
+    )
+
+
+def _summary_artifact_paths(summary_artifacts: SummaryArtifactResult | None) -> dict[str, str]:
+    if summary_artifacts is None:
+        return {}
+    return {
+        "summary_micro_path": str(summary_artifacts.micro_path),
+        "summary_unit_path": str(summary_artifacts.unit_path),
+        "summary_evidence_path": str(summary_artifacts.evidence_path),
+    }
+
+
 def _build_base_artifact_paths(
     *,
     packet_artifacts: PacketBuildArtifacts,
     promoted_paths: dict[str, Path],
     lint_artifacts: LintArtifacts,
     promotion_mode: str,
+    summary_mode: str | None = None,
+    summary_artifacts: SummaryArtifactResult | None = None,
 ) -> dict[str, str]:
     artifact_paths = {
         "promotion_mode": promotion_mode,
+        "summary_mode": summary_mode or "",
         "raw_export_path": str(packet_artifacts.raw_export_path),
         "packet_json_path": str(packet_artifacts.packet_json_path),
         "packet_markdown_path": str(packet_artifacts.packet_markdown_path),
         "lint_json_path": str(lint_artifacts.json_path),
         "lint_markdown_path": str(lint_artifacts.markdown_path),
     }
+    artifact_paths.update(_summary_artifact_paths(summary_artifacts))
     artifact_paths.update({name: str(path) for name, path in promoted_paths.items()})
     return artifact_paths
 
@@ -374,10 +442,13 @@ def _completed_result_if_reusable(
     session_id: str,
     packet_id: str,
     promotion_mode: str,
+    summary_mode: str | None,
 ) -> IntegrationResult | None:
     if existing is None or existing.status != "completed":
         return None
     if existing.artifact_paths.get("promotion_mode") != promotion_mode:
+        return None
+    if existing.artifact_paths.get("summary_mode", "") != (summary_mode or ""):
         return None
     if not _completed_artifacts_exist(existing.artifact_paths, session_id):
         return None
@@ -408,7 +479,12 @@ def _completed_artifacts_exist(artifact_paths: dict[str, str], session_id: str) 
         "lint_markdown_path",
     ]
     optional_promotion_keys = ["query", "concept", "plan", "architecture"]
-    for key in [*required_keys, *[key for key in optional_promotion_keys if key in artifact_paths]]:
+    optional_summary_keys = ["summary_micro_path", "summary_unit_path", "summary_evidence_path"]
+    for key in [
+        *required_keys,
+        *[key for key in optional_promotion_keys if key in artifact_paths],
+        *[key for key in optional_summary_keys if key in artifact_paths],
+    ]:
         value = artifact_paths.get(key)
         if not value or not Path(value).exists():
             return False
@@ -455,6 +531,11 @@ def _result_from_artifacts(
         ),
         lint_issue_count=lint_issue_count,
         skipped=skipped,
+        summary_micro_path=Path(artifact_paths["summary_micro_path"]) if "summary_micro_path" in artifact_paths else None,
+        summary_unit_path=Path(artifact_paths["summary_unit_path"]) if "summary_unit_path" in artifact_paths else None,
+        summary_evidence_path=Path(artifact_paths["summary_evidence_path"])
+        if "summary_evidence_path" in artifact_paths
+        else None,
     )
 
 
@@ -497,6 +578,13 @@ def run_session_finalize_pipeline(
     goal: str | None = None,
     related_pages: list[str] | None = None,
     promotion_mode: str = "packet-only",
+    summary_mode: str | None = None,
+    summarizer_command: str | None = None,
+    agent_llm_router: AgentLLMRouter | None = None,
+    summary_model: str | None = None,
+    summary_budget: str | None = None,
+    summary_cache: bool = False,
+    llm_safety: LLMInputSafetyOptions | None = None,
     max_retry_attempts: int = 3,
 ) -> IntegrationResult:
     related_pages = list(related_pages or [])
@@ -514,6 +602,7 @@ def run_session_finalize_pipeline(
             session_id=session_id,
             packet_id=packet_id,
             promotion_mode=promotion_mode,
+            summary_mode=summary_mode,
         )
         if reusable_result is not None:
             return reusable_result
@@ -535,6 +624,22 @@ def run_session_finalize_pipeline(
                 goal=goal,
                 related_pages=related_pages,
             )
+            summary_artifacts = None
+            if summary_mode:
+                summary_artifacts = _export_v2_summary_artifacts(
+                    packet_artifacts=packet_artifacts,
+                    session_id=session_id,
+                    packet_id=packet_id,
+                    paths=paths,
+                    related_pages=related_pages,
+                    summary_mode=summary_mode,
+                    summarizer_command=summarizer_command,
+                    agent_llm_router=agent_llm_router,
+                    summary_model=summary_model,
+                    summary_budget=summary_budget,
+                    summary_cache=summary_cache,
+                    llm_safety=llm_safety,
+                )
             promoted_paths: dict[str, Path] = {}
             if promotion_mode == "full":
                 promotion_plan = _build_default_promotion_plan(
@@ -562,6 +667,8 @@ def run_session_finalize_pipeline(
                 promoted_paths=promoted_paths,
                 lint_artifacts=lint_artifacts,
                 promotion_mode=promotion_mode,
+                summary_mode=summary_mode,
+                summary_artifacts=summary_artifacts,
             )
             partial_artifact_paths = dict(base_artifact_paths)
             ledger.mark_completed(
@@ -600,6 +707,9 @@ def run_session_finalize_pipeline(
                 recovery_json_path=recovery_brief.recovery_json_path,
                 lint_issue_count=lint_artifacts.issue_count,
                 skipped=False,
+                summary_micro_path=summary_artifacts.micro_path if summary_artifacts is not None else None,
+                summary_unit_path=summary_artifacts.unit_path if summary_artifacts is not None else None,
+                summary_evidence_path=summary_artifacts.evidence_path if summary_artifacts is not None else None,
             )
         except Exception as exc:
             ledger.mark_failed(

@@ -160,14 +160,12 @@ class AgentLLMSummarizerBackend:
             )
 
     def _call_router(self, request: dict[str, object]) -> dict[str, object]:
-        response = self.router(_prepare_llm_request(request, safety=self.llm_safety))
-        if isinstance(response, str):
-            parsed = json.loads(response)
-        else:
-            parsed = response
-        if not isinstance(parsed, dict):
-            raise ValueError("Agent LLM router must return a JSON object or JSON object string")
-        return parsed
+        return _call_router_with_json_repair(
+            router=self.router,
+            request=request,
+            safety=self.llm_safety,
+            error_label="Agent LLM router",
+        )
 
     def _raise_if_micro_summary_fails_lint(
         self,
@@ -286,14 +284,12 @@ class HybridSummarizerBackend:
             )
 
     def _call_router(self, request: dict[str, object]) -> dict[str, object]:
-        response = self.router(_prepare_llm_request(request, safety=self.llm_safety))
-        if isinstance(response, str):
-            parsed = json.loads(response)
-        else:
-            parsed = response
-        if not isinstance(parsed, dict):
-            raise ValueError("Hybrid Agent LLM router must return a JSON object or JSON object string")
-        return parsed
+        return _call_router_with_json_repair(
+            router=self.router,
+            request=request,
+            safety=self.llm_safety,
+            error_label="Hybrid Agent LLM router",
+        )
 
     def _raise_if_micro_summary_fails_lint(
         self,
@@ -513,6 +509,39 @@ def _messages_to_raw(messages: list[EvidenceMessage]) -> list[dict[str, object]]
         {"id": message.message_id, "role": message.role, "content": message.content}
         for message in messages
     ]
+
+
+def _call_router_with_json_repair(
+    *,
+    router: AgentLLMRouter,
+    request: dict[str, object],
+    safety: LLMInputSafetyOptions,
+    error_label: str,
+) -> dict[str, object]:
+    response = router(_prepare_llm_request(request, safety=safety))
+    try:
+        return _parse_router_json_response(response, error_label=error_label)
+    except json.JSONDecodeError as exc:
+        repair_request = {
+            "kind": "repair-json",
+            "schema_version": request.get("schema_version"),
+            "invalid_json": response,
+            "json_error": str(exc),
+            "original_request": request,
+            "instruction": "Return only one strict JSON object matching the original schema.",
+        }
+        repaired_response = router(_prepare_llm_request(repair_request, safety=safety))
+        return _parse_router_json_response(repaired_response, error_label=error_label)
+
+
+def _parse_router_json_response(response: dict[str, object] | str, *, error_label: str) -> dict[str, object]:
+    if isinstance(response, str):
+        parsed = json.loads(response)
+    else:
+        parsed = response
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{error_label} must return a JSON object or JSON object string")
+    return parsed
 
 
 def _prepare_llm_request(request: dict[str, object], *, safety: LLMInputSafetyOptions) -> dict[str, object]:

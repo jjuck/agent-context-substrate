@@ -57,6 +57,54 @@ def _load_lint_api():
     return lint.lint_wiki, lint.export_lint_report
 
 
+def _load_agent_llm_router_builder():
+    config = load_plugin_config()
+    _ensure_harness_on_path(config)
+    router_module = importlib.import_module("agent_context_substrate.agent_llm_router")
+    return router_module.build_agent_llm_router
+
+
+def _load_llm_safety_options_class():
+    config = load_plugin_config()
+    _ensure_harness_on_path(config)
+    summarizer_backends = importlib.import_module("agent_context_substrate.summarizer_backends")
+    return summarizer_backends.LLMInputSafetyOptions
+
+
+def _host_agent_from_kwargs(kwargs: dict[str, object]) -> object | None:
+    for key in ("host", "agent", "context", "ctx", "plugin_context"):
+        candidate = kwargs.get(key)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _summary_pipeline_kwargs(config: AgentContextSubstratePluginConfig, hook_kwargs: dict[str, object]) -> dict[str, object]:
+    summary_mode = str(getattr(config, "summary_mode", "") or "").strip().lower()
+    if not summary_mode or summary_mode in {"off", "none", "disabled"}:
+        return {}
+
+    agent_llm_router = None
+    if summary_mode in {"agent-llm", "hybrid"}:
+        host_agent = _host_agent_from_kwargs(hook_kwargs)
+        if host_agent is not None:
+            agent_llm_router = _load_agent_llm_router_builder()(host_agent)
+
+    llm_safety_class = _load_llm_safety_options_class()
+    return {
+        "summary_mode": summary_mode,
+        "agent_llm_router": agent_llm_router,
+        "summary_model": getattr(config, "summary_model", None),
+        "summary_budget": getattr(config, "summary_budget", None),
+        "summary_cache": bool(getattr(config, "summary_cache", False)),
+        "llm_safety": llm_safety_class(
+            redact=bool(getattr(config, "llm_redact", True)),
+            max_input_chars=int(getattr(config, "llm_max_input_chars", 12_000)),
+            allow_code_snippets=bool(getattr(config, "llm_allow_code_snippets", False)),
+        ),
+    }
+
+
 def _diagnose_config(config: AgentContextSubstratePluginConfig) -> dict[str, object]:
     project_exists = config.project_root.exists()
     wiki_exists = config.wiki_root.exists()
@@ -428,6 +476,7 @@ def handle_session_finalize(*, session_id: str | None = None, platform: str | No
             project_root=config.project_root,
             wiki_root=config.wiki_root,
             promotion_mode=getattr(config, "promotion_mode", "packet-only"),
+            **_summary_pipeline_kwargs(config, kwargs),
         )
         return {
             "status": "processed" if not result.skipped else "reused",

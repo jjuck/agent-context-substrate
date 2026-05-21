@@ -132,6 +132,115 @@ def test_run_session_finalize_pipeline_defaults_to_packet_only_without_wiki_prom
     assert payload["unit_summaries"][0]["session_id"] == "session-1"
 
 
+class IntegrationRecordingRouter:
+    def __init__(self) -> None:
+        self.requests: list[dict[str, object]] = []
+
+    def __call__(self, request: dict[str, object]) -> dict[str, object]:
+        self.requests.append(request)
+        if request["kind"] == "micro":
+            evidence = request["evidence"]
+            return {
+                "micro_id": evidence["micro_id"],
+                "session_id": evidence["session_id"],
+                "message_ids": evidence["message_ids"],
+                "recovery_summary": "agent recovery summary",
+                "knowledge_summary": "agent knowledge summary",
+                "retrieval_summary": "Agent LLM router integration agent-context-substrate",
+                "user_intent": "use agent llm router",
+                "assistant_outcome": "exported agent llm summary",
+                "decisions": [
+                    {
+                        "text": "Use host Agent LLM router",
+                        "evidence_message_ids": evidence["message_ids"],
+                        "confidence": 0.9,
+                    }
+                ],
+                "claims": [],
+                "action_items": [],
+                "open_questions": [],
+                "files": [],
+                "entities": [],
+                "concepts": ["agent-context-substrate"],
+                "metadata": {
+                    "mode": "agent-llm",
+                    "schema_version": "micro_summary_v2",
+                    "prompt_version": "agent_llm_v1",
+                    "model": None,
+                    "input_hash": "sha256:integration-micro",
+                    "created_at": "2026-05-15T00:00:00+00:00",
+                    "confidence": 0.9,
+                },
+                "provenance": None,
+            }
+        micro = request["micro_summaries"][0]
+        return {
+            "unit_id": request["unit_id"],
+            "session_id": request["session_id"],
+            "title": request["title"],
+            "goal": request["goal"],
+            "state": "completed",
+            "decisions": micro["decisions"],
+            "progress": ["exported agent llm summary"],
+            "next_actions": [],
+            "open_questions": [],
+            "risk_notes": [],
+            "wiki_candidates": [],
+            "micro_ids": [micro["micro_id"]],
+            "related_pages": request["related_pages"],
+            "metadata": {
+                "mode": "agent-llm",
+                "schema_version": "unit_summary_v2",
+                "prompt_version": "agent_llm_v1",
+                "model": None,
+                "input_hash": "sha256:integration-unit",
+                "created_at": "2026-05-15T00:00:00+00:00",
+                "confidence": 0.9,
+            },
+            "provenance": None,
+        }
+
+
+def test_run_session_finalize_pipeline_exports_agent_llm_v2_summaries_with_injected_router(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    wiki_root = tmp_path / "wiki"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+    router = IntegrationRecordingRouter()
+
+    result = run_session_finalize_pipeline(
+        session_id="session-1",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        summary_mode="agent-llm",
+        agent_llm_router=router,
+        summary_model="host-default",
+        summary_budget="cheap",
+    )
+
+    assert result.summary_micro_path is not None
+    assert result.summary_unit_path is not None
+    assert result.summary_evidence_path is not None
+    micro_payload = json.loads(result.summary_micro_path.read_text(encoding="utf-8"))
+    unit_payload = json.loads(result.summary_unit_path.read_text(encoding="utf-8"))
+    assert micro_payload["metadata"]["mode"] == "agent-llm"
+    assert unit_payload["metadata"]["mode"] == "agent-llm"
+    assert [request["kind"] for request in router.requests] == ["micro", "unit"]
+    assert router.requests[0]["routing_hints"] == {"model": "host-default", "budget": "cheap"}
+
+    ledger = SessionLedger(project_root / "data" / "index" / "session_ledger.json")
+    record = ledger.get_record("session-1", "session_finalize")
+    assert record is not None
+    assert Path(record.artifact_paths["summary_micro_path"]) == result.summary_micro_path
+    assert Path(record.artifact_paths["summary_unit_path"]) == result.summary_unit_path
+    assert Path(record.artifact_paths["summary_evidence_path"]) == result.summary_evidence_path
+
+
 def test_run_session_finalize_pipeline_full_mode_writes_legacy_promotions(tmp_path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()

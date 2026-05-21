@@ -31,8 +31,11 @@ def retrieval_tool_schemas() -> List[Dict[str, Any]]:
                     },
                     "mode": {
                         "type": "string",
-                        "enum": ["knowledge", "graph"],
-                        "description": "Retrieval mode. Use graph to search topic-map nodes, edges, and readable paths only.",
+                        "enum": ["knowledge", "graph", "recovery"],
+                        "description": (
+                            "Retrieval mode. Use graph to search topic-map nodes, edges, and readable paths only. "
+                            "Use recovery to find where prior work stopped from recovery briefs and packet fields."
+                        ),
                     },
                     "graph_depth": {
                         "type": "integer",

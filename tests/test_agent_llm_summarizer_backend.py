@@ -11,6 +11,7 @@ from agent_context_substrate.evidence import build_micro_evidence_bundle  # noqa
 from agent_context_substrate.summarizer_backends import (  # noqa: E402
     AgentLLMSummarizerBackend,
     HeuristicSummarizerBackend,
+    HybridSummarizerBackend,
     get_summarizer_backend,
 )
 
@@ -119,6 +120,59 @@ def test_agent_llm_summarizer_backend_uses_router_for_micro_and_unit_summaries()
     assert router.requests[0]["schema_version"] == "micro_summary_v2"
     assert router.requests[0]["routing_hints"] == {"budget": "cheap"}
     assert router.requests[1]["kind"] == "unit"
+
+
+def test_agent_llm_summarizer_backend_repairs_invalid_json_once() -> None:
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-agent-json-repair")
+
+    class RepairingRouter:
+        def __init__(self) -> None:
+            self.requests: list[dict[str, object]] = []
+
+        def __call__(self, request: dict[str, object]) -> dict[str, object] | str:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return "{broken json"
+            assert request["kind"] == "repair-json"
+            assert request["original_request"]["kind"] == "micro"
+            assert "broken json" in request["invalid_json"]
+            return _micro_payload(request["original_request"]["evidence"])
+
+    router = RepairingRouter()
+    backend = AgentLLMSummarizerBackend(router=router, fallback_backend=HeuristicSummarizerBackend())
+
+    micro = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert micro.metadata.mode == "agent-llm"
+    assert micro.metadata.fallback_from is None
+    assert [request["kind"] for request in router.requests] == ["micro", "repair-json"]
+
+
+def test_hybrid_summarizer_backend_repairs_invalid_json_once() -> None:
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-hybrid-json-repair")
+
+    class RepairingRouter:
+        def __init__(self) -> None:
+            self.requests: list[dict[str, object]] = []
+
+        def __call__(self, request: dict[str, object]) -> dict[str, object] | str:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return "not json"
+            assert request["kind"] == "repair-json"
+            assert request["original_request"]["kind"] == "micro"
+            payload = _micro_payload(request["original_request"]["evidence"])
+            payload["metadata"]["mode"] = "hybrid"
+            return payload
+
+    router = RepairingRouter()
+    backend = HybridSummarizerBackend(router=router, heuristic_backend=HeuristicSummarizerBackend())
+
+    micro = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert micro.metadata.mode == "hybrid"
+    assert micro.metadata.fallback_from is None
+    assert [request["kind"] for request in router.requests] == ["micro", "repair-json"]
 
 
 def test_agent_llm_summarizer_backend_falls_back_when_unit_summary_fails_lint() -> None:
