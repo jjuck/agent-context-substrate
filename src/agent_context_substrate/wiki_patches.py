@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ class WikiPatchApplyResult:
     applied_patch_ids: list[str]
     skipped_patch_ids: list[str]
     planned_patch_ids: list[str]
+    skipped_reasons: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -30,6 +31,7 @@ class WikiPatchApplyResult:
             "applied_patch_ids": list(self.applied_patch_ids),
             "skipped_patch_ids": list(self.skipped_patch_ids),
             "planned_patch_ids": list(self.planned_patch_ids),
+            "skipped_reasons": dict(self.skipped_reasons),
         }
 
 
@@ -120,6 +122,7 @@ def plan_wiki_patch_proposal(
         claim_block = _claim_block_for_candidate(candidate)
         before = _existing_claim_block(existing_text)
         operation = "insert_claim_block" if target_path.exists() else "create_page"
+        after = claim_block if operation != "create_page" else _seed_page_for_candidate(candidate=candidate, target_path=target_path)
         operations.append(
             WikiPatchOperation(
                 patch_id=f"{packet_id}-patch-{index}",
@@ -129,7 +132,7 @@ def plan_wiki_patch_proposal(
                 rationale=candidate.reason,
                 evidence=list(candidate.evidence),
                 risk="low" if target_path.exists() else "medium",
-                diff={"before": before, "after": claim_block},
+                diff={"before": before, "after": after},
                 status="proposed",
             )
         )
@@ -189,15 +192,27 @@ def apply_wiki_patch_proposal(
     planned_patch_ids: list[str] = []
     applied_patch_ids: list[str] = []
     skipped_patch_ids: list[str] = []
+    skipped_reasons: dict[str, str] = {}
 
     for operation in proposal.operations:
         if operation.status != "proposed":
             skipped_patch_ids.append(operation.patch_id)
+            skipped_reasons[operation.patch_id] = f"status is {operation.status}, expected proposed"
             continue
         planned_patch_ids.append(operation.patch_id)
         target_path = _safe_target_path(wiki_root=wiki_root, target=operation.target)
-        if target_path is None or operation.operation not in ALPHA_WIKI_PATCH_OPERATIONS:
+        if target_path is None:
             skipped_patch_ids.append(operation.patch_id)
+            skipped_reasons[operation.patch_id] = "unsafe target path"
+            continue
+        if operation.operation not in ALPHA_WIKI_PATCH_OPERATIONS:
+            skipped_patch_ids.append(operation.patch_id)
+            skipped_reasons[operation.patch_id] = f"unsupported operation: {operation.operation}"
+            continue
+        conflict_reason = _preflight_conflict_reason(operation=operation, target_path=target_path)
+        if conflict_reason is not None:
+            skipped_patch_ids.append(operation.patch_id)
+            skipped_reasons[operation.patch_id] = conflict_reason
             continue
         if dry_run:
             continue
@@ -209,6 +224,7 @@ def apply_wiki_patch_proposal(
         applied_patch_ids=applied_patch_ids,
         skipped_patch_ids=skipped_patch_ids,
         planned_patch_ids=planned_patch_ids,
+        skipped_reasons=skipped_reasons,
     )
 
 
@@ -232,6 +248,23 @@ def _claim_block_for_candidate(candidate: PromotionCandidate) -> str:
     )
 
 
+def _seed_page_for_candidate(*, candidate: PromotionCandidate, target_path: Path) -> str:
+    title = target_path.stem.replace("-", " ").title()
+    return "\n".join(
+        [
+            "---",
+            "status: seed",
+            "maturity: 0.2",
+            "review_needed: true",
+            "---",
+            f"# {title}",
+            "",
+            _claim_block_for_candidate(candidate),
+            "",
+        ]
+    )
+
+
 def _existing_claim_block(markdown: str) -> str:
     start = markdown.find(MANAGED_CLAIMS_START)
     end = markdown.find(MANAGED_CLAIMS_END)
@@ -244,12 +277,28 @@ def _safe_target_path(*, wiki_root: Path, target: str) -> Path | None:
     return safe_wiki_target_path(wiki_root=wiki_root, target=target)
 
 
+def _preflight_conflict_reason(*, operation: WikiPatchOperation, target_path: Path) -> str | None:
+    if operation.operation == "create_page" and target_path.exists():
+        return "conflict: create_page target already exists"
+    if operation.operation not in {"insert_claim_block", "create_page"}:
+        return None
+    expected_before = operation.diff.get("before", "")
+    current_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+    current_before = _existing_claim_block(current_text)
+    if current_before != expected_before:
+        return "conflict: current managed claim block differs from proposal before"
+    return None
+
+
 def _apply_operation(*, operation: WikiPatchOperation, target_path: Path) -> None:
     after = operation.diff.get("after", "")
     if operation.operation == "create_page" and not target_path.exists():
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        title = target_path.stem.replace("-", " ").title()
-        target_path.write_text(f"# {title}\n\n{after}\n", encoding="utf-8")
+        if after.startswith("---\n") or after.startswith("# "):
+            target_path.write_text(after, encoding="utf-8")
+        else:
+            title = target_path.stem.replace("-", " ").title()
+            target_path.write_text(f"# {title}\n\n{after}\n", encoding="utf-8")
         return
 
     existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""

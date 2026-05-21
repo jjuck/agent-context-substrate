@@ -271,6 +271,164 @@ def load_all_promotion_payloads(paths: HarnessPaths) -> list[dict[str, object]]:
     return items
 
 
+PROMOTION_REVIEW_ACTION_STATUSES = {
+    "accept": "accepted",
+    "reject": "rejected",
+    "supersede": "superseded",
+    "apply": "applied",
+}
+PROMOTION_REVIEW_STATUSES = {"pending", "accepted", "rejected", "applied", "superseded"}
+
+
+def normalize_promotion_review_status(*, status: str | None = None, action: str | None = None) -> str | None:
+    if action and status:
+        raise ValueError("Use either action or status, not both")
+    if action:
+        normalized_action = action.strip().lower()
+        if normalized_action not in PROMOTION_REVIEW_ACTION_STATUSES:
+            raise ValueError(
+                f"Unsupported promotion action={action!r}; expected one of {sorted(PROMOTION_REVIEW_ACTION_STATUSES)}"
+            )
+        return PROMOTION_REVIEW_ACTION_STATUSES[normalized_action]
+    if status:
+        normalized_status = status.strip().lower()
+        if normalized_status not in PROMOTION_REVIEW_STATUSES:
+            raise ValueError(f"Unsupported promotion status={status!r}; expected one of {sorted(PROMOTION_REVIEW_STATUSES)}")
+        return normalized_status
+    return None
+
+
+def find_promotion_candidate(
+    *, paths: HarnessPaths, candidate_id: str
+) -> tuple[Path, list[object], dict[str, object]]:
+    promotions_dir = paths.project_root / "data" / "promotions"
+    for path in sorted(promotions_dir.glob("*.json")) if promotions_dir.exists() else []:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            continue
+        for item in payload:
+            if isinstance(item, dict) and item.get("candidate_id") == candidate_id:
+                return path, payload, item
+    raise KeyError(f"Promotion candidate not found: {candidate_id}")
+
+
+def update_promotion_candidate_status(
+    *,
+    paths: HarnessPaths,
+    candidate_id: str,
+    status: str | None = None,
+    action: str | None = None,
+    reviewer: str | None = None,
+    note: str | None = None,
+) -> tuple[Path, dict[str, object]]:
+    normalized_status = normalize_promotion_review_status(status=status, action=action)
+    if normalized_status is None:
+        raise ValueError("Promotion review requires status or action")
+
+    path, payload, item = find_promotion_candidate(paths=paths, candidate_id=candidate_id)
+    item["status"] = normalized_status
+    item["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    if reviewer is not None and reviewer.strip():
+        item["reviewer"] = reviewer.strip()
+    if note is not None and note.strip():
+        item["review_note"] = note.strip()
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path, dict(item)
+
+
+def render_promotion_evidence_preview(*, paths: HarnessPaths, candidate_id: str) -> str:
+    _, _, item = find_promotion_candidate(paths=paths, candidate_id=candidate_id)
+    atom_lookup = load_atom_payloads_by_evidence_ref(paths)
+    lines = [
+        " ".join(
+            [
+                f"promotion {item.get('candidate_id', '')}",
+                f"packet={item.get('packet_id', '')}",
+                f"status={item.get('status', '')}",
+                f"kind={item.get('kind', '')}",
+            ]
+        ),
+        " ".join(
+            [
+                f"target={item.get('target_page', '')}",
+                f"confidence={item.get('confidence', '')}",
+                f"action={item.get('proposed_action', '')}",
+            ]
+        ),
+        f"reason: {item.get('reason', '')}",
+        f"proposed_change: {item.get('proposed_change', '')}",
+        "evidence:",
+    ]
+    evidence = item.get("evidence", [])
+    if isinstance(evidence, list) and evidence:
+        for evidence_item in evidence:
+            lines.extend(render_evidence_item_preview(evidence_item, atom_lookup=atom_lookup))
+    else:
+        lines.append("- (none)")
+    return "\n".join(str(line) for line in lines)
+
+
+def load_atom_payloads_by_evidence_ref(paths: HarnessPaths) -> dict[str, dict[str, object]]:
+    atoms_dir = paths.project_root / "data" / "atoms"
+    atom_files = {
+        "claim": atoms_dir / "claims.jsonl",
+        "decision": atoms_dir / "decisions.jsonl",
+        "entity": atoms_dir / "entities.jsonl",
+        "concept": atoms_dir / "concepts.jsonl",
+        "question": atoms_dir / "questions.jsonl",
+    }
+    lookup: dict[str, dict[str, object]] = {}
+    for prefix, path in atom_files.items():
+        for atom in load_jsonl_dicts(path):
+            atom_id = atom.get("atom_id")
+            if not atom_id:
+                continue
+            lookup[str(atom_id)] = atom
+            lookup[f"{prefix}:{atom_id}"] = atom
+    return lookup
+
+
+def render_evidence_item_preview(
+    evidence_item: object,
+    *,
+    atom_lookup: dict[str, dict[str, object]],
+) -> list[str]:
+    label = evidence_label(evidence_item)
+    lines = [f"- {label}"]
+    atom = atom_lookup.get(label)
+    if atom is None and ":" in label:
+        atom = atom_lookup.get(label.split(":", 1)[1])
+    if atom is None:
+        return lines
+
+    text = atom.get("text") or atom.get("name")
+    if text:
+        lines.append(f"  text: {text}")
+    source_refs = atom.get("source_refs")
+    if isinstance(source_refs, list) and source_refs:
+        lines.append("  source_refs: " + ", ".join(str(ref) for ref in source_refs))
+    details: list[str] = []
+    if "confidence" in atom:
+        details.append(f"confidence={atom.get('confidence')}")
+    if atom.get("status"):
+        details.append(f"status={atom.get('status')}")
+    if atom.get("type"):
+        details.append(f"type={atom.get('type')}")
+    if details:
+        lines.append("  " + " ".join(details))
+    subjects = atom.get("subjects")
+    if isinstance(subjects, list) and subjects:
+        lines.append("  subjects: " + ", ".join(str(subject) for subject in subjects))
+    return lines
+
+
+def evidence_label(evidence_item: object) -> str:
+    if isinstance(evidence_item, dict):
+        label = evidence_item.get("id") or evidence_item.get("atom_id") or evidence_item.get("source")
+        return str(label if label is not None else evidence_item)
+    return str(evidence_item)
+
+
 def render_promotions_listing(*, paths: HarnessPaths, status: str | None = None) -> str:
     promotions = load_all_promotion_payloads(paths)
     if status:

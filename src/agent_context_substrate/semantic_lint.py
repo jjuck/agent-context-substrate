@@ -129,6 +129,8 @@ def _lint_patch_proposals(
 
 def _lint_claim_atoms(claim_atoms: list[dict[str, object]]) -> list[SemanticLintIssue]:
     issues: list[SemanticLintIssue] = []
+    duplicate_candidates: dict[str, list[str]] = defaultdict(list)
+    stale_claims: list[tuple[str, str]] = []
     for claim in claim_atoms:
         atom_id = str(claim.get("atom_id", ""))
         if not claim.get("source_refs"):
@@ -140,6 +142,34 @@ def _lint_claim_atoms(claim_atoms: list[dict[str, object]]) -> list[SemanticLint
                     message="Claim atom has no source_refs.",
                 )
             )
+        status = str(claim.get("status", "active")).strip().lower()
+        if status in {"stale", "deprecated"}:
+            stale_claims.append((atom_id, status))
+        if status == "active":
+            normalized_text = _normalize_name(str(claim.get("text", "")))
+            if normalized_text:
+                duplicate_candidates[normalized_text].append(atom_id)
+
+    for normalized_text, atom_ids in sorted(duplicate_candidates.items()):
+        if len(atom_ids) <= 1:
+            continue
+        issues.append(
+            SemanticLintIssue(
+                code="duplicate_claim",
+                severity="warning",
+                ref=f"claim:{normalized_text}",
+                message=f"Active claim atoms duplicate the same normalized text: {', '.join(atom_ids)}.",
+            )
+        )
+    for atom_id, status in stale_claims:
+        issues.append(
+            SemanticLintIssue(
+                code="stale_claim",
+                severity="warning",
+                ref=f"claim:{atom_id}",
+                message=f"Claim atom is marked {status} and should be reviewed before promotion.",
+            )
+        )
     return issues
 
 

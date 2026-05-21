@@ -204,6 +204,49 @@ def test_lint_promotion_substrate_reports_claims_without_source_and_duplicate_co
     ]
 
 
+def test_lint_promotion_substrate_reports_duplicate_and_stale_claim_atoms() -> None:
+    report = lint_promotion_substrate(
+        promotions=[],
+        patch_proposals=[],
+        applied_patch_records=[],
+        claim_atoms=[
+            {
+                "atom_id": "claim-1",
+                "text": "Recovery mode is exposed to agents.",
+                "source_refs": ["summary:1"],
+                "status": "active",
+            },
+            {
+                "atom_id": "claim-2",
+                "text": " recovery   mode is exposed to agents. ",
+                "source_refs": ["summary:2"],
+                "status": "active",
+            },
+            {
+                "atom_id": "claim-3",
+                "text": "Legacy session resume path remains primary.",
+                "source_refs": ["summary:3"],
+                "status": "stale",
+            },
+        ],
+    )
+
+    assert report.issues == [
+        SemanticLintIssue(
+            code="duplicate_claim",
+            severity="warning",
+            ref="claim:recovery mode is exposed to agents.",
+            message="Active claim atoms duplicate the same normalized text: claim-1, claim-2.",
+        ),
+        SemanticLintIssue(
+            code="stale_claim",
+            severity="warning",
+            ref="claim:claim-3",
+            message="Claim atom is marked stale and should be reviewed before promotion.",
+        ),
+    ]
+
+
 def test_lint_promotion_substrate_reports_promotion_backlog() -> None:
     report = lint_promotion_substrate(
         promotions=[

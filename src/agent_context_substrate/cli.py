@@ -10,8 +10,10 @@ from .artifact_pipeline import (
     export_semantic_lint_report,
     export_wiki_patch_proposal,
     lint_promotions,
+    render_promotion_evidence_preview,
     render_promotions_listing,
     render_wiki_patches_listing,
+    update_promotion_candidate_status,
 )
 from .commands.artifacts import (
     handle_build_topic_map_command,
@@ -19,6 +21,7 @@ from .commands.artifacts import (
     handle_extract_session_command,
     handle_lint_promotions_command,
     handle_propose_promotions_command,
+    handle_review_promotion_command,
 )
 from .commands.build_context_packet import (
     build_llm_safety_options,
@@ -108,6 +111,35 @@ def build_parser() -> argparse.ArgumentParser:
     list_promotions = subparsers.add_parser("list-promotions", help="List promotion queue candidates")
     list_promotions.add_argument("--status", help="Optional promotion status filter, e.g. pending or applied")
     _add_project_root_argument(list_promotions)
+
+    review_promotion = subparsers.add_parser(
+        "review-promotion",
+        help="Review one promotion candidate: preview evidence or accept/reject/supersede/apply it",
+    )
+    review_promotion.add_argument(
+        "--candidate-id",
+        action="append",
+        required=True,
+        help="Promotion candidate id to review; repeat for batch status updates",
+    )
+    review_promotion.add_argument(
+        "--action",
+        choices=["accept", "reject", "supersede", "apply"],
+        help="Review action to map to accepted/rejected/superseded/applied status",
+    )
+    review_promotion.add_argument(
+        "--status",
+        choices=["pending", "accepted", "rejected", "superseded", "applied"],
+        help="Direct status override; kept for script compatibility",
+    )
+    review_promotion.add_argument("--reviewer", help="Optional reviewer identity to record")
+    review_promotion.add_argument("--note", help="Optional review note to record")
+    review_promotion.add_argument(
+        "--preview-evidence",
+        action="store_true",
+        help="Print candidate reason/proposed change/evidence before mutating; read-only if no action/status is given",
+    )
+    _add_project_root_argument(review_promotion)
 
     list_wiki_patches = subparsers.add_parser("list-wiki-patches", help="List wiki patch proposals and applied patch records")
     list_wiki_patches.add_argument("--status", choices=["proposed", "applied"], help="Optional patch status filter")
@@ -530,6 +562,14 @@ def main(argv: list[str] | None = None) -> int:
             args=args,
             paths=paths,
             render_promotions_listing=render_promotions_listing,
+        )
+
+    if args.command == "review-promotion":
+        return handle_review_promotion_command(
+            args=args,
+            paths=paths,
+            update_promotion_candidate_status=update_promotion_candidate_status,
+            render_promotion_evidence_preview=render_promotion_evidence_preview,
         )
 
     if args.command == "list-wiki-patches":

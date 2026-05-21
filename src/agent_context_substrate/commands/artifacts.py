@@ -13,6 +13,8 @@ ExportAtoms = Callable[..., list[Path]]
 ExportPromotionCandidates = Callable[..., tuple[Path, Path]]
 LintPromotions = Callable[..., Any]
 ExportSemanticLintReport = Callable[..., tuple[Path, Path]]
+UpdatePromotionCandidateStatus = Callable[..., tuple[Path, dict[str, object]]]
+RenderPromotionEvidencePreview = Callable[..., str]
 
 
 def handle_extract_session_command(*, args: Any, paths: HarnessPaths) -> int:
@@ -55,6 +57,38 @@ def handle_lint_promotions_command(
     print(lint_markdown_path)
     if args.fail_on_issues and not report.ok:
         return 1
+    return 0
+
+
+def handle_review_promotion_command(
+    *,
+    args: Any,
+    paths: HarnessPaths,
+    update_promotion_candidate_status: UpdatePromotionCandidateStatus,
+    render_promotion_evidence_preview: RenderPromotionEvidencePreview,
+) -> int:
+    candidate_ids = getattr(args, "candidate_id", [])
+    if isinstance(candidate_ids, str):
+        candidate_ids = [candidate_ids]
+    if getattr(args, "preview_evidence", False):
+        for index, candidate_id in enumerate(candidate_ids):
+            if index:
+                print()
+            print(render_promotion_evidence_preview(paths=paths, candidate_id=candidate_id))
+    action = getattr(args, "action", None)
+    status = getattr(args, "status", None)
+    if not action and not status:
+        return 0
+    for candidate_id in candidate_ids:
+        updated_path, updated = update_promotion_candidate_status(
+            paths=paths,
+            candidate_id=candidate_id,
+            action=action,
+            status=status,
+            reviewer=getattr(args, "reviewer", None),
+            note=getattr(args, "note", None),
+        )
+        print(f"updated {updated.get('candidate_id', candidate_id)} status={updated.get('status')} file={updated_path}")
     return 0
 
 

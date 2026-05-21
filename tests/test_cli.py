@@ -62,6 +62,20 @@ from agent_context_substrate.cli import main  # noqa: E402
         ),
         ("handle_apply_wiki_patch_command", ["apply-wiki-patch", "--patch-file", "{patch}", "--project-root", "{project}"]),
         ("handle_list_promotions_command", ["list-promotions", "--project-root", "{project}"]),
+        (
+            "handle_review_promotion_command",
+            [
+                "review-promotion",
+                "--candidate-id",
+                "packet-1-candidate-1",
+                "--status",
+                "accepted",
+                "--note",
+                "looks useful",
+                "--project-root",
+                "{project}",
+            ],
+        ),
         ("handle_list_wiki_patches_command", ["list-wiki-patches", "--project-root", "{project}"]),
         ("handle_lint_promotions_command", ["lint-promotions", "--project-root", "{project}"]),
         ("handle_build_topic_map_command", ["build-topic-map", "--project-root", "{project}"]),
@@ -1231,6 +1245,207 @@ def test_cli_list_promotions_can_filter_status(tmp_path, monkeypatch, capsys) ->
     assert "promotions total=1 pending=1" in captured.out
     assert "packet-1-candidate-1" in captured.out
     assert "packet-1-candidate-2" not in captured.out
+
+
+def test_cli_review_promotion_accepts_action_and_prints_evidence_preview(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    promotion_path = project_root / "data" / "promotions" / "packet-1.json"
+    _write(
+        promotion_path,
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Keep heuristic default.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Heuristic summarizer should remain default.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "review-promotion",
+            "--candidate-id",
+            "packet-1-candidate-1",
+            "--action",
+            "accept",
+            "--reviewer",
+            "reviewer-1",
+            "--note",
+            "ship it",
+            "--preview-evidence",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(promotion_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload[0]["status"] == "accepted"
+    assert payload[0]["reviewer"] == "reviewer-1"
+    assert "promotion packet-1-candidate-1 packet=packet-1 status=pending kind=concept_update" in captured.out
+    assert "evidence:" in captured.out
+    assert "updated packet-1-candidate-1 status=accepted" in captured.out
+
+
+def test_cli_review_promotion_preview_evidence_is_read_only(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    promotion_path = project_root / "data" / "promotions" / "packet-1.json"
+    _write(
+        promotion_path,
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Review before promoting.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Add review-first queue UX.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "review-promotion",
+            "--candidate-id",
+            "packet-1-candidate-1",
+            "--preview-evidence",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(promotion_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload[0]["status"] == "pending"
+    assert "proposed_change: Add review-first queue UX." in captured.out
+    assert "updated packet-1-candidate-1" not in captured.out
+
+
+def test_cli_review_promotion_supports_reject_supersede_and_apply_actions(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    promotion_path = project_root / "data" / "promotions" / "packet-1.json"
+    base_candidate = {
+        "candidate_id": "packet-1-candidate-1",
+        "packet_id": "packet-1",
+        "kind": "concept_update",
+        "target_page": "summarization",
+        "reason": "Review status transitions.",
+        "evidence": ["claim:packet-1-claim-1"],
+        "proposed_change": "Transition status.",
+        "proposed_action": "update_existing",
+        "confidence": 0.75,
+        "status": "pending",
+    }
+    _write(promotion_path, json.dumps([base_candidate], ensure_ascii=False))
+
+    for action, expected_status in [("reject", "rejected"), ("supersede", "superseded"), ("apply", "applied")]:
+        exit_code = main(
+            [
+                "review-promotion",
+                "--candidate-id",
+                "packet-1-candidate-1",
+                "--action",
+                action,
+                "--project-root",
+                str(project_root),
+            ]
+        )
+        captured = capsys.readouterr()
+        payload = json.loads(promotion_path.read_text(encoding="utf-8"))
+        assert exit_code == 0
+        assert payload[0]["status"] == expected_status
+        assert f"updated packet-1-candidate-1 status={expected_status}" in captured.out
+
+
+def test_cli_review_promotion_updates_multiple_candidate_ids(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    promotion_path = project_root / "data" / "promotions" / "packet-1.json"
+    _write(
+        promotion_path,
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Batch review candidate 1.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "First batch change.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.75,
+                    "status": "pending",
+                },
+                {
+                    "candidate_id": "packet-1-candidate-2",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "wiki-patches",
+                    "reason": "Batch review candidate 2.",
+                    "evidence": ["claim:packet-1-claim-2"],
+                    "proposed_change": "Second batch change.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.8,
+                    "status": "pending",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "review-promotion",
+            "--candidate-id",
+            "packet-1-candidate-1",
+            "--candidate-id",
+            "packet-1-candidate-2",
+            "--action",
+            "reject",
+            "--reviewer",
+            "reviewer-1",
+            "--note",
+            "batch reject",
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(promotion_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert [item["status"] for item in payload] == ["rejected", "rejected"]
+    assert [item["reviewer"] for item in payload] == ["reviewer-1", "reviewer-1"]
+    assert "updated packet-1-candidate-1 status=rejected" in captured.out
+    assert "updated packet-1-candidate-2 status=rejected" in captured.out
 
 
 def test_cli_list_wiki_patches_prints_proposal_summary(tmp_path, monkeypatch, capsys) -> None:

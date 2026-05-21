@@ -100,6 +100,70 @@ def test_apply_wiki_patch_proposal_dry_run_does_not_modify_wiki(tmp_path) -> Non
     assert target.read_text(encoding="utf-8") == original
 
 
+def test_create_page_patch_includes_lifecycle_metadata(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+    candidate = PromotionCandidate(
+        candidate_id="packet-1-candidate-new",
+        packet_id="packet-1",
+        kind="concept_update",
+        target_page="new-concept",
+        reason="New concept deserves a seed page.",
+        evidence=["claim:packet-1-claim-new"],
+        proposed_change="New concept should be reviewed as a seed page.",
+        proposed_action="create_page",
+        confidence=0.7,
+        status="pending",
+    )
+
+    proposal = plan_wiki_patch_proposal(packet_id="packet-1", candidates=[candidate], wiki_root=wiki_root)
+
+    operation = proposal.operations[0]
+    assert operation.operation == "create_page"
+    assert operation.diff["after"].startswith(
+        "---\nstatus: seed\nmaturity: 0.2\nreview_needed: true\n---\n"
+    )
+    assert "# New Concept" in operation.diff["after"]
+    assert "New concept should be reviewed as a seed page." in operation.diff["after"]
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    target = wiki_root / "concepts" / "new-concept.md"
+    assert result.applied_patch_ids == ["packet-1-patch-1"]
+    assert target.read_text(encoding="utf-8") == operation.diff["after"]
+
+
+def test_apply_wiki_patch_proposal_skips_conflicting_managed_block_with_reason(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "concepts" / "summarization.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Summarization\n\n"
+        "<!-- acs:auto:claims:start -->\n"
+        "- Original generated claim. `claim:old`\n"
+        "<!-- acs:auto:claims:end -->\n",
+        encoding="utf-8",
+    )
+    proposal = plan_wiki_patch_proposal(packet_id="packet-1", candidates=[_candidate()], wiki_root=wiki_root)
+    target.write_text(
+        "# Summarization\n\n"
+        "<!-- acs:auto:claims:start -->\n"
+        "- Human reviewed generated claim. `claim:changed`\n"
+        "<!-- acs:auto:claims:end -->\n",
+        encoding="utf-8",
+    )
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    assert result.applied_patch_ids == []
+    assert result.skipped_patch_ids == ["packet-1-patch-1"]
+    assert result.skipped_reasons == {
+        "packet-1-patch-1": "conflict: current managed claim block differs from proposal before"
+    }
+    assert "Human reviewed generated claim" in target.read_text(encoding="utf-8")
+    assert result.to_dict()["skipped_reasons"] == result.skipped_reasons
+
+
 def test_apply_wiki_patch_proposal_updates_only_managed_claim_block(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
     target = wiki_root / "concepts" / "summarization.md"

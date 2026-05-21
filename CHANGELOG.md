@@ -13,6 +13,8 @@ All notable changes to Agent Context Substrate are summarized here.
 - Semantic lint checks across promotions, patches, claims, concepts, and open questions.
 - Topic map graph generation over wiki pages and substrate artifacts.
 - Request-time retrieval expansion over promotion candidates, wiki patch proposals, applied patch logs, and topic-map paths.
+- Context-engine retrieval tool schema exposes `mode="recovery"` for prior-work recovery searches.
+- `review-promotion` CLI for evidence preview and accept/reject/supersede/apply status updates on promotion candidates.
 - Real-wiki dry-run validation workflow documentation.
 - Lightweight Ruff lint gate for release checks.
 
@@ -53,11 +55,15 @@ All notable changes to Agent Context Substrate are summarized here.
 - V2 summary pipeline and build-context command export now accept/use typed `SessionBundle` inputs while keeping raw bundle compatibility.
 - Evidence and summary builders now read typed `SessionBundle` fields directly instead of round-tripping typed inputs through raw bundle payloads.
 - V2 summary lint validation now accepts typed `SessionBundle` inputs directly, so the summary pipeline no longer round-trips typed sessions through raw bundle payloads for linting.
+- Session finalize can pass an injected host agent-LLM router into `agent-llm` / `hybrid` summary modes, including model/budget/cache hints and LLM input-safety options.
+- Agent-LLM and hybrid summarizer backends now attempt one JSON repair pass before falling back to heuristic summaries.
+- Semantic lint now flags duplicate active claims and stale claim atoms.
+- Wiki patch proposals include lifecycle metadata, and managed block conflicts are skipped with explicit reasons instead of being applied blindly.
 
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `249 passed`.
+- Project test suite: `277 passed`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
 - Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
 
