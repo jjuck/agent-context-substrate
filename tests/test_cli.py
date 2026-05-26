@@ -1,3 +1,4 @@
+import argparse
 import json
 import pytest
 import sqlite3
@@ -11,6 +12,32 @@ if str(SRC) not in sys.path:
 
 import agent_context_substrate.cli as cli  # noqa: E402
 from agent_context_substrate.cli import main  # noqa: E402
+from agent_context_substrate.commands.artifacts import register_artifact_commands  # noqa: E402
+
+
+def test_artifact_command_module_registers_artifact_parsers() -> None:
+    parser = argparse.ArgumentParser(prog="agent-context-substrate")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    def add_project_root(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--project-root", default="project-root")
+
+    register_artifact_commands(subparsers, add_project_root_argument=add_project_root)
+
+    review_args = parser.parse_args(["review-promotion", "--candidate-id", "candidate-1"])
+    assert review_args.command == "review-promotion"
+    assert review_args.candidate_id == ["candidate-1"]
+    assert review_args.project_root == "project-root"
+
+    lint_args = parser.parse_args(["lint-promotions", "--fail-on-issues", "--report-id", "lint-1"])
+    assert lint_args.command == "lint-promotions"
+    assert lint_args.fail_on_issues is True
+    assert lint_args.report_id == "lint-1"
+
+    topic_args = parser.parse_args(["build-topic-map", "--wiki-root", "wiki", "--report-id", "topic-1"])
+    assert topic_args.command == "build-topic-map"
+    assert topic_args.wiki_root == "wiki"
+    assert topic_args.report_id == "topic-1"
 
 
 @pytest.mark.parametrize(
