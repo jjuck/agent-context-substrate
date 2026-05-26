@@ -404,9 +404,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Return exit code 1 when any wiki or internal graph issue is detected",
     )
     lint.add_argument(
+        "--semantic",
+        action="store_true",
+        help="Run semantic substrate lint. Without include flags, checks promotions, wiki patches, and atoms.",
+    )
+    lint.add_argument(
         "--include-promotions",
         action="store_true",
-        help="Also run promotion semantic lint and export data/lint/promotions-lint.{json,md}",
+        help="Include promotion queue and wiki patch records in semantic lint.",
+    )
+    lint.add_argument(
+        "--include-atoms",
+        action="store_true",
+        help="Include claim and concept atoms in semantic lint.",
     )
 
     init_wiki_parser = subparsers.add_parser("init-wiki", help="Initialize a human-facing LLM Wiki skeleton")

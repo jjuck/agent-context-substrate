@@ -11,6 +11,14 @@ LintPromotions = Callable[..., Any]
 ExportSemanticLintReport = Callable[..., tuple[Any, Any]]
 
 
+def _semantic_lint_includes(args: Any) -> tuple[bool, bool, bool]:
+    semantic_enabled = bool(args.semantic or args.include_promotions or args.include_atoms)
+    explicit_includes = bool(args.include_promotions or args.include_atoms)
+    include_promotions = bool(args.include_promotions or (args.semantic and not explicit_includes))
+    include_atoms = bool(args.include_atoms or (args.semantic and not explicit_includes))
+    return semantic_enabled, include_promotions, include_atoms
+
+
 def handle_lint_wiki_command(
     *,
     args: Any,
@@ -27,8 +35,13 @@ def handle_lint_wiki_command(
     semantic_report = None
     semantic_json_path = None
     semantic_markdown_path = None
-    if args.include_promotions:
-        semantic_report = lint_promotions(paths)
+    semantic_enabled, include_promotions, include_atoms = _semantic_lint_includes(args)
+    if semantic_enabled:
+        semantic_report = lint_promotions(
+            paths,
+            include_promotions=include_promotions,
+            include_atoms=include_atoms,
+        )
         semantic_json_path, semantic_markdown_path = export_semantic_lint_report(
             paths=paths,
             report=semantic_report,
@@ -47,6 +60,7 @@ def handle_lint_wiki_command(
                 f"orphan_pages={len(report.orphan_pages)}",
                 f"missing_from_index={len(report.pages_missing_from_index)}",
                 f"broken_wikilinks={len(report.broken_wikilinks)}",
+                f"semantic_issues={len(semantic_report.issues) if semantic_report is not None else 0}",
                 f"promotion_issues={len(semantic_report.issues) if semantic_report is not None else 0}",
             ]
         )

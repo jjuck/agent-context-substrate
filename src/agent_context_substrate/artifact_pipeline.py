@@ -515,15 +515,20 @@ def load_jsonl_dicts(path: Path) -> list[dict[str, object]]:
     return items
 
 
-def lint_promotions(paths: HarnessPaths):
-    patch_proposals, applied_patch_records = load_wiki_patch_records(paths)
+def lint_promotions(
+    paths: HarnessPaths,
+    *,
+    include_promotions: bool = True,
+    include_atoms: bool = True,
+):
+    patch_proposals, applied_patch_records = load_wiki_patch_records(paths) if include_promotions else ([], [])
     atoms_dir = paths.project_root / "data" / "atoms"
     return lint_promotion_substrate(
-        promotions=load_all_promotion_payloads(paths),
+        promotions=load_all_promotion_payloads(paths) if include_promotions else [],
         patch_proposals=patch_proposals,
         applied_patch_records=applied_patch_records,
-        claim_atoms=load_jsonl_dicts(atoms_dir / "claims.jsonl"),
-        concept_atoms=load_jsonl_dicts(atoms_dir / "concepts.jsonl"),
+        claim_atoms=load_jsonl_dicts(atoms_dir / "claims.jsonl") if include_atoms else [],
+        concept_atoms=load_jsonl_dicts(atoms_dir / "concepts.jsonl") if include_atoms else [],
     )
 
 

@@ -699,6 +699,100 @@ sources: [\"hermes-session:session-1#messages=1\"]
     assert promotion_md_path.exists()
 
 
+def test_cli_lint_wiki_include_atoms_exports_atom_semantic_issues(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+
+    _write(wiki_root / "SCHEMA.md", "# Wiki Schema\n\n## Tag Taxonomy\n- question\n")
+    _write(wiki_root / "index.md", "# Wiki Index\n\n## Queries\n<!-- empty -->\n")
+    _write(wiki_root / "log.md", "# Wiki Log\n")
+    _write(
+        project_root / "data" / "atoms" / "claims.jsonl",
+        json.dumps({"atom_id": "claim-1", "text": "No source", "source_refs": []}) + "\n",
+    )
+    _write(
+        project_root / "data" / "atoms" / "concepts.jsonl",
+        json.dumps({"atom_id": "concept-1", "name": "Packet Only", "status": "active"}) + "\n"
+        + json.dumps({"atom_id": "concept-2", "name": "packet only", "status": "active"}) + "\n",
+    )
+
+    exit_code = main([
+        "lint-wiki",
+        "--include-atoms",
+        "--project-root",
+        str(project_root),
+        "--report-id",
+        "atom-combined-lint",
+    ])
+
+    captured = capsys.readouterr()
+    semantic_json_path = project_root / "data" / "lint" / "promotions-lint.json"
+
+    assert exit_code == 0
+    assert "semantic_lint ok=False issues=2" in captured.out
+    assert "claim_without_source" in captured.out
+    assert "duplicate_concept" in captured.out
+    assert "semantic_issues=2" in captured.out
+    payload = json.loads(semantic_json_path.read_text(encoding="utf-8"))
+    assert {issue["code"] for issue in payload["issues"]} == {"claim_without_source", "duplicate_concept"}
+
+
+def test_cli_lint_wiki_semantic_defaults_to_promotions_and_atoms(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+
+    _write(wiki_root / "SCHEMA.md", "# Wiki Schema\n\n## Tag Taxonomy\n- question\n")
+    _write(wiki_root / "index.md", "# Wiki Index\n\n## Queries\n<!-- empty -->\n")
+    _write(wiki_root / "log.md", "# Wiki Log\n")
+    _write(
+        project_root / "data" / "promotions" / "packet-1.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "",
+                    "reason": "Missing target.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "Untriaged change.",
+                    "proposed_action": "review_required",
+                    "confidence": 0.4,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+    _write(
+        project_root / "data" / "atoms" / "claims.jsonl",
+        json.dumps({"atom_id": "claim-1", "text": "No source", "source_refs": []}) + "\n",
+    )
+
+    exit_code = main([
+        "lint-wiki",
+        "--semantic",
+        "--project-root",
+        str(project_root),
+        "--report-id",
+        "semantic-combined-lint",
+    ])
+
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "semantic_lint ok=False issues=2" in captured.out
+    assert "promotion_missing_target_page" in captured.out
+    assert "claim_without_source" in captured.out
+    assert "semantic_issues=2" in captured.out
+
+
 def test_cli_build_context_packet_exports_raw_and_packet_artifacts(tmp_path, monkeypatch, capsys) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
