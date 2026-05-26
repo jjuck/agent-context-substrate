@@ -19,6 +19,13 @@ _SECRET_ASSIGNMENT_RE = re.compile(
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}")
 _COMMON_KEY_RE = re.compile(r"\b(?:sk|pk|ghp|gho|github_pat|xoxb|xoxp)-[A-Za-z0-9_\-]{8,}\b")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(
+    r"\b[A-Za-z]:[\\/](?:[^\\/\s,;:'\"<>|]+[\\/])*[^\\/\s,;:'\"<>|]+(?: [^\\/\s,;:'\"<>|]+)*"
+)
+_UNIX_ABSOLUTE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9+.:/\-])/(?:[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*\/)*[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*"
+)
+_LOCAL_PATH_REDACTION = "<REDACTED_LOCAL_PATH>"
 
 _SYSTEM_PROMPT = """You are the Agent Context Substrate summarizer.
 Return strict JSON only. Do not include markdown fences or explanations.
@@ -39,7 +46,7 @@ _METHOD_CANDIDATES = (
 _CONTAINER_CANDIDATES = ("llm", "agent", "router")
 
 
-def build_agent_llm_router(host: object) -> Callable[[dict[str, object]], dict[str, object]]:
+def build_agent_llm_router(host: object, *, path_policy: str = "redact") -> Callable[[dict[str, object]], dict[str, object]]:
     """Build an AgentLLMRouter callable from a host Agent/plugin context.
 
     This adapter is intentionally provider-agnostic: it looks for a host method
@@ -47,20 +54,22 @@ def build_agent_llm_router(host: object) -> Callable[[dict[str, object]], dict[s
     a strict-JSON request to that method.
     """
 
+    if path_policy not in {"redact", "allow"}:
+        raise ValueError("Agent LLM router path_policy must be one of: allow, redact")
     method = _find_router_method(host)
     if method is None:
         raise AgentLLMRouterUnavailable("host exposes no compatible Agent LLM router method")
 
     def router(request: dict[str, object]) -> dict[str, object]:
-        host_request = build_host_llm_request(request)
+        host_request = build_host_llm_request(request, path_policy=path_policy)
         raw_response = _invoke_router_method(method, host_request)
         return _extract_json_object(raw_response)
 
     return router
 
 
-def build_host_llm_request(request: dict[str, object]) -> dict[str, object]:
-    safe_request = _redact_secret_like_values(request)
+def build_host_llm_request(request: dict[str, object], *, path_policy: str = "redact") -> dict[str, object]:
+    safe_request = _redact_secret_like_values(request, path_policy=path_policy)
     routing_hints = safe_request.get("routing_hints")
     if not isinstance(routing_hints, dict):
         routing_hints = {}
@@ -138,7 +147,7 @@ def _strip_json_fence(text: str) -> str:
     return stripped
 
 
-def _redact_secret_like_values(value: object) -> object:
+def _redact_secret_like_values(value: object, *, path_policy: str = "redact") -> object:
     if isinstance(value, dict):
         redacted: dict[str, object] = {}
         for key, item in value.items():
@@ -146,20 +155,27 @@ def _redact_secret_like_values(value: object) -> object:
             if _SECRET_KEY_RE.search(key_text):
                 redacted[key_text] = "<REDACTED_SECRET>"
             else:
-                redacted[key_text] = _redact_secret_like_values(item)
+                redacted[key_text] = _redact_secret_like_values(item, path_policy=path_policy)
         return redacted
     if isinstance(value, list):
-        return [_redact_secret_like_values(item) for item in value]
+        return [_redact_secret_like_values(item, path_policy=path_policy) for item in value]
     if isinstance(value, tuple):
-        return [_redact_secret_like_values(item) for item in value]
+        return [_redact_secret_like_values(item, path_policy=path_policy) for item in value]
     if isinstance(value, str):
-        return _redact_secret_string(value)
+        return _redact_secret_string(value, path_policy=path_policy)
     return value
 
 
-def _redact_secret_string(text: str) -> str:
+def _redact_secret_string(text: str, *, path_policy: str = "redact") -> str:
     redacted = _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<REDACTED_SECRET>", text)
     redacted = _BEARER_RE.sub("Bearer <REDACTED_SECRET>", redacted)
     redacted = _COMMON_KEY_RE.sub("<REDACTED_SECRET>", redacted)
     redacted = _EMAIL_RE.sub("<REDACTED_EMAIL>", redacted)
+    if path_policy == "redact":
+        redacted = _redact_local_paths(redacted)
     return redacted
+
+
+def _redact_local_paths(text: str) -> str:
+    redacted = _WINDOWS_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_REDACTION, text)
+    return _UNIX_ABSOLUTE_PATH_RE.sub(_LOCAL_PATH_REDACTION, redacted)

@@ -258,6 +258,7 @@ def _summary_cache_input(*, options: SummaryOptions, evidence_dict: dict[str, ob
             "redact": options.llm_safety.redact,
             "max_input_chars": options.llm_safety.max_input_chars,
             "allow_code_snippets": options.llm_safety.allow_code_snippets,
+            "path_policy": options.llm_safety.path_policy,
         },
         "micro_schema_version": "micro_summary_v2",
         "unit_schema_version": "unit_summary_v2",

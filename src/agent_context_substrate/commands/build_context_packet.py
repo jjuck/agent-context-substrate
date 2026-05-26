@@ -31,11 +31,13 @@ def build_llm_safety_options(
     llm_redact: str,
     llm_max_input_chars: int,
     llm_allow_code_snippets: str,
+    llm_path_policy: str = "redact",
 ) -> LLMInputSafetyOptions:
     return LLMInputSafetyOptions(
         redact=llm_redact == "on",
         max_input_chars=llm_max_input_chars,
         allow_code_snippets=llm_allow_code_snippets == "on",
+        path_policy=llm_path_policy,
     )
 
 
@@ -132,6 +134,7 @@ def handle_build_context_packet_command(
                     llm_redact=getattr(args, "llm_redact", "on"),
                     llm_max_input_chars=getattr(args, "llm_max_input_chars", 12_000),
                     llm_allow_code_snippets=getattr(args, "llm_allow_code_snippets", "off"),
+                    llm_path_policy=getattr(args, "llm_path_policy", "redact"),
                 )
                 if llm_safety_options is not None
                 else None

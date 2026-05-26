@@ -38,11 +38,13 @@ def test_build_context_packet_helpers_build_routing_hints_and_llm_safety_options
         llm_redact="off",
         llm_max_input_chars=1234,
         llm_allow_code_snippets="on",
+        llm_path_policy="allow",
     )
 
     assert safety.redact is False
     assert safety.max_input_chars == 1234
     assert safety.allow_code_snippets is True
+    assert safety.path_policy == "allow"
 
 
 def test_export_v2_summary_artifacts_uses_typed_session_bundle(monkeypatch, tmp_path) -> None:

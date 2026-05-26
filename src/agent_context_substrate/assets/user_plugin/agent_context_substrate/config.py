@@ -54,6 +54,7 @@ class AgentContextSubstratePluginConfig:
     llm_redact: bool = True
     llm_max_input_chars: int = 12_000
     llm_allow_code_snippets: bool = False
+    llm_path_policy: str = "redact"
 
 
 def load_plugin_config() -> AgentContextSubstratePluginConfig:
@@ -73,4 +74,5 @@ def load_plugin_config() -> AgentContextSubstratePluginConfig:
         llm_redact=_env_bool("AGENT_CONTEXT_SUBSTRATE_LLM_REDACT", True),
         llm_max_input_chars=_env_int("AGENT_CONTEXT_SUBSTRATE_LLM_MAX_INPUT_CHARS", 12_000),
         llm_allow_code_snippets=_env_bool("AGENT_CONTEXT_SUBSTRATE_LLM_ALLOW_CODE_SNIPPETS", False),
+        llm_path_policy=os.environ.get("AGENT_CONTEXT_SUBSTRATE_LLM_PATH_POLICY", "redact").strip().lower() or "redact",
     )

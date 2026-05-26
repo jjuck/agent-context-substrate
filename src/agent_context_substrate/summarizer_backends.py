@@ -48,10 +48,13 @@ class LLMInputSafetyOptions:
     redact: bool = True
     max_input_chars: int = 12_000
     allow_code_snippets: bool = False
+    path_policy: str = "redact"
 
     def __post_init__(self) -> None:
         if self.max_input_chars < 256:
             raise ValueError("llm max input chars must be at least 256")
+        if self.path_policy not in {"redact", "allow"}:
+            raise ValueError("llm path policy must be one of: allow, redact")
 
 
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
@@ -66,6 +69,13 @@ _TOKEN_PATTERN = re.compile(
 _EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 
 _CODE_FENCE_PATTERN = re.compile(r"```.*?```", flags=re.DOTALL)
+_WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"\b[A-Za-z]:[\\/](?:[^\\/\s,;:'\"<>|]+[\\/])*[^\\/\s,;:'\"<>|]+(?: [^\\/\s,;:'\"<>|]+)*"
+)
+_UNIX_ABSOLUTE_PATH_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9+.:/\-])/(?:[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*\/)*[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*"
+)
+_LOCAL_PATH_REDACTION = "<REDACTED_LOCAL_PATH>"
 _TRUNCATION_MARKER = "…<TRUNCATED_FOR_LLM_INPUT>"
 
 
@@ -566,6 +576,8 @@ def _sanitize_value(value, *, safety: LLMInputSafetyOptions):
         text = value
         if not safety.allow_code_snippets:
             text = _CODE_FENCE_PATTERN.sub("<CODE_BLOCK_OMITTED>", text)
+        if safety.path_policy == "redact":
+            text = _redact_local_paths(text)
         if safety.redact:
             text = _redact_llm_text(text)
         return text
@@ -577,6 +589,11 @@ def _redact_llm_text(text: str) -> str:
     redacted = _BEARER_TOKEN_PATTERN.sub("Bearer <REDACTED_SECRET>", redacted)
     redacted = _TOKEN_PATTERN.sub("<REDACTED_SECRET>", redacted)
     return _EMAIL_PATTERN.sub("<REDACTED_EMAIL>", redacted)
+
+
+def _redact_local_paths(text: str) -> str:
+    redacted = _WINDOWS_ABSOLUTE_PATH_PATTERN.sub(_LOCAL_PATH_REDACTION, text)
+    return _UNIX_ABSOLUTE_PATH_PATTERN.sub(_LOCAL_PATH_REDACTION, redacted)
 
 
 def _bound_llm_request(request: dict[str, object], *, max_chars: int) -> dict[str, object]:

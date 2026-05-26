@@ -131,6 +131,64 @@ def test_agent_llm_summarizer_redacts_secrets_and_strips_code_blocks_by_default(
     assert requests[0]["evidence"]["code_blocks"] == []
 
 
+def test_agent_llm_summarizer_redacts_local_absolute_paths_by_default() -> None:
+    raw_bundle = {
+        "session": {"id": "session-paths", "source": "telegram", "title": "Paths"},
+        "messages": [
+            {
+                "id": 1,
+                "role": "user",
+                "content": (
+                    "Read /mnt/c/Users/이주완/Desktop/private.md and /home/juwan/.ssh/id_rsa. "
+                    "Also inspect C:\\Users\\이주완\\Desktop\\secret.txt and C:/Users/이주완/Documents/LLM Wiki/page.md."
+                ),
+            },
+        ],
+    }
+    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id="micro-agent-paths")
+    requests: list[dict[str, object]] = []
+
+    def router(request: dict[str, object]) -> dict[str, object]:
+        requests.append(request)
+        return _valid_micro_summary_payload(evidence=evidence, mode="agent-llm")
+
+    backend = AgentLLMSummarizerBackend(router=router)
+
+    backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    request_json = json.dumps(requests[0], ensure_ascii=False, sort_keys=True)
+    assert "/mnt/c/Users/이주완/Desktop/private.md" not in request_json
+    assert "/home/juwan/.ssh/id_rsa" not in request_json
+    assert "C:\\Users\\이주완\\Desktop\\secret.txt" not in request_json
+    assert "C:/Users/이주완/Documents/LLM Wiki/page.md" not in request_json
+    assert "<REDACTED_LOCAL_PATH>" in request_json
+
+
+def test_agent_llm_summarizer_can_allow_local_absolute_paths_when_policy_allows() -> None:
+    local_path = "/mnt/c/Users/이주완/Desktop/project/spec.md"
+    raw_bundle = {
+        "session": {"id": "session-paths-allow", "source": "telegram", "title": "Paths"},
+        "messages": [{"id": 1, "role": "user", "content": f"Read {local_path}"}],
+    }
+    evidence = build_micro_evidence_bundle(raw_bundle=raw_bundle, micro_id="micro-agent-paths-allow")
+    requests: list[dict[str, object]] = []
+
+    def router(request: dict[str, object]) -> dict[str, object]:
+        requests.append(request)
+        return _valid_micro_summary_payload(evidence=evidence, mode="agent-llm")
+
+    backend = AgentLLMSummarizerBackend(
+        router=router,
+        llm_safety=LLMInputSafetyOptions(path_policy="allow"),
+    )
+
+    backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    request_json = json.dumps(requests[0], ensure_ascii=False, sort_keys=True)
+    assert local_path in request_json
+    assert "<REDACTED_LOCAL_PATH>" not in request_json
+
+
 def test_agent_llm_summarizer_bounds_router_payload_size() -> None:
     raw_bundle = {
         "session": {"id": "session-long", "source": "telegram", "title": "Long"},

@@ -48,6 +48,7 @@ def test_session_finalize_passes_host_agent_llm_router_when_summary_mode_require
         llm_redact=True,
         llm_max_input_chars=4096,
         llm_allow_code_snippets=False,
+        llm_path_policy="allow",
     )
 
     def fake_should_process_session(*args, **kwargs):
@@ -57,8 +58,9 @@ def test_session_finalize_passes_host_agent_llm_router_when_summary_mode_require
         captured.update(kwargs)
         return SimpleNamespace(packet_id="session-1", skipped=False, recovery_json_path=tmp_path / "recovery.json")
 
-    def fake_build_agent_llm_router(value):
+    def fake_build_agent_llm_router(value, **kwargs):
         captured["router_host"] = value
+        captured["router_kwargs"] = kwargs
         return "ROUTER"
 
     monkeypatch.setattr(runtime, "load_plugin_config", lambda: config)
@@ -69,6 +71,7 @@ def test_session_finalize_passes_host_agent_llm_router_when_summary_mode_require
 
     assert result["status"] == "processed"
     assert captured["router_host"] is host
+    assert captured["router_kwargs"] == {"path_policy": "allow"}
     assert captured["summary_mode"] == "agent-llm"
     assert captured["agent_llm_router"] == "ROUTER"
     assert captured["summary_model"] == "host-default"
@@ -77,3 +80,4 @@ def test_session_finalize_passes_host_agent_llm_router_when_summary_mode_require
     assert captured["llm_safety"].redact is True
     assert captured["llm_safety"].max_input_chars == 4096
     assert captured["llm_safety"].allow_code_snippets is False
+    assert captured["llm_safety"].path_policy == "allow"

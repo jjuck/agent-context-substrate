@@ -88,7 +88,10 @@ def _summary_pipeline_kwargs(config: AgentContextSubstratePluginConfig, hook_kwa
     if summary_mode in {"agent-llm", "hybrid"}:
         host_agent = _host_agent_from_kwargs(hook_kwargs)
         if host_agent is not None:
-            agent_llm_router = _load_agent_llm_router_builder()(host_agent)
+            agent_llm_router = _load_agent_llm_router_builder()(
+                host_agent,
+                path_policy=str(getattr(config, "llm_path_policy", "redact") or "redact"),
+            )
 
     llm_safety_class = _load_llm_safety_options_class()
     return {
@@ -101,6 +104,7 @@ def _summary_pipeline_kwargs(config: AgentContextSubstratePluginConfig, hook_kwa
             redact=bool(getattr(config, "llm_redact", True)),
             max_input_chars=int(getattr(config, "llm_max_input_chars", 12_000)),
             allow_code_snippets=bool(getattr(config, "llm_allow_code_snippets", False)),
+            path_policy=str(getattr(config, "llm_path_policy", "redact") or "redact"),
         ),
     }
 

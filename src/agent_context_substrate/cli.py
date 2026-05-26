@@ -161,6 +161,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="off",
         help="Allow code blocks in opt-in LLM/custom summary payloads. Default omits them.",
     )
+    build_packet.add_argument(
+        "--llm-path-policy",
+        choices=["redact", "allow"],
+        default="redact",
+        help="How to handle local absolute paths in opt-in LLM/custom summary payloads.",
+    )
     _add_project_root_argument(build_packet)
 
     promote_query = subparsers.add_parser(
