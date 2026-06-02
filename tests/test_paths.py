@@ -26,8 +26,11 @@ def test_harness_paths_uses_env_override_for_wiki_root(monkeypatch, tmp_path) ->
 
 def test_harness_paths_defaults_to_hermes_state_db_under_home(tmp_path, monkeypatch) -> None:
     hermes_home = tmp_path / ".hermes"
+    user_profile = tmp_path / "user-profile"
     hermes_home.mkdir()
+    user_profile.mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(user_profile))
     monkeypatch.delenv("HERMES_HOME", raising=False)
     monkeypatch.delenv("WIKI_PATH", raising=False)
 

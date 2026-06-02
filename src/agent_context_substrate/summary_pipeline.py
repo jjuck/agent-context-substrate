@@ -11,9 +11,11 @@ from typing import Any, Mapping
 from .evidence import build_micro_evidence_bundle, export_micro_evidence_bundle
 from .models import MicroSummaryV2, UnitSummaryV2
 from .paths import HarnessPaths
+from .recovery import RecoveryQualityReport
 from .safe_paths import safe_artifact_stem, safe_child_path
 from .session_bundle import SessionBundle, ensure_session_bundle, resolve_session_bundle
 from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions, SummarizerBackend, get_summarizer_backend
+from .summary_judge import evaluate_summary_with_judge, export_summary_judge_verdict
 from .summary_lint import SummaryLintReport, lint_micro_summary_v2, lint_unit_summary_v2
 
 
@@ -47,6 +49,8 @@ class SummaryOptions:
     summary_cache: bool = False
     agent_llm_router: AgentLLMRouter | None = None
     llm_safety: LLMInputSafetyOptions = field(default_factory=LLMInputSafetyOptions)
+    summary_judge_mode: str = "off"
+    recovery_quality_gate: RecoveryQualityReport | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,7 @@ class SummaryArtifactResult:
     micro_path: Path
     unit_path: Path
     evidence_path: Path
+    judge_path: Path | None = None
 
     def as_tuple(self) -> tuple[Path, Path, Path]:
         return self.micro_path, self.unit_path, self.evidence_path
@@ -98,7 +103,21 @@ def build_v2_summary_artifacts(
             micro_summary=micro_summary,
             unit_summary=unit_summary,
         )
-        return SummaryArtifactResult(micro_path=micro_path, unit_path=unit_path, evidence_path=evidence_path)
+        judge_path = _export_summary_judge_if_requested(
+            paths=paths,
+            packet_id=artifact_ids.packet_id,
+            evidence=evidence,
+            micro_summary=micro_summary,
+            unit_summary=unit_summary,
+            session_bundle=session_bundle,
+            options=options,
+        )
+        return SummaryArtifactResult(
+            micro_path=micro_path,
+            unit_path=unit_path,
+            evidence_path=evidence_path,
+            judge_path=judge_path,
+        )
 
     backend = _build_backend(options=options, backend_factory=backend_factory)
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
@@ -137,7 +156,21 @@ def build_v2_summary_artifacts(
             micro_summary=micro_summary,
             unit_summary=unit_summary,
         )
-    return SummaryArtifactResult(micro_path=micro_path, unit_path=unit_path, evidence_path=evidence_path)
+    judge_path = _export_summary_judge_if_requested(
+        paths=paths,
+        packet_id=artifact_ids.packet_id,
+        evidence=evidence,
+        micro_summary=micro_summary,
+        unit_summary=unit_summary,
+        session_bundle=session_bundle,
+        options=options,
+    )
+    return SummaryArtifactResult(
+        micro_path=micro_path,
+        unit_path=unit_path,
+        evidence_path=evidence_path,
+        judge_path=judge_path,
+    )
 
 
 def _raise_for_lint_issues(*, artifact: str, report: SummaryLintReport) -> None:
@@ -323,3 +356,33 @@ def _export_summary_files(
     micro_path.write_text(json.dumps(micro_summary.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
     unit_path.write_text(json.dumps(unit_summary.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
     return micro_path, unit_path
+
+
+def _export_summary_judge_if_requested(
+    *,
+    paths: HarnessPaths,
+    packet_id: str,
+    evidence,
+    micro_summary: MicroSummaryV2,
+    unit_summary: UnitSummaryV2,
+    session_bundle: Mapping[str, Any] | SessionBundle,
+    options: SummaryOptions,
+) -> Path | None:
+    if (options.summary_judge_mode or "off").strip().lower() == "off":
+        return None
+    micro_lint = lint_micro_summary_v2(micro_summary, session_bundle=session_bundle)
+    unit_lint = lint_unit_summary_v2(unit_summary, micro_summaries=[micro_summary])
+    verdict = evaluate_summary_with_judge(
+        packet_id=packet_id,
+        evidence=evidence,
+        micro_summary=micro_summary,
+        unit_summary=unit_summary,
+        micro_lint=micro_lint,
+        unit_lint=unit_lint,
+        recovery_quality_gate=options.recovery_quality_gate,
+        router=options.agent_llm_router,
+        mode=options.summary_judge_mode,
+        routing_hints=dict(options.routing_hints),
+        llm_safety=options.llm_safety,
+    )
+    return export_summary_judge_verdict(packet_id=packet_id, verdict=verdict, exports_dir=paths.exports_dir)

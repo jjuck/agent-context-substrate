@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 from pathlib import Path
+import json
 import re
 import tomllib
 
@@ -15,6 +16,10 @@ REQUIRED_ASSET_FILES = [
     "context_engine/agent_context_substrate/__init__.py",
     "context_engine/agent_context_substrate/config.py",
     "context_engine/agent_context_substrate/engine.py",
+    "codex_plugin/agent-context-substrate/.codex-plugin/plugin.json",
+    "codex_plugin/agent-context-substrate/skills/agent-context-substrate/SKILL.md",
+    "codex_plugin/agent-context-substrate/hooks/hooks.json",
+    "codex_plugin/agent-context-substrate/hooks/codex_stop_finalize.py",
     "context_engine/agent_context_substrate/formatting.py",
     "context_engine/agent_context_substrate/recovery_loader.py",
     "context_engine/agent_context_substrate/retrieval_tools.py",
@@ -57,6 +62,30 @@ def test_distribution_assets_do_not_include_python_bytecode() -> None:
 
     assert bytecode_files == []
     assert pycache_dirs == []
+
+
+def test_codex_plugin_manifest_is_non_mcp_and_non_hook() -> None:
+    asset_root = files("agent_context_substrate") / "assets"
+    manifest = json.loads(
+        (asset_root / "codex_plugin/agent-context-substrate/.codex-plugin/plugin.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["skills"] == "./skills/"
+    assert "mcpServers" not in manifest
+    assert "apps" not in manifest
+    assert "hooks" not in manifest
+
+
+def test_codex_plugin_bundles_default_stop_hook_without_manifest_hooks() -> None:
+    asset_root = files("agent_context_substrate") / "assets"
+    hooks = json.loads(
+        (asset_root / "codex_plugin/agent-context-substrate/hooks/hooks.json").read_text(encoding="utf-8")
+    )
+    stop_handlers = hooks["hooks"]["Stop"][0]["hooks"]
+
+    assert stop_handlers[0]["type"] == "command"
+    assert "codex_stop_finalize.py" in stop_handlers[0]["command"]
+    assert "commandWindows" in stop_handlers[0]
 
 
 def test_user_plugin_registers_single_wiki_language_command() -> None:

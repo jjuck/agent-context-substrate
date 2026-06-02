@@ -44,8 +44,7 @@ def _format_inline_list(values: list[str], quote: bool = False) -> str:
 
 
 def _format_provenance_reference(reference: RawSessionReference) -> str:
-    message_ids = ",".join(str(message_id) for message_id in reference.message_ids)
-    return f"hermes-session:{reference.session_id}#messages={message_ids}"
+    return reference.source_ref()
 
 
 def _render_related_pages(related_pages: list[str]) -> list[str]:

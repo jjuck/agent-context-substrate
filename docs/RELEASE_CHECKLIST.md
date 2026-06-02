@@ -43,9 +43,9 @@ python -m pytest -q
 ruff check .
 ```
 
-Expected current public alpha baseline: `226 passed` and `All checks passed!` from Ruff.
+Expected current public alpha baseline: `305 passed, 12 skipped` and `All checks passed!` from Ruff.
 
-For the current Hermes-focused release, WSL/Linux green is sufficient. Before advertising native Windows or non-Hermes agent support, review `docs/AGENT_PORTABILITY_NOTES.md` and resolve the documented portability findings.
+For a Windows Codex app release, also verify the Windows-facing one-shot install docs and hook-trust instructions in `README.ko.md`, `README.md`, and `docs/WINDOWS_CODEX_APP_SETUP*.md`.
 
 ## 4. Fresh-install smoke
 
@@ -97,6 +97,46 @@ agent-context-substrate install-context-engine \
   --wiki-root <wiki-root> \
   --overwrite
 ```
+
+For Codex live install smoke, verify the user-facing paths before running:
+
+```text
+Codex source: ~/.codex/state_5.sqlite and ~/.codex/sessions/**/rollout-*.jsonl
+LLM Wiki: <wiki-root>
+ACS artifacts: <project-root>/data/
+```
+
+Then install and check status:
+
+```bash
+agent-context-substrate setup-codex \
+  --codex-home ~/.codex \
+  --project-root <project-root> \
+  --wiki-root <wiki-root> \
+  --yes
+
+agent-context-substrate doctor-codex \
+  --codex-home ~/.codex \
+  --project-root <project-root> \
+  --wiki-root <wiki-root> \
+  --fail-on-issues
+
+agent-context-substrate config-codex paths \
+  --codex-home ~/.codex \
+  --project-root <project-root> \
+  --wiki-root <wiki-root>
+```
+
+Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, and paths for `state_5.sqlite`, `Documents\LLM Wiki`, and `data\...`. Codex still requires `/hooks` review/trust before non-managed command hooks run; do not document or use trust bypass as a normal install path.
+
+Windows one-shot bootstrap smoke:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
+```
+
+If prerequisite install instructions are tested, use these winget package IDs: `Python.Python.3.13`, `Git.Git`, and optional `Obsidian.Obsidian`.
 
 Verify:
 
@@ -154,10 +194,11 @@ Latest verified local baseline for the v0.2.0 release candidate after spec pipel
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: public
-project tests: 226 passed
+project tests: 305 passed, 12 skipped
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
-live runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
+live Codex runtime: plugin agent-context-substrate, Stop hook installed, watcher fallback available
+live Hermes runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
 ```
 
 Refresh this section whenever a release candidate changes code, docs, installer behavior, or runtime configuration.

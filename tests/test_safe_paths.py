@@ -18,6 +18,13 @@ from agent_context_substrate.safe_paths import (
 from agent_context_substrate.topic_map import TopicMap, export_topic_map
 
 
+def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
+
+
 def test_safe_artifact_stem_rejects_path_like_values() -> None:
     for value in ["../escape", "/tmp/escape", "nested/name", r"nested\\name", "", ".hidden"]:
         with pytest.raises(ValueError):
@@ -41,7 +48,7 @@ def test_safe_project_artifact_path_rejects_symlink_escape(tmp_path: Path) -> No
     outside = tmp_path / "outside.json"
     outside.write_text("[]", encoding="utf-8")
     escaping_link = promotions_dir / "linked.json"
-    escaping_link.symlink_to(outside)
+    _symlink_or_skip(escaping_link, outside)
 
     assert is_safe_project_artifact_path(inside, project_root, "data", "promotions") is True
     assert is_safe_project_artifact_path(escaping_link, project_root, "data", "promotions") is False
@@ -55,7 +62,7 @@ def test_safe_project_artifact_path_rejects_symlinked_allowed_directory(tmp_path
     outside_promotions.mkdir()
     outside_artifact = outside_promotions / "packet-1.json"
     outside_artifact.write_text("[]", encoding="utf-8")
-    (data_dir / "promotions").symlink_to(outside_promotions, target_is_directory=True)
+    _symlink_or_skip(data_dir / "promotions", outside_promotions, target_is_directory=True)
 
     assert is_safe_project_artifact_path(outside_artifact, project_root, "data", "promotions") is False
 
@@ -76,7 +83,7 @@ def test_safe_wiki_page_path_rejects_system_hidden_non_markdown_and_escape(tmp_p
     outside = tmp_path / "outside.md"
     outside.write_text("# Outside\n", encoding="utf-8")
     escaping_link = wiki_root / "concepts" / "linked.md"
-    escaping_link.symlink_to(outside)
+    _symlink_or_skip(escaping_link, outside)
 
     assert is_safe_wiki_page_path(page, wiki_root) is True
     assert is_safe_wiki_page_path(hidden, wiki_root) is False

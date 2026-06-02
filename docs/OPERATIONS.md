@@ -10,7 +10,7 @@
 
 운영자가 보장해야 할 것:
 
-1. 입력 경로가 올바르다. (`HERMES_HOME/state.db`, `WIKI_PATH`, `--project-root`)
+1. 입력 경로가 올바르다. (`HERMES_HOME/state.db`, Codex `~/.codex/state_5.sqlite`, Codex rollout JSONL, `WIKI_PATH`, `--project-root`)
 2. `packet-only` 기본 정책이 유지된다.
 3. artifact가 `data/exports/`와 ledger에 남는다.
 4. 실제 Obsidian active graph는 lint상 깨끗하다.
@@ -21,7 +21,7 @@
 ### 필수 준비물
 
 - Python 3.11+
-- Hermes 세션 DB (`HERMES_HOME/state.db`)
+- Hermes 세션 DB (`HERMES_HOME/state.db`) 또는 Codex 로컬 세션 source (`~/.codex/state_5.sqlite`, `~/.codex/sessions/**/rollout-*.jsonl`)
 - Agent Context Substrate project root
 - Obsidian LLM Wiki vault
 
@@ -118,9 +118,10 @@ v0.2.0 로컬 release candidate 기준으로 확인된 운영 기준선입니다
 | 항목 | 결과 |
 | --- | --- |
 | GitHub remote | `origin/main` → `jjuck/agent-context-substrate` |
-| Project tests | `226 passed` |
+| Project tests | `305 passed, 12 skipped` |
 | Fresh install smoke | `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
+| Live Codex attachment | plugin `agent-context-substrate`, Stop hook installed, watcher fallback available |
 | Live runtime | plugin `agent-context-substrate`, context engine `agent_context_substrate`, gateway running |
 
 이 표는 운영 기준선입니다. installer, context-engine, plugin, lint, retrieval을 바꾸면 다시 갱신하세요.
@@ -131,8 +132,12 @@ v0.2.0 로컬 release candidate 기준으로 확인된 운영 기준선입니다
 
 ```text
 Hermes DB: HERMES_HOME/state.db
-session_id: CLI 인자 또는 plugin hook에서 전달
+Codex DB: ~/.codex/state_5.sqlite
+Codex rollout: ~/.codex/sessions/**/rollout-*.jsonl
+session_id/thread_id: CLI 인자 또는 hook에서 전달
 ```
+
+Windows Codex 앱 사용자에게는 `~/.codex` 대신 `%USERPROFILE%\.codex`로 안내합니다.
 
 ### Harness 출력
 

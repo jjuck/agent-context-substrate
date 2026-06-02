@@ -3,12 +3,21 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_context_substrate.topic_map import build_topic_map, export_topic_map, render_topic_map_markdown
 
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
 
 
 def test_build_topic_map_connects_claims_promotions_patches_applied_logs_and_wiki_links(tmp_path: Path) -> None:
@@ -159,7 +168,7 @@ def test_build_topic_map_skips_project_artifact_symlinks_that_escape_root(tmp_pa
         ),
         encoding="utf-8",
     )
-    (promotions_dir / "linked.json").symlink_to(outside)
+    _symlink_or_skip(promotions_dir / "linked.json", outside)
 
     topic_map = build_topic_map(project_root=project_root, wiki_root=wiki_root)
 
@@ -272,10 +281,7 @@ def test_build_topic_map_skips_wiki_symlink_outside_root(tmp_path: Path) -> None
     outside = tmp_path / "outside-secret.md"
     outside.write_text("# Secret Outside\n\n[[Inside]]", encoding="utf-8")
     link = wiki_root / "link.md"
-    try:
-        link.symlink_to(outside)
-    except OSError:
-        return
+    _symlink_or_skip(link, outside)
 
     topic_map = build_topic_map(project_root=project_root, wiki_root=wiki_root)
 

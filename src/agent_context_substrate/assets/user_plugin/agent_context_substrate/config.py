@@ -51,6 +51,7 @@ class AgentContextSubstratePluginConfig:
     summary_model: str | None = None
     summary_budget: str | None = None
     summary_cache: bool = False
+    summary_judge_mode: str = "off"
     llm_redact: bool = True
     llm_max_input_chars: int = 12_000
     llm_allow_code_snippets: bool = False
@@ -71,6 +72,7 @@ def load_plugin_config() -> AgentContextSubstratePluginConfig:
         summary_model=os.environ.get("AGENT_CONTEXT_SUBSTRATE_SUMMARY_MODEL") or None,
         summary_budget=os.environ.get("AGENT_CONTEXT_SUBSTRATE_SUMMARY_BUDGET") or None,
         summary_cache=_env_bool("AGENT_CONTEXT_SUBSTRATE_SUMMARY_CACHE", False),
+        summary_judge_mode=os.environ.get("AGENT_CONTEXT_SUBSTRATE_SUMMARY_JUDGE_MODE", "off").strip().lower() or "off",
         llm_redact=_env_bool("AGENT_CONTEXT_SUBSTRATE_LLM_REDACT", True),
         llm_max_input_chars=_env_int("AGENT_CONTEXT_SUBSTRATE_LLM_MAX_INPUT_CHARS", 12_000),
         llm_allow_code_snippets=_env_bool("AGENT_CONTEXT_SUBSTRATE_LLM_ALLOW_CODE_SNIPPETS", False),

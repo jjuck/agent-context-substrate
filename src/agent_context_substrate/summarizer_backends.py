@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -39,6 +40,31 @@ class SummarizerBackend(Protocol):
 
 
 AgentLLMRouter = Callable[[dict[str, object]], dict[str, object] | str]
+
+
+def _split_custom_command(command: str) -> list[str]:
+    if os.name != "nt":
+        return shlex.split(command)
+    return _split_windows_command(command)
+
+
+def _split_windows_command(command: str) -> list[str]:
+    import ctypes
+
+    argc = ctypes.c_int()
+    command_line_to_argv = ctypes.windll.shell32.CommandLineToArgvW
+    command_line_to_argv.argtypes = (ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_int))
+    command_line_to_argv.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    local_free = ctypes.windll.kernel32.LocalFree
+    local_free.argtypes = (ctypes.c_void_p,)
+    local_free.restype = ctypes.c_void_p
+    argv = command_line_to_argv(command, ctypes.byref(argc))
+    if not argv:
+        raise ValueError("unable to parse Windows command line")
+    try:
+        return [argv[index] for index in range(argc.value)]
+    finally:
+        local_free(argv)
 
 
 @dataclass(frozen=True)
@@ -337,7 +363,7 @@ class CustomCommandSummarizerBackend:
         if not command.strip():
             raise ValueError("custom-command summarizer requires a command")
         try:
-            self.command = shlex.split(command)
+            self.command = _split_custom_command(command)
         except ValueError as exc:
             raise ValueError(f"custom-command summarizer has invalid command syntax: {exc}") from exc
         if not self.command:
@@ -420,6 +446,7 @@ class CustomCommandSummarizerBackend:
             capture_output=True,
             timeout=self.timeout_seconds,
             check=False,
+            shell=False,
         )
         if result.returncode != 0:
             raise RuntimeError(

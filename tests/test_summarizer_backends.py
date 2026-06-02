@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -312,6 +313,9 @@ print(json.dumps({
     evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-custom")
     backend = CustomCommandSummarizerBackend(command=f"{sys.executable} {script_path}")
 
+    assert Path(backend.command[0]) == Path(sys.executable)
+    assert Path(backend.command[1]) == script_path
+
     summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
 
     assert summary.micro_id == "micro-custom"
@@ -332,6 +336,22 @@ def test_custom_command_summarizer_backend_falls_back_when_command_fails(tmp_pat
     assert summary.metadata.fallback_from == "custom-command"
     assert summary.metadata.fallback_reason == "command_failed"
     assert summary.micro_id == "micro-custom-fallback"
+
+
+def test_custom_command_summarizer_backend_preserves_shell_false(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run(*_args, **kwargs):
+        calls.append(kwargs)
+        return subprocess.CompletedProcess(args=[], returncode=7, stdout="", stderr="boom")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-custom-shell")
+    backend = CustomCommandSummarizerBackend(command=f"{sys.executable} summarizer.py")
+
+    backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert calls[0]["shell"] is False
 
 
 def test_custom_command_summarizer_backend_falls_back_when_micro_summary_fails_lint(tmp_path: Path) -> None:

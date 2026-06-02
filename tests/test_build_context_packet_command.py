@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -68,7 +70,8 @@ def test_export_v2_summary_artifacts_uses_typed_session_bundle(monkeypatch, tmp_
         micro_path = paths.project_root / "micro.json"
         unit_path = paths.project_root / "unit.json"
         evidence_path = paths.project_root / "evidence.json"
-        return SimpleNamespace(as_tuple=lambda: (micro_path, unit_path, evidence_path))
+        judge_path = paths.project_root / "judge.json"
+        return SimpleNamespace(as_tuple=lambda: (micro_path, unit_path, evidence_path), judge_path=judge_path)
 
     monkeypatch.setattr(build_context_packet_module, "build_typed_session_bundle", fake_build_typed_session_bundle)
     monkeypatch.setattr(build_context_packet_module, "build_v2_summary_artifacts", fake_build_v2_summary_artifacts)
@@ -147,6 +150,40 @@ def test_build_context_packet_handler_uses_packet_builder_options(tmp_path, caps
     assert "micro_summaries=1 unit_summaries=1 critical_files=1" in captured.out
 
 
+def test_build_context_packet_handler_rejects_summary_judge_without_summary_mode(tmp_path, capsys) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+
+    def fake_packet_builder(*, paths, options):
+        raise AssertionError("packet export should not run when summary judge mode is invalid")
+
+    with pytest.raises(SystemExit):
+        handle_build_context_packet_command(
+            args=SimpleNamespace(
+                session_id="session-1",
+                packet_id="packet-1",
+                task_title="Task",
+                macro_context="Context",
+                unit_title="Unit",
+                goal="Goal",
+                related_pages=[],
+                summary_mode=None,
+                summarizer_command=None,
+                summary_model=None,
+                summary_budget=None,
+                summary_cache="off",
+                summary_judge_mode="hybrid",
+            ),
+            parser=argparse.ArgumentParser(prog="acs"),
+            paths=paths,
+            build_packet_from_session=fake_packet_builder,
+            export_v2_summary_artifacts=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("no export")),
+            summary_routing_hints=lambda **_kwargs: {},
+        )
+
+    captured = capsys.readouterr()
+    assert "--summary-judge-mode requires --summary-mode" in captured.err
+
+
 def test_build_context_packet_handler_warns_when_v2_summary_falls_back(tmp_path, capsys) -> None:
     paths = HarnessPaths(project_root=tmp_path / "project")
     summary_dir = paths.project_root / "data" / "exports" / "summaries"
@@ -207,3 +244,195 @@ def test_build_context_packet_handler_warns_when_v2_summary_falls_back(tmp_path,
     assert "summary fallback" in captured.err
     assert "custom-command" in captured.err
     assert "command_failed" in captured.err
+
+
+def test_build_context_packet_handler_passes_summary_judge_mode_to_export(tmp_path, capsys) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    captured: dict[str, object] = {}
+
+    def fake_packet_builder(*, paths, options):
+        return PacketBuildResult(
+            packet=_FakePacket(),
+            raw_export_path=paths.project_root / "data" / "exports" / "session-1.json",
+            packet_json_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.json",
+            packet_markdown_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.md",
+        )
+
+    def fake_export_v2_summary_artifacts(**kwargs):
+        captured.update(kwargs)
+        return (
+            paths.project_root / "micro.json",
+            paths.project_root / "unit.json",
+            paths.project_root / "evidence.json",
+        )
+
+    exit_code = handle_build_context_packet_command(
+        args=SimpleNamespace(
+            session_id="session-1",
+            packet_id="packet-1",
+            task_title="Task",
+            macro_context="Context",
+            unit_title="Unit",
+            goal="Goal",
+            related_pages=[],
+            summary_mode="heuristic",
+            summarizer_command=None,
+            summary_model=None,
+            summary_budget="quality",
+            summary_cache="off",
+            summary_judge_mode="hybrid",
+        ),
+        parser=argparse.ArgumentParser(prog="acs"),
+        paths=paths,
+        build_packet_from_session=fake_packet_builder,
+        export_v2_summary_artifacts=fake_export_v2_summary_artifacts,
+        summary_routing_hints=build_summary_routing_hints,
+    )
+
+    assert exit_code == 0
+    assert captured["summary_judge_mode"] == "hybrid"
+    assert captured["routing_hints"] == {"budget": "quality"}
+
+
+def test_build_context_packet_handler_prints_summary_judge_path(tmp_path, capsys) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    judge_path = paths.project_root / "data" / "exports" / "evals" / "packet-1-summary-judge.json"
+
+    def fake_packet_builder(*, paths, options):
+        return PacketBuildResult(
+            packet=_FakePacket(),
+            raw_export_path=paths.project_root / "data" / "exports" / "session-1.json",
+            packet_json_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.json",
+            packet_markdown_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.md",
+        )
+
+    def fake_export_v2_summary_artifacts(**_kwargs):
+        judge_path.parent.mkdir(parents=True)
+        judge_path.write_text("{}", encoding="utf-8")
+        return (
+            paths.project_root / "micro.json",
+            paths.project_root / "unit.json",
+            paths.project_root / "evidence.json",
+        )
+
+    exit_code = handle_build_context_packet_command(
+        args=SimpleNamespace(
+            session_id="session-1",
+            packet_id="packet-1",
+            task_title="Task",
+            macro_context="Context",
+            unit_title="Unit",
+            goal="Goal",
+            related_pages=[],
+            summary_mode="heuristic",
+            summarizer_command=None,
+            summary_model=None,
+            summary_budget=None,
+            summary_cache="off",
+            summary_judge_mode="hybrid",
+        ),
+        parser=argparse.ArgumentParser(prog="acs"),
+        paths=paths,
+        build_packet_from_session=fake_packet_builder,
+        export_v2_summary_artifacts=fake_export_v2_summary_artifacts,
+        summary_routing_hints=lambda **_kwargs: {},
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert str(judge_path) in captured.out
+
+
+def test_build_context_packet_handler_ignores_injected_judge_path_when_judge_mode_is_off(
+    tmp_path,
+    capsys,
+) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    judge_path = paths.project_root / "data" / "exports" / "evals" / "packet-1-summary-judge.json"
+    judge_path.parent.mkdir(parents=True)
+    judge_path.write_text("{}", encoding="utf-8")
+
+    def fake_packet_builder(*, paths, options):
+        return PacketBuildResult(
+            packet=_FakePacket(),
+            raw_export_path=paths.project_root / "data" / "exports" / "session-1.json",
+            packet_json_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.json",
+            packet_markdown_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.md",
+        )
+
+    exit_code = handle_build_context_packet_command(
+        args=SimpleNamespace(
+            session_id="session-1",
+            packet_id="packet-1",
+            task_title="Task",
+            macro_context="Context",
+            unit_title="Unit",
+            goal="Goal",
+            related_pages=[],
+            summary_mode="heuristic",
+            summarizer_command=None,
+            summary_model=None,
+            summary_budget=None,
+            summary_cache="off",
+            summary_judge_mode="off",
+        ),
+        parser=argparse.ArgumentParser(prog="acs"),
+        paths=paths,
+        build_packet_from_session=fake_packet_builder,
+        export_v2_summary_artifacts=lambda **_kwargs: (
+            paths.project_root / "micro.json",
+            paths.project_root / "unit.json",
+            paths.project_root / "evidence.json",
+            judge_path,
+        ),
+        summary_routing_hints=lambda **_kwargs: {},
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert str(judge_path) not in captured.out
+
+
+def test_build_context_packet_handler_ignores_missing_injected_judge_path(tmp_path, capsys) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    judge_path = paths.project_root / "data" / "exports" / "evals" / "packet-1-summary-judge.json"
+
+    def fake_packet_builder(*, paths, options):
+        return PacketBuildResult(
+            packet=_FakePacket(),
+            raw_export_path=paths.project_root / "data" / "exports" / "session-1.json",
+            packet_json_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.json",
+            packet_markdown_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.md",
+        )
+
+    exit_code = handle_build_context_packet_command(
+        args=SimpleNamespace(
+            session_id="session-1",
+            packet_id="packet-1",
+            task_title="Task",
+            macro_context="Context",
+            unit_title="Unit",
+            goal="Goal",
+            related_pages=[],
+            summary_mode="heuristic",
+            summarizer_command=None,
+            summary_model=None,
+            summary_budget=None,
+            summary_cache="off",
+            summary_judge_mode="hybrid",
+        ),
+        parser=argparse.ArgumentParser(prog="acs"),
+        paths=paths,
+        build_packet_from_session=fake_packet_builder,
+        export_v2_summary_artifacts=lambda **_kwargs: (
+            paths.project_root / "micro.json",
+            paths.project_root / "unit.json",
+            paths.project_root / "evidence.json",
+            judge_path,
+        ),
+        summary_routing_hints=lambda **_kwargs: {},
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert str(judge_path) not in captured.out

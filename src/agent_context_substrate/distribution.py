@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from contextlib import contextmanager
+import json
 import os
 import re
 import shutil
+import sys
 
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"/mnt/[a-z]/Users/[^/\s'\"]+"),
@@ -199,6 +201,138 @@ def _write_local_config(destination: Path, *, project_root: Path, wiki_root: Pat
     return local_config_path
 
 
+def _write_codex_local_config(destination: Path, *, project_root: Path, wiki_root: Path, codex_home: Path) -> Path:
+    local_config_path = destination / "local_config.json"
+    local_config_path.write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "python_executable": sys.executable,
+                "python_path_entries": [str(project_root / "src")],
+                "hook_event_log_path": str(project_root / "data" / "index" / "codex_hook_events.jsonl"),
+                "trigger_strategy": "hook-primary",
+                "watcher_fallback": True,
+                "hook_timeout_seconds": 110,
+                "commands": {
+                    "status": "agent-context-substrate codex-status",
+                    "watch": "agent-context-substrate codex-watch",
+                    "finalize": "agent-context-substrate codex-finalize",
+                    "search": "agent-context-substrate search-knowledge",
+                    "expand": "agent-context-substrate expand-hit",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return local_config_path
+
+
+def _install_codex_personal_marketplace(
+    *,
+    source_plugin_dir: Path,
+    marketplace_root: Path,
+    codex_home: Path,
+) -> dict[str, Path]:
+    plugin_name = "agent-context-substrate"
+    marketplace_path = marketplace_root / ".agents" / "plugins" / "marketplace.json"
+    marketplace_plugin_dir = marketplace_root / "plugins" / plugin_name
+    codex_cache_plugin_parent = codex_home / "plugins" / "cache" / "personal" / plugin_name
+    codex_cache_plugin_dir = codex_cache_plugin_parent / "local"
+    marketplace_plugin_dir.parent.mkdir(parents=True, exist_ok=True)
+    if marketplace_plugin_dir.exists():
+        shutil.rmtree(marketplace_plugin_dir)
+    shutil.copytree(source_plugin_dir, marketplace_plugin_dir)
+
+    if marketplace_path.exists():
+        marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    else:
+        marketplace = {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
+    plugins = marketplace.setdefault("plugins", [])
+    plugins[:] = [item for item in plugins if not (isinstance(item, dict) and item.get("name") == plugin_name)]
+    plugins.append(
+        {
+            "name": plugin_name,
+            "source": {"source": "local", "path": f"./plugins/{plugin_name}"},
+            "policy": {"installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_INSTALL"},
+            "category": "Engineering",
+        }
+    )
+    marketplace_path.parent.mkdir(parents=True, exist_ok=True)
+    marketplace_path.write_text(json.dumps(marketplace, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    codex_cache_plugin_parent.mkdir(parents=True, exist_ok=True)
+    for child in codex_cache_plugin_parent.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    shutil.copytree(source_plugin_dir, codex_cache_plugin_dir)
+
+    return {
+        "personal_marketplace_path": marketplace_path,
+        "personal_marketplace_plugin_dir": marketplace_plugin_dir,
+        "codex_plugin_cache_dir": codex_cache_plugin_dir,
+    }
+
+
+def _codex_user_stop_hook_group(*, plugin_dir: Path) -> dict[str, object]:
+    hook_script = plugin_dir / "hooks" / "codex_stop_finalize.py"
+    return {
+        "hooks": [
+            {
+                "type": "command",
+                "command": f'python3 "{hook_script.as_posix()}"',
+                "commandWindows": f'python "{hook_script}"',
+                "timeout": 120,
+                "statusMessage": "Finalizing Codex thread into Agent Context Substrate",
+            }
+        ]
+    }
+
+
+def _is_acs_codex_stop_hook_group(group: object) -> bool:
+    if not isinstance(group, dict):
+        return False
+    handlers = group.get("hooks")
+    if not isinstance(handlers, list):
+        return False
+    for handler in handlers:
+        if not isinstance(handler, dict):
+            continue
+        command = str(handler.get("command") or "")
+        command_windows = str(handler.get("commandWindows") or handler.get("command_windows") or "")
+        if "agent-context-substrate" in f"{command} {command_windows}" and "codex_stop_finalize.py" in f"{command} {command_windows}":
+            return True
+    return False
+
+
+def _install_codex_user_stop_hook(*, codex_home: Path, plugin_dir: Path) -> Path:
+    hooks_path = codex_home / "hooks.json"
+    if hooks_path.exists():
+        payload = json.loads(hooks_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"{hooks_path} must contain a JSON object")
+    else:
+        payload = {}
+
+    hooks = payload.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError(f"{hooks_path} field 'hooks' must be an object")
+    stop_groups = hooks.setdefault("Stop", [])
+    if not isinstance(stop_groups, list):
+        raise ValueError(f"{hooks_path} field 'hooks.Stop' must be an array")
+
+    stop_groups[:] = [group for group in stop_groups if not _is_acs_codex_stop_hook_group(group)]
+    stop_groups.append(_codex_user_stop_hook_group(plugin_dir=plugin_dir))
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return hooks_path
+
+
 def install_user_plugin(
     *,
     hermes_home: Path | str,
@@ -229,6 +363,64 @@ def install_user_plugin(
     if backup_path:
         paths["backup_path"] = backup_path
     return InstallResult(status="installed", paths=paths, messages=["user plugin installed"])
+
+
+def install_codex_plugin(
+    *,
+    codex_home: Path | str,
+    project_root: Path | str,
+    wiki_root: Path | str,
+    personal_marketplace_root: Path | str | None = None,
+    install_user_hook: bool = False,
+    overwrite: bool = False,
+) -> InstallResult:
+    codex_home = Path(codex_home).expanduser()
+    project_root = Path(project_root).expanduser()
+    wiki_root = Path(wiki_root).expanduser()
+    plugin_dir = codex_home / "plugins" / "agent-context-substrate"
+    if plugin_dir.exists() and not overwrite:
+        return InstallResult(
+            status="skipped",
+            paths={"plugin_dir": plugin_dir},
+            messages=["codex plugin already exists; pass overwrite=True to replace it"],
+        )
+
+    backup_path = _backup_existing(plugin_dir, backup_parent=codex_home / "_backups" / "plugins") if overwrite else None
+    if plugin_dir.exists():
+        shutil.rmtree(plugin_dir)
+    _copy_resource_tree(_asset_root() / "codex_plugin" / "agent-context-substrate", plugin_dir)
+    local_config_path = _write_codex_local_config(
+        plugin_dir,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        codex_home=codex_home,
+    )
+
+    paths = {"plugin_dir": plugin_dir, "local_config_path": local_config_path}
+    if backup_path:
+        paths["backup_path"] = backup_path
+    if personal_marketplace_root is not None:
+        paths.update(
+            _install_codex_personal_marketplace(
+                source_plugin_dir=plugin_dir,
+                marketplace_root=Path(personal_marketplace_root).expanduser(),
+                codex_home=codex_home,
+            )
+        )
+        messages = [
+            "codex plugin installed; Stop hook is primary and codex-watch remains fallback",
+            "personal marketplace entry and Codex plugin cache installed",
+        ]
+    else:
+        messages = ["codex plugin installed; Stop hook is primary and codex-watch remains fallback"]
+    if install_user_hook:
+        paths["codex_user_hooks_path"] = _install_codex_user_stop_hook(codex_home=codex_home, plugin_dir=plugin_dir)
+        messages.append("Codex user hooks.json Stop hook installed for non-plugin hook fallback")
+    return InstallResult(
+        status="installed",
+        paths=paths,
+        messages=messages,
+    )
 
 
 def install_context_engine(

@@ -157,6 +157,9 @@ def _flatten_text_value(value: object) -> list[str]:
 def _format_pointer(pointer: object) -> str:
     if pointer is None:
         return ""
+    source_ref = getattr(pointer, "source_ref", None)
+    if callable(source_ref):
+        return str(source_ref())
     session_id = getattr(pointer, "session_id")
     message_ids = ",".join(str(message_id) for message_id in getattr(pointer, "message_ids"))
     return f"hermes-session:{session_id}#messages={message_ids}"

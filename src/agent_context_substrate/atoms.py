@@ -328,7 +328,6 @@ def _normalize_name(value: str) -> str:
 
 def _format_raw_source_ref(micro: MicroSummaryV2) -> str:
     if micro.provenance:
-        message_ids = ",".join(str(message_id) for message_id in micro.provenance.message_ids)
-        return f"hermes-session:{micro.provenance.session_id}#messages={message_ids}"
+        return micro.provenance.source_ref()
     message_ids = ",".join(str(message_id) for message_id in micro.message_ids)
     return f"hermes-session:{micro.session_id}#messages={message_ids}"

@@ -201,6 +201,22 @@ class IntegrationRecordingRouter:
         }
 
 
+class JudgeIntegrationRouter(IntegrationRecordingRouter):
+    def __call__(self, request: dict[str, object]) -> dict[str, object]:
+        if request["kind"] == "summary-judge":
+            self.requests.append(request)
+            recovery_gate = request["recovery_quality_gate"]
+            return {
+                "ok": True,
+                "score": 0.91,
+                "decision": "accept",
+                "issues": [],
+                "rationale": f"Recovery gate score {recovery_gate['score']} is good enough for alpha.",
+                "metadata": {"mode": "integration"},
+            }
+        return super().__call__(request)
+
+
 def test_run_session_finalize_pipeline_exports_agent_llm_v2_summaries_with_injected_router(tmp_path, monkeypatch) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -239,6 +255,47 @@ def test_run_session_finalize_pipeline_exports_agent_llm_v2_summaries_with_injec
     assert Path(record.artifact_paths["summary_micro_path"]) == result.summary_micro_path
     assert Path(record.artifact_paths["summary_unit_path"]) == result.summary_unit_path
     assert Path(record.artifact_paths["summary_evidence_path"]) == result.summary_evidence_path
+
+
+def test_run_session_finalize_pipeline_exports_summary_judge_with_recovery_gate(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    wiki_root = tmp_path / "wiki"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    _build_sample_state_db(hermes_home / "state.db")
+    router = JudgeIntegrationRouter()
+
+    result = run_session_finalize_pipeline(
+        session_id="session-1",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        summary_mode="agent-llm",
+        agent_llm_router=router,
+        summary_judge_mode="hybrid",
+    )
+
+    assert result.summary_judge_path is not None
+    payload = json.loads(result.summary_judge_path.read_text(encoding="utf-8"))
+    assert payload["decision"] == "accept"
+    assert payload["metadata"] == {
+        "mode": "integration",
+        "judge_mode": "hybrid",
+        "schema_version": "summary_judge_v1",
+    }
+    assert [request["kind"] for request in router.requests] == ["micro", "unit", "summary-judge"]
+    judge_request = router.requests[-1]
+    assert judge_request["recovery_quality_gate"]["ok"] is True
+    assert judge_request["recovery_quality_gate"]["score"] >= 0.8
+
+    ledger = SessionLedger(project_root / "data" / "index" / "session_ledger.json")
+    record = ledger.get_record("session-1", "session_finalize")
+    assert record is not None
+    assert Path(record.artifact_paths["summary_judge_path"]) == result.summary_judge_path
 
 
 def test_run_session_finalize_pipeline_full_mode_writes_legacy_promotions(tmp_path, monkeypatch) -> None:

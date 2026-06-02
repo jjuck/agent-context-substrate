@@ -64,6 +64,22 @@ def _load_agent_llm_router_builder():
     return router_module.build_agent_llm_router
 
 
+def _load_hermes_auxiliary_llm_router_builder():
+    config = load_plugin_config()
+    _ensure_harness_on_path(config)
+    router_module = importlib.import_module("agent_context_substrate.agent_llm_router")
+    auxiliary_client = importlib.import_module("agent.auxiliary_client")
+
+    def build_router(**kwargs):
+        return router_module.build_hermes_auxiliary_llm_router(
+            auxiliary_client.call_llm,
+            extract_content=getattr(auxiliary_client, "extract_content_or_reasoning", None),
+            **kwargs,
+        )
+
+    return build_router
+
+
 def _load_llm_safety_options_class():
     config = load_plugin_config()
     _ensure_harness_on_path(config)
@@ -81,21 +97,23 @@ def _host_agent_from_kwargs(kwargs: dict[str, object]) -> object | None:
 
 def _summary_pipeline_kwargs(config: AgentContextSubstratePluginConfig, hook_kwargs: dict[str, object]) -> dict[str, object]:
     summary_mode = str(getattr(config, "summary_mode", "") or "").strip().lower()
-    if not summary_mode or summary_mode in {"off", "none", "disabled"}:
+    summary_judge_mode = str(getattr(config, "summary_judge_mode", "off") or "off").strip().lower()
+    if (not summary_mode or summary_mode in {"off", "none", "disabled"}) and summary_judge_mode == "off":
         return {}
 
     agent_llm_router = None
-    if summary_mode in {"agent-llm", "hybrid"}:
+    if summary_mode in {"agent-llm", "hybrid"} or summary_judge_mode == "hybrid":
+        path_policy = str(getattr(config, "llm_path_policy", "redact") or "redact")
         host_agent = _host_agent_from_kwargs(hook_kwargs)
         if host_agent is not None:
-            agent_llm_router = _load_agent_llm_router_builder()(
-                host_agent,
-                path_policy=str(getattr(config, "llm_path_policy", "redact") or "redact"),
-            )
+            agent_llm_router = _load_agent_llm_router_builder()(host_agent, path_policy=path_policy)
+        else:
+            agent_llm_router = _load_hermes_auxiliary_llm_router_builder()(path_policy=path_policy)
 
     llm_safety_class = _load_llm_safety_options_class()
     return {
-        "summary_mode": summary_mode,
+        "summary_mode": summary_mode or None,
+        "summary_judge_mode": summary_judge_mode,
         "agent_llm_router": agent_llm_router,
         "summary_model": getattr(config, "summary_model", None),
         "summary_budget": getattr(config, "summary_budget", None),

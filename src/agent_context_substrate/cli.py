@@ -30,10 +30,26 @@ from .commands.build_context_packet import (
     export_v2_summary_artifacts,
     handle_build_context_packet_command,
 )
+from .commands.codex import (
+    default_wiki_root,
+    handle_codex_finalize_command,
+    handle_codex_status_command,
+    handle_codex_watch_command,
+    handle_expand_hit_command,
+    handle_search_knowledge_command,
+)
+from .commands.codex_setup import (
+    handle_config_codex_command,
+    handle_diagnose_codex_command,
+    handle_doctor_codex_command,
+    handle_setup_codex_command,
+    handle_setup_codex_wizard_command,
+)
 from .commands.distribution import (
     handle_doctor_command,
     handle_fresh_install_smoke_command,
     handle_init_wiki_command,
+    handle_install_codex_plugin_command,
     handle_install_context_engine_command,
     handle_install_plugin_command,
 )
@@ -142,6 +158,12 @@ def build_parser() -> argparse.ArgumentParser:
     build_packet.add_argument(
         "--summary-budget",
         help="Optional budget routing hint for host Agent LLM summary modes, e.g. cheap, balanced, or quality.",
+    )
+    build_packet.add_argument(
+        "--summary-judge-mode",
+        choices=["off", "hybrid"],
+        default="off",
+        help="Opt-in summary quality evaluation export. Hybrid requires a host Agent LLM router to make semantic judgments.",
     )
     build_packet.add_argument(
         "--llm-redact",
@@ -434,6 +456,24 @@ def build_parser() -> argparse.ArgumentParser:
     install_plugin.add_argument("--wiki-root", required=True, help="Obsidian/LLM Wiki root used by the plugin")
     install_plugin.add_argument("--overwrite", action="store_true", help="Backup and replace an existing plugin install")
 
+    install_codex_plugin = subparsers.add_parser(
+        "install-codex-plugin",
+        help="Install the non-MCP Codex plugin asset and local config",
+    )
+    install_codex_plugin.add_argument("--codex-home", required=True, help="Codex home directory, usually ~/.codex")
+    install_codex_plugin.add_argument("--project-root", required=True, help="Harness project root used by Codex CLI commands")
+    install_codex_plugin.add_argument("--wiki-root", required=True, help="Obsidian/LLM Wiki root used by Codex CLI commands")
+    install_codex_plugin.add_argument(
+        "--personal-marketplace-root",
+        help="Optional Codex marketplace source root, usually the user home directory",
+    )
+    install_codex_plugin.add_argument(
+        "--install-user-hook",
+        action="store_true",
+        help="Also register the Stop hook in ~/.codex/hooks.json for non-plugin hook fallback",
+    )
+    install_codex_plugin.add_argument("--overwrite", action="store_true", help="Backup and replace an existing plugin install")
+
     install_engine = subparsers.add_parser(
         "install-context-engine",
         help="Install the Hermes agent_context_substrate context engine from packaged assets",
@@ -459,6 +499,124 @@ def build_parser() -> argparse.ArgumentParser:
     smoke_parser.add_argument("--project-root", required=True, help="Temporary or real harness project root")
     smoke_parser.add_argument("--wiki-root", required=True, help="Temporary or real wiki root")
     smoke_parser.add_argument("--hermes-agent-root", required=False, help="Optional Hermes Agent root for context-engine install")
+
+    setup_codex = subparsers.add_parser(
+        "setup-codex",
+        help="One-shot Windows Codex app setup for ACS plugin, wiki, hooks, and diagnostics",
+    )
+    setup_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    setup_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    setup_codex.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root, usually the user home")
+    setup_codex.add_argument("--yes", action="store_true", help="Accept the displayed defaults for non-interactive setup")
+    setup_codex.add_argument("--dry-run", action="store_true", help="Print planned setup actions without writing files")
+    setup_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    setup_codex.add_argument("--no-user-hook", action="store_true", help="Do not register ~/.codex/hooks.json fallback")
+    setup_codex.add_argument("--no-marketplace", action="store_true", help="Do not install personal marketplace/cache entry")
+    setup_codex.add_argument("--no-overwrite", action="store_true", help="Do not replace an existing ACS Codex plugin")
+    _add_project_root_argument(setup_codex)
+
+    setup_codex_wizard = subparsers.add_parser(
+        "setup-codex-wizard",
+        help="Interactive Windows Codex app setup wizard",
+    )
+    setup_codex_wizard.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    setup_codex_wizard.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    setup_codex_wizard.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root")
+    setup_codex_wizard.add_argument("--yes", action="store_true", help="Run without asking for confirmation")
+    setup_codex_wizard.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    _add_project_root_argument(setup_codex_wizard)
+
+    doctor_codex = subparsers.add_parser("doctor-codex", help="Check Windows Codex app ACS setup health")
+    doctor_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    doctor_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    doctor_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    doctor_codex.add_argument("--fail-on-issues", action="store_true", help="Return exit code 1 if required checks fail")
+    _add_project_root_argument(doctor_codex)
+
+    diagnose_codex = subparsers.add_parser("diagnose-codex", help="Explain and optionally repair safe Codex setup issues")
+    diagnose_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    diagnose_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    diagnose_codex.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root for --fix")
+    diagnose_codex.add_argument("--fix", action="store_true", help="Repair safe local ACS files; does not bypass hook trust")
+    diagnose_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    _add_project_root_argument(diagnose_codex)
+
+    config_codex = subparsers.add_parser("config-codex", help="Inspect or update installed Codex plugin local_config.json")
+    config_actions = config_codex.add_subparsers(dest="config_action", required=True)
+    for action_name, help_text in [
+        ("paths", "Show user-facing Codex, wiki, and ACS artifact paths"),
+        ("show", "Show installed local_config.json"),
+        ("write", "Write default local_config.json"),
+        ("export-env", "Print PowerShell environment variable exports"),
+    ]:
+        action_parser = config_actions.add_parser(action_name, help=help_text)
+        action_parser.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+        action_parser.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+        action_parser.add_argument("--json", action="store_true", help="Print JSON instead of text")
+        _add_project_root_argument(action_parser)
+    config_set = config_actions.add_parser("set", help="Set one local_config.json key")
+    config_set.add_argument("--key", required=True, help="Config key to update")
+    config_set.add_argument("--value", required=True, help="Config value; JSON scalars are accepted")
+    config_set.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    config_set.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    config_set.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    _add_project_root_argument(config_set)
+
+    codex_status = subparsers.add_parser("codex-status", help="Inspect Codex local session source and integration mode")
+    codex_status.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+
+    codex_finalize = subparsers.add_parser("codex-finalize", help="Finalize one Codex thread into ACS artifacts")
+    codex_finalize.add_argument("--thread-id", required=True, help="Codex thread id from state_5.sqlite")
+    codex_finalize.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    codex_finalize.add_argument("--wiki-root", required=True, help="Obsidian/LLM Wiki root")
+    codex_finalize.add_argument("--task-title", help="Optional packet task title override")
+    codex_finalize.add_argument("--unit-title", help="Optional unit title override")
+    codex_finalize.add_argument("--goal", help="Optional unit goal override")
+    codex_finalize.add_argument(
+        "--related-page",
+        action="append",
+        dest="related_pages",
+        default=[],
+        help="Related wiki page path or slug; may be repeated",
+    )
+    codex_finalize.add_argument(
+        "--max-tool-output-chars",
+        type=int,
+        default=12_000,
+        help="Maximum function_call_output characters retained in raw Codex exports",
+    )
+    _add_project_root_argument(codex_finalize)
+
+    codex_watch = subparsers.add_parser("codex-watch", help="Watch Codex rollout JSONL files and finalize idle threads")
+    codex_watch.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    codex_watch.add_argument("--wiki-root", default=default_wiki_root(), help="Obsidian/LLM Wiki root")
+    codex_watch.add_argument("--interval-seconds", type=int, default=15, help="Polling interval for watcher mode")
+    codex_watch.add_argument("--idle-seconds", type=int, default=90, help="Minimum rollout idle time before finalizing")
+    codex_watch.add_argument("--state-path", help="Optional watcher state JSON path")
+    codex_watch.add_argument("--once", action="store_true", help="Process currently idle threads once and exit")
+    codex_watch.add_argument(
+        "--max-tool-output-chars",
+        type=int,
+        default=12_000,
+        help="Maximum function_call_output characters retained in raw Codex exports",
+    )
+    _add_project_root_argument(codex_watch)
+
+    search_parser = subparsers.add_parser("search-knowledge", help="Search wiki, packets, recovery, graph, and optional raw messages")
+    search_parser.add_argument("--query", required=True, help="Search query")
+    search_parser.add_argument("--wiki-root", default=default_wiki_root(), help="Obsidian/LLM Wiki root")
+    search_parser.add_argument("--mode", choices=["knowledge", "recovery", "graph"], default="knowledge")
+    search_parser.add_argument("--limit", type=int, default=5)
+    search_parser.add_argument("--include-raw", action="store_true", help="Include raw Hermes state.db messages")
+    search_parser.add_argument("--graph-depth", type=int, default=0)
+    search_parser.add_argument("--json", action="store_true", help="Print JSON instead of text")
+    _add_project_root_argument(search_parser)
+
+    expand_parser = subparsers.add_parser("expand-hit", help="Expand a retrieval hit id into full content")
+    expand_parser.add_argument("--hit-id", required=True, help="Retrieval hit id from search-knowledge")
+    expand_parser.add_argument("--wiki-root", default=default_wiki_root(), help="Obsidian/LLM Wiki root")
+    expand_parser.add_argument("--json", action="store_true", help="Print JSON detail instead of content")
+    _add_project_root_argument(expand_parser)
     return parser
 
 
@@ -472,6 +630,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "install-plugin":
         return handle_install_plugin_command(args=args)
 
+    if args.command == "install-codex-plugin":
+        return handle_install_codex_plugin_command(args=args)
+
     if args.command == "install-context-engine":
         return handle_install_context_engine_command(args=args)
 
@@ -481,7 +642,37 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "fresh-install-smoke":
         return handle_fresh_install_smoke_command(args=args)
 
+    if args.command == "setup-codex":
+        return handle_setup_codex_command(args=args)
+
+    if args.command == "setup-codex-wizard":
+        return handle_setup_codex_wizard_command(args=args)
+
+    if args.command == "doctor-codex":
+        return handle_doctor_codex_command(args=args)
+
+    if args.command == "diagnose-codex":
+        return handle_diagnose_codex_command(args=args)
+
+    if args.command == "config-codex":
+        return handle_config_codex_command(args=args)
+
+    if args.command == "codex-status":
+        return handle_codex_status_command(args=args)
+
     paths = HarnessPaths(project_root=Path(args.project_root).resolve())
+
+    if args.command == "codex-finalize":
+        return handle_codex_finalize_command(args=args)
+
+    if args.command == "codex-watch":
+        return handle_codex_watch_command(args=args)
+
+    if args.command == "search-knowledge":
+        return handle_search_knowledge_command(args=args)
+
+    if args.command == "expand-hit":
+        return handle_expand_hit_command(args=args)
 
     if args.command == "extract-session":
         return handle_extract_session_command(args=args, paths=paths)

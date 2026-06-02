@@ -1,23 +1,23 @@
 # Agent Portability Notes
 
-This note records portability findings that matter when Agent Context Substrate grows beyond its current Hermes Agent integration.
+This note records portability findings that matter when Agent Context Substrate grows across local agent integrations.
 
 ## Current scope
 
-The current packaged integration targets **Hermes Agent**. For that scope, the project is intentionally optimized around Hermes session storage, Hermes plugin/context-engine installation, and the existing WSL-first development environment.
+The current packaged integrations target **Hermes Agent** and a **non-MCP Codex local session source**.
 
-The issues below are **not blockers for the current Hermes-only workflow**, but they should be treated as required cleanup before claiming broader support for other agents, native Windows execution, or cross-platform CI.
+The issues below were first written during a Hermes/WSL-focused phase. Some have since been addressed for the Windows Codex app path, but they remain useful checks before claiming broad support for additional agents or every native Windows workflow.
 
 ## Current known baseline
 
-At the time this note was written, the local WSL/Hermes-focused baseline was green:
+Current local Windows baseline:
 
 ```text
-python -m pytest -q  # 226 passed
+python -m pytest -q  # 305 passed, 12 skipped
 ruff check .         # All checks passed
 ```
 
-This does **not** prove native Windows compatibility. The findings below explain why a Windows-native test run can fail even when the WSL run passes.
+This proves the current test suite on the local Windows environment. It does not prove every third-party Windows configuration, shell, symlink policy, or future agent adapter.
 
 ## Deferred portability findings
 
@@ -33,7 +33,7 @@ Potential symptoms:
 - `build-context-packet` fails before artifact generation.
 - integration tests fail with `sqlite3.OperationalError: unable to open database file`.
 
-Future action before cross-agent/native-Windows support:
+Future hardening:
 
 - Define explicit precedence for `home_dir`, `HERMES_HOME`, `WIKI_PATH`, `HOME`, and Windows profile variables.
 - Prefer explicit `home_dir`/`hermes_home` in non-Hermes adapters.
@@ -50,7 +50,7 @@ Potential symptoms:
 - Custom-command mode falls back to heuristic summaries because the command executable or script cannot be found.
 - Tests expecting a successful custom-command summary receive fallback metadata instead.
 
-Future action before cross-agent/native-Windows support:
+Future hardening:
 
 - Use platform-aware parsing or accept an explicit argv/list form in adapter configuration.
 - Preserve `shell=False`.
@@ -85,7 +85,7 @@ WIKI_ROOT = Path('...')
 
 For Windows paths, the generated Python source may contain escaped backslashes. The config can still execute correctly, but tests that assert raw `str(path)` appears as a substring can fail because Python source escaping and runtime `Path` values are different representations.
 
-Future action before native-Windows support:
+Future hardening:
 
 - Load or execute generated `local_config.py` in tests.
 - Compare `PROJECT_ROOT` and `WIKI_ROOT` as path values, not raw source substrings.
@@ -101,7 +101,7 @@ Current maintenance signals:
 - `retrieval.py` remains large.
 - helper logic for index/log registration exists in both CLI and integration layers.
 
-This is acceptable for the Hermes-first implementation, but it increases friction when adding other agent adapters.
+This is acceptable for the current Hermes/Codex implementation, but it increases friction when adding more agent adapters.
 
 Future action before multi-agent expansion:
 
@@ -109,7 +109,7 @@ Future action before multi-agent expansion:
 - Move shared artifact registration helpers into a small service module.
 - Keep adapter-specific code at the edges; keep artifact, retrieval, lint, and promotion logic adapter-neutral.
 
-## Expansion checklist for non-Hermes agents
+## Expansion checklist for additional agents
 
 Before adding or advertising support for another agent runtime, verify these items:
 
@@ -119,9 +119,9 @@ Before adding or advertising support for another agent runtime, verify these ite
 - [ ] Installer/local config tests compare runtime values rather than source string formatting.
 - [ ] Generated artifacts remain outside the human-facing wiki by default.
 - [ ] LLM/provider configuration remains owned by the host agent or adapter, not hard-coded in the substrate core.
-- [ ] Retrieval tools can operate without Hermes-specific assumptions except in the Hermes adapter layer.
-- [ ] Release notes clearly distinguish Hermes-supported behavior from experimental adapter behavior.
+- [ ] Retrieval tools can operate without Hermes- or Codex-specific assumptions except in adapter layers.
+- [ ] Release notes clearly distinguish supported integrations from experimental adapter behavior.
 
 ## Current decision
 
-Do **not** block the current Hermes-focused work on these portability fixes. Keep them visible as preconditions for future agent expansion.
+Do **not** block the current Hermes/Codex release on historical portability notes that are already covered by tests or documented Windows setup steps. Keep the checklist visible for future agent expansion and broader Windows packaging work.

@@ -1,0 +1,34 @@
+{
+  "name": "agent-context-substrate",
+  "version": "0.2.0",
+  "description": "Non-MCP Codex integration for exporting local Codex threads into Agent Context Substrate artifacts.",
+  "author": {
+    "name": "Agent Context Substrate"
+  },
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "context",
+    "retrieval",
+    "memory"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Agent Context Substrate",
+    "shortDescription": "Finalize Codex threads into local retrieval artifacts.",
+    "longDescription": "Adds Codex-native operating instructions for Agent Context Substrate. The plugin bundles a Stop hook as the primary finalize trigger and keeps codex-watch available as a fallback without MCP servers.",
+    "developerName": "Agent Context Substrate",
+    "category": "Engineering",
+    "capabilities": [
+      "Read",
+      "Local"
+    ],
+    "defaultPrompt": [
+      "Start ACS codex-watch for this workspace.",
+      "Finalize this Codex thread into ACS.",
+      "Search ACS knowledge for this project."
+    ],
+    "brandColor": "#245B5A",
+    "screenshots": []
+  }
+}

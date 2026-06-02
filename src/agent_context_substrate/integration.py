@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+import json
 import os
 
 from .context_packet import build_context_packet, export_context_packet
 from .ledger import SessionLedger
 from .lint import count_lint_issues, export_lint_report, lint_wiki
+from .models import MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
 from .naming import derive_goal, derive_task_title, derive_unit_title, slugify_label
 from .paths import HarnessPaths
 from .policy import should_process_bundle
@@ -21,6 +23,8 @@ from .recovery import build_recovery_brief
 from .raw_extract import build_typed_session_bundle, export_session_bundle
 from .summarizer import build_micro_summary, build_unit_summary
 from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
+from .summary_judge import evaluate_summary_with_judge, export_summary_judge_verdict
+from .summary_lint import lint_micro_summary_v2, lint_unit_summary_v2
 from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
 
 
@@ -40,6 +44,7 @@ class IntegrationResult:
     summary_micro_path: Path | None = None
     summary_unit_path: Path | None = None
     summary_evidence_path: Path | None = None
+    summary_judge_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -403,14 +408,51 @@ def _export_v2_summary_artifacts(
     )
 
 
+def _export_summary_judge_artifact(
+    *,
+    packet_id: str,
+    paths: HarnessPaths,
+    summary_artifacts: SummaryArtifactResult,
+    session_bundle,
+    recovery_quality_gate,
+    agent_llm_router: AgentLLMRouter | None,
+    summary_model: str | None,
+    summary_budget: str | None,
+    summary_judge_mode: str,
+    llm_safety: LLMInputSafetyOptions | None,
+) -> Path:
+    evidence = MicroEvidenceBundle.from_dict(json.loads(summary_artifacts.evidence_path.read_text(encoding="utf-8")))
+    micro_summary = MicroSummaryV2.from_dict(json.loads(summary_artifacts.micro_path.read_text(encoding="utf-8")))
+    unit_summary = UnitSummaryV2.from_dict(json.loads(summary_artifacts.unit_path.read_text(encoding="utf-8")))
+    micro_lint = lint_micro_summary_v2(micro_summary, session_bundle=session_bundle)
+    unit_lint = lint_unit_summary_v2(unit_summary, micro_summaries=[micro_summary])
+    verdict = evaluate_summary_with_judge(
+        packet_id=packet_id,
+        evidence=evidence,
+        micro_summary=micro_summary,
+        unit_summary=unit_summary,
+        micro_lint=micro_lint,
+        unit_lint=unit_lint,
+        recovery_quality_gate=recovery_quality_gate,
+        router=agent_llm_router,
+        mode=summary_judge_mode,
+        routing_hints=_build_summary_routing_hints(summary_model=summary_model, summary_budget=summary_budget),
+        llm_safety=llm_safety or LLMInputSafetyOptions(),
+    )
+    return export_summary_judge_verdict(packet_id=packet_id, verdict=verdict, exports_dir=paths.exports_dir)
+
+
 def _summary_artifact_paths(summary_artifacts: SummaryArtifactResult | None) -> dict[str, str]:
     if summary_artifacts is None:
         return {}
-    return {
+    artifact_paths = {
         "summary_micro_path": str(summary_artifacts.micro_path),
         "summary_unit_path": str(summary_artifacts.unit_path),
         "summary_evidence_path": str(summary_artifacts.evidence_path),
     }
+    if summary_artifacts.judge_path is not None:
+        artifact_paths["summary_judge_path"] = str(summary_artifacts.judge_path)
+    return artifact_paths
 
 
 def _build_base_artifact_paths(
@@ -420,11 +462,13 @@ def _build_base_artifact_paths(
     lint_artifacts: LintArtifacts,
     promotion_mode: str,
     summary_mode: str | None = None,
+    summary_judge_mode: str = "off",
     summary_artifacts: SummaryArtifactResult | None = None,
 ) -> dict[str, str]:
     artifact_paths = {
         "promotion_mode": promotion_mode,
         "summary_mode": summary_mode or "",
+        "summary_judge_mode": summary_judge_mode,
         "raw_export_path": str(packet_artifacts.raw_export_path),
         "packet_json_path": str(packet_artifacts.packet_json_path),
         "packet_markdown_path": str(packet_artifacts.packet_markdown_path),
@@ -443,12 +487,15 @@ def _completed_result_if_reusable(
     packet_id: str,
     promotion_mode: str,
     summary_mode: str | None,
+    summary_judge_mode: str,
 ) -> IntegrationResult | None:
     if existing is None or existing.status != "completed":
         return None
     if existing.artifact_paths.get("promotion_mode") != promotion_mode:
         return None
     if existing.artifact_paths.get("summary_mode", "") != (summary_mode or ""):
+        return None
+    if existing.artifact_paths.get("summary_judge_mode", "off") != summary_judge_mode:
         return None
     if not _completed_artifacts_exist(existing.artifact_paths, session_id):
         return None
@@ -479,7 +526,7 @@ def _completed_artifacts_exist(artifact_paths: dict[str, str], session_id: str) 
         "lint_markdown_path",
     ]
     optional_promotion_keys = ["query", "concept", "plan", "architecture"]
-    optional_summary_keys = ["summary_micro_path", "summary_unit_path", "summary_evidence_path"]
+    optional_summary_keys = ["summary_micro_path", "summary_unit_path", "summary_evidence_path", "summary_judge_path"]
     for key in [
         *required_keys,
         *[key for key in optional_promotion_keys if key in artifact_paths],
@@ -536,6 +583,7 @@ def _result_from_artifacts(
         summary_evidence_path=Path(artifact_paths["summary_evidence_path"])
         if "summary_evidence_path" in artifact_paths
         else None,
+        summary_judge_path=Path(artifact_paths["summary_judge_path"]) if "summary_judge_path" in artifact_paths else None,
     )
 
 
@@ -568,6 +616,14 @@ def _normalize_promotion_mode(promotion_mode: str | None) -> str:
     return mode
 
 
+def _normalize_summary_judge_mode(summary_judge_mode: str | None) -> str:
+    mode = (summary_judge_mode or "off").strip().lower()
+    allowed_modes = {"off", "hybrid"}
+    if mode not in allowed_modes:
+        raise ValueError(f"Unsupported summary_judge_mode={summary_judge_mode!r}; expected one of {sorted(allowed_modes)}")
+    return mode
+
+
 def run_session_finalize_pipeline(
     session_id: str,
     *,
@@ -584,11 +640,15 @@ def run_session_finalize_pipeline(
     summary_model: str | None = None,
     summary_budget: str | None = None,
     summary_cache: bool = False,
+    summary_judge_mode: str = "off",
     llm_safety: LLMInputSafetyOptions | None = None,
     max_retry_attempts: int = 3,
 ) -> IntegrationResult:
     related_pages = list(related_pages or [])
     promotion_mode = _normalize_promotion_mode(promotion_mode)
+    summary_judge_mode = _normalize_summary_judge_mode(summary_judge_mode)
+    if summary_judge_mode != "off" and not summary_mode:
+        raise ValueError("summary_judge_mode requires summary_mode so there are summary artifacts to evaluate")
     packet_id = session_id
     pipeline_name = "session_finalize"
 
@@ -603,6 +663,7 @@ def run_session_finalize_pipeline(
             packet_id=packet_id,
             promotion_mode=promotion_mode,
             summary_mode=summary_mode,
+            summary_judge_mode=summary_judge_mode,
         )
         if reusable_result is not None:
             return reusable_result
@@ -668,6 +729,7 @@ def run_session_finalize_pipeline(
                 lint_artifacts=lint_artifacts,
                 promotion_mode=promotion_mode,
                 summary_mode=summary_mode,
+                summary_judge_mode=summary_judge_mode,
                 summary_artifacts=summary_artifacts,
             )
             partial_artifact_paths = dict(base_artifact_paths)
@@ -683,6 +745,30 @@ def run_session_finalize_pipeline(
                 project_root=paths.project_root,
                 wiki_root=paths.wiki_root,
             )
+            if summary_artifacts is not None and summary_judge_mode != "off":
+                session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
+                judge_path = _export_summary_judge_artifact(
+                    packet_id=packet_id,
+                    paths=paths,
+                    summary_artifacts=summary_artifacts,
+                    session_bundle=session_bundle,
+                    recovery_quality_gate=recovery_brief.quality_gate,
+                    agent_llm_router=agent_llm_router,
+                    summary_model=summary_model,
+                    summary_budget=summary_budget,
+                    summary_judge_mode=summary_judge_mode,
+                    llm_safety=llm_safety,
+                )
+                summary_artifacts = replace(summary_artifacts, judge_path=judge_path)
+                base_artifact_paths = _build_base_artifact_paths(
+                    packet_artifacts=packet_artifacts,
+                    promoted_paths=promoted_paths,
+                    lint_artifacts=lint_artifacts,
+                    promotion_mode=promotion_mode,
+                    summary_mode=summary_mode,
+                    summary_judge_mode=summary_judge_mode,
+                    summary_artifacts=summary_artifacts,
+                )
             artifact_paths = {
                 **base_artifact_paths,
                 "recovery_json_path": str(recovery_brief.recovery_json_path),
@@ -710,6 +796,7 @@ def run_session_finalize_pipeline(
                 summary_micro_path=summary_artifacts.micro_path if summary_artifacts is not None else None,
                 summary_unit_path=summary_artifacts.unit_path if summary_artifacts is not None else None,
                 summary_evidence_path=summary_artifacts.evidence_path if summary_artifacts is not None else None,
+                summary_judge_path=summary_artifacts.judge_path if summary_artifacts is not None else None,
             )
         except Exception as exc:
             ledger.mark_failed(

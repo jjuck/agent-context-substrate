@@ -6,9 +6,18 @@ from pathlib import Path
 import sys
 import types
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_PACKAGE = ROOT / "src" / "agent_context_substrate" / "assets" / "context_engine" / "agent_context_substrate"
+
+
+def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
 
 
 def _load_recovery_loader_module():
@@ -53,7 +62,7 @@ def test_context_engine_recovery_loader_rejects_direct_symlinked_recovery_file(t
     recovery_dir.mkdir(parents=True)
     outside_recovery = tmp_path / "outside-recovery.json"
     outside_recovery.write_text(json.dumps({"secret": "outside"}), encoding="utf-8")
-    (recovery_dir / "session-1.json").symlink_to(outside_recovery)
+    _symlink_or_skip(recovery_dir / "session-1.json", outside_recovery)
 
     brief, source_path = loader.load_recovery_brief(project_root, "session-1")
 
@@ -69,7 +78,7 @@ def test_context_engine_recovery_loader_rejects_symlinked_recovery_directory(tmp
     outside_recovery_dir = tmp_path / "outside-recovery-dir"
     outside_recovery_dir.mkdir()
     (outside_recovery_dir / "session-1.json").write_text(json.dumps({"secret": "outside"}), encoding="utf-8")
-    (exports_dir / "recovery").symlink_to(outside_recovery_dir, target_is_directory=True)
+    _symlink_or_skip(exports_dir / "recovery", outside_recovery_dir, target_is_directory=True)
 
     brief, source_path = loader.load_recovery_brief(project_root, "session-1")
 

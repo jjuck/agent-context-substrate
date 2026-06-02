@@ -1,21 +1,21 @@
 # Agent Context Substrate User Guide
 
-This guide explains `agent-context-substrate` from a user point of view: what it does, when it helps, where data is stored, how to install it into Hermes Agent, and how to use the CLI and Telegram commands.
+This guide explains `agent-context-substrate` from a user point of view: what it does, when it helps, where data is stored, how to install it into Hermes Agent or the Windows Codex app, and how to use the CLI and Telegram commands.
 
-The current release packages **Hermes Agent integration only**. The project name reflects the longer-term goal of supporting additional agent adapters, but Claude Code/Codex/OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
+The current release packages **Hermes Agent integration** and a **non-MCP Codex local session source**. The project name reflects the longer-term goal of supporting additional agent adapters; Claude Code/OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
 
-[한국어 사용자 가이드](./USER_GUIDE.md) · [English README](../README.md) · [한국어 README](../README.ko.md)
+[한국어 사용자 가이드](./USER_GUIDE.md) · [Windows Codex App Setup](./WINDOWS_CODEX_APP_SETUP.md) · [English README](../README.md) · [한국어 README](../README.ko.md)
 
 ## 1. What this tool does
 
-`Agent Context Substrate` turns Hermes Agent conversations into reusable local knowledge artifacts.
+`Agent Context Substrate` turns Hermes Agent and Codex conversations into reusable local knowledge artifacts.
 
 Instead of relying only on the live chat context, it can export a Hermes session, summarize it into a context packet, generate a recovery brief, and make the result searchable by Hermes later.
 
 The default session-finalize policy is **`packet-only`**.
 
 ```text
-Hermes state.db
+Hermes state.db or Codex rollout JSONL
   -> raw session export
   -> micro/unit summary
   -> context packet
@@ -32,7 +32,7 @@ When packet evidence should grow the wiki, the recommended path is still review-
 
 This project is useful when:
 
-- a long Hermes session was reset or compressed and you need to recover the work context;
+- a long Hermes or Codex session was reset, stopped, or compressed and you need to recover the work context;
 - you want a durable summary of what happened in a session;
 - you want Hermes to search prior project knowledge while solving a new request;
 - you use Obsidian for human-readable notes but do not want generated session pages to flood the vault;
@@ -43,12 +43,29 @@ This project is useful when:
 | Layer | Location | Format | Purpose |
 | --- | --- | --- | --- |
 | Hermes raw session DB | `HERMES_HOME/state.db` or `~/.hermes/state.db` | SQLite | Original sessions and messages |
+| Codex local session source | `~/.codex/state_5.sqlite` and `~/.codex/sessions/**/rollout-*.jsonl` | SQLite / JSONL | Local Codex thread metadata and rollout events, read-only |
 | Harness exports | `data/exports/` | JSON / Markdown | Raw exports, packets, evidence, v2 summaries, lint reports, recovery briefs |
 | Harness atoms | `data/atoms/` | JSONL | Claim atoms extracted from packet evidence |
 | Harness promotions | `data/promotions/` | JSON / Markdown | Review queue for possible wiki updates |
 | Harness wiki patches | `data/wiki_patches/` | JSON / Markdown / JSONL | Reviewable patch proposals and applied patch log |
 | Harness ledger/index | `data/index/` | JSON / Markdown | Processing status, topic maps, artifact paths, retry/idempotency records |
 | Obsidian LLM Wiki | `WIKI_PATH` | Markdown | Human-facing curated wiki |
+
+For Windows Codex app users, call out these concrete paths before installing:
+
+```text
+Codex source SQLite:
+%USERPROFILE%\.codex\state_5.sqlite
+
+Codex rollout JSONL:
+%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl
+
+Recommended LLM Wiki:
+%USERPROFILE%\Documents\LLM Wiki
+
+ACS artifacts:
+<PROJECT_ROOT>\data\...
+```
 
 ## 4. Default artifacts
 
@@ -275,7 +292,60 @@ cd '<HERMES_AGENT_ROOT>'
 hermes gateway restart
 ```
 
-## 8. Plugin configuration
+## 8. Install and enable Codex integration
+
+Codex integration is hook-primary with watcher fallback. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex `/hooks`, the Stop hook finalizes the current thread. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
+
+Windows Codex app users should start with the [Windows setup guide](./WINDOWS_CODEX_APP_SETUP.md). The distribution PowerShell path is the one-shot bootstrap script:
+
+```powershell
+git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
+cd agent-context-substrate
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
+```
+
+To opt into installing missing tools, use the winget package IDs `Python.Python.3.13`, `Git.Git`, and optional `Obsidian.Obsidian`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
+```
+
+After install, inspect health and paths:
+
+```powershell
+.\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
+.\.venv\Scripts\agent-context-substrate.exe config-codex paths
+.\.venv\Scripts\agent-context-substrate.exe diagnose-codex
+```
+
+Use `setup-codex-wizard` for an interactive path review. `diagnose-codex --fix` repairs only safe ACS local files such as the wiki skeleton, Codex plugin, user hook fallback, and local config.
+
+Codex still requires hook review/trust before non-managed hooks run.
+
+After hook review, you can dry-run the watcher fallback:
+
+```powershell
+.\.venv\Scripts\agent-context-substrate.exe codex-watch `
+  --once `
+  --codex-home $CodexHome `
+  --project-root $ProjectRoot `
+  --wiki-root $WikiRoot `
+  --idle-seconds 999999
+```
+
+Manual finalize:
+
+```powershell
+.\.venv\Scripts\agent-context-substrate.exe codex-finalize `
+  --thread-id "<CODEX_THREAD_ID>" `
+  --codex-home $CodexHome `
+  --project-root $ProjectRoot `
+  --wiki-root $WikiRoot
+```
+
+Codex raw exports are written under `data/exports/raw/codex/<thread_id>.json`; packet, lint, recovery, ledger, retrieval, atoms, promotions, and wiki patch commands then use the same artifact layout as Hermes sessions.
+
+## 9. Plugin configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -296,7 +366,7 @@ AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES=telegram,cli
 AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY=trigger-only
 ```
 
-## 9. Telegram commands
+## 10. Telegram commands
 
 ### `/harness`
 
@@ -346,7 +416,7 @@ Checks the Obsidian human-facing wiki and packet artifact graph.
 /wiki-lint
 ```
 
-## 10. Request-time retrieval
+## 11. Request-time retrieval
 
 When `context.engine: agent_context_substrate` is active, Hermes can use read-only retrieval while solving a user request.
 
@@ -356,6 +426,7 @@ Search order:
 2. context packet JSON artifacts
 3. unit and micro summary fields inside packet JSON
 4. raw Hermes `state.db` evidence when explicitly needed
+5. raw Codex exports after `codex-finalize`
 
 Default excluded paths:
 
@@ -365,7 +436,7 @@ Default excluded paths:
 
 Retrieval is read-only. Searching and expanding hits does not edit Obsidian.
 
-## 11. Direct CLI usage
+## 12. Direct CLI usage
 
 ### Export a raw session
 
@@ -386,6 +457,39 @@ agent-context-substrate build-context-packet \
   --unit-title "<unit title>" \
   --goal "<goal>" \
   --project-root .
+```
+
+### Finalize Codex sessions
+
+```bash
+agent-context-substrate codex-status --codex-home ~/.codex
+
+agent-context-substrate codex-finalize \
+  --thread-id <thread_id> \
+  --codex-home ~/.codex \
+  --project-root . \
+  --wiki-root '<WIKI_ROOT>'
+
+agent-context-substrate codex-watch \
+  --codex-home ~/.codex \
+  --project-root . \
+  --wiki-root '<WIKI_ROOT>' \
+  --once
+```
+
+### Search and expand knowledge
+
+```bash
+agent-context-substrate search-knowledge \
+  --query "<query>" \
+  --mode knowledge \
+  --project-root . \
+  --wiki-root '<WIKI_ROOT>'
+
+agent-context-substrate expand-hit \
+  --hit-id <hit_id> \
+  --project-root . \
+  --wiki-root '<WIKI_ROOT>'
 ```
 
 ### Run wiki lint
@@ -426,6 +530,17 @@ Summary modes:
 
 Note: standalone CLI can run `heuristic` and `custom-command` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
 
+Summary judge evaluation is opt-in and artifact-only:
+
+```bash
+agent-context-substrate build-context-packet \
+  --summary-mode heuristic \
+  --summary-judge-mode hybrid \
+  --project-root .
+```
+
+In host integrations, `hybrid` judge mode reuses the Agent LLM router and writes `data/exports/evals/<packet_id>-summary-judge.json`. It judges recovery usefulness, hallucination risk, missing next steps, and wiki-candidate noise without rewriting summaries or applying wiki patches.
+
 ### Review-first wiki growth
 
 ```bash
@@ -447,7 +562,7 @@ agent-context-substrate apply-wiki-patch \
   --apply
 ```
 
-## 12. What is not automatic
+## 13. What is not automatic
 
 The default policy does not automatically process:
 
@@ -466,17 +581,18 @@ Obsidian is modified only by:
 - `apply-wiki-patch --apply`;
 - manual curated page editing.
 
-## 13. Privacy and release notes
+## 14. Privacy and release notes
 
 Agent Context Substrate works with local private data.
 
 - `HERMES_HOME/state.db` can contain full conversations, tool output, file paths, and operational context.
+- Codex `%USERPROFILE%\.codex\state_5.sqlite` and rollout JSONL files can contain thread metadata, messages, tool calls, and local paths.
 - `data/exports/**/*.json` and `data/exports/**/*.md` can contain raw transcripts or detailed summaries.
 - Obsidian pages and provenance links may contain personal or organizational information.
 - Never commit API keys, tokens, passwords, connection strings, `.env` files, or raw private session exports.
 - Before public distribution, check `git status --short`, `.gitignore`, `docs/RELEASE_CHECKLIST.md`, `doctor`, and `fresh-install-smoke`.
 
-## 14. Safety mechanisms
+## 15. Safety mechanisms
 
 - ledger-based idempotency
 - completed artifact existence checks
@@ -492,7 +608,7 @@ Agent Context Substrate works with local private data.
 - read-only retrieval by default
 - dry-run wiki patches by default
 
-## 15. Troubleshooting
+## 16. Troubleshooting
 
 | Symptom | Check | Fix direction |
 | --- | --- | --- |
@@ -503,17 +619,21 @@ Agent Context Substrate works with local private data.
 | New settings do not appear in Telegram | gateway process cache | Restart the gateway |
 | Auto-finalize does not run | source, message count, policy | Check `allowed_sources`, `min_message_count`, and session source |
 
-## 16. Generic path example
+## 17. Generic path example
 
 ```text
 Hermes DB:
 ~/.hermes/state.db
 
+Codex source:
+%USERPROFILE%\.codex\state_5.sqlite
+%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl
+
 Harness project:
 <PROJECT_ROOT>
 
 Obsidian LLM Wiki:
-<WIKI_ROOT>
+%USERPROFILE%\Documents\LLM Wiki or <WIKI_ROOT>
 
 Recommended promotion mode:
 packet-only

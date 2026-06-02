@@ -5,6 +5,13 @@ from pathlib import Path
 import os
 
 
+def _default_home_dir() -> Path:
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home).expanduser()
+    return Path(os.path.expanduser("~"))
+
+
 @dataclass(frozen=True)
 class HarnessPaths:
     project_root: Path | str
@@ -13,7 +20,7 @@ class HarnessPaths:
     home_dir: Path | str | None = None
 
     def __post_init__(self) -> None:
-        home_dir = Path(self.home_dir).expanduser() if self.home_dir is not None else Path(os.path.expanduser("~"))
+        home_dir = Path(self.home_dir).expanduser() if self.home_dir is not None else _default_home_dir()
         hermes_home = (
             Path(self.hermes_home).expanduser()
             if self.hermes_home is not None

@@ -11,7 +11,7 @@
 ### 1.1 기본 session finalize (`packet-only`)
 
 ```text
-Hermes state.db
+Hermes state.db or Codex rollout JSONL
   -> SessionStore
   -> raw session bundle JSON
   -> MicroSummary
@@ -39,6 +39,7 @@ raw session bundle
        └── custom-command
   -> Summary lint / fallback
   -> MicroSummaryV2 / UnitSummaryV2
+  -> optional SummaryJudge eval JSON (default off)
   -> ClaimAtom JSONL
   -> PromotionCandidate JSON/Markdown
   -> WikiPatchProposal JSON/Markdown
@@ -51,6 +52,7 @@ raw session bundle
 - `heuristic`이 기본 안전 경로입니다.
 - `agent-llm`과 `hybrid`는 host Agent의 LLM router를 재사용하는 opt-in 경로입니다.
 - direct provider SDK는 core dependency가 아닙니다.
+- `summary_judge.py` is a separate opt-in evaluator. It consumes mechanical lint, summaries, evidence, and recovery `quality_gate`, then writes `data/exports/evals/<packet_id>-summary-judge.json`. It does not rewrite summaries or apply wiki patches.
 - promotion candidate와 wiki patch proposal 생성은 Obsidian을 수정하지 않습니다.
 - `apply-wiki-patch`도 기본은 dry-run이며, 실제 쓰기는 `--apply`가 있을 때만 합니다.
 - alpha에서 기본 적용되는 wiki patch operation은 `create_page`, `insert_claim_block`, `append_managed_section`, `append_section`으로 제한합니다.
@@ -59,7 +61,7 @@ raw session bundle
 ### 1.3 Legacy full promotion
 
 ```text
-Hermes state.db
+Hermes state.db or Codex rollout JSONL
   -> raw export
   -> context packet
   -> query / concept / plan / architecture pages
@@ -96,12 +98,14 @@ Package-managed installation is part of the pipeline surface now, not an externa
 source package assets
   -> install-plugin
   -> ~/.hermes/plugins/agent-context-substrate
+  -> setup-codex
+  -> ~/.codex/plugins/agent-context-substrate
   -> install-context-engine
   -> <HERMES_AGENT_ROOT>/plugins/context_engine/agent_context_substrate
-  -> doctor / fresh-install-smoke
+  -> doctor / doctor-codex / fresh-install-smoke
 ```
 
-Both installers can write local `local_config.py` files containing the user's project/wiki roots. Public templates stay generic; local config carries machine-specific paths.
+Hermes installers can write local `local_config.py` files containing the user's project/wiki roots. `setup-codex` writes `local_config.json` beside a non-MCP plugin skill and keeps `install-codex-plugin` available as the lower-level packaged asset install command. Public templates stay generic; local config carries machine-specific paths.
 
 ## 2. 단계별 구성
 
@@ -109,6 +113,7 @@ Both installers can write local `local_config.py` files containing the user's pr
 | --- | --- | --- | --- | --- |
 | 0 | `paths.py` | 환경 변수 + `project_root` | `HarnessPaths` | `HERMES_HOME`, `WIKI_PATH`, `data/` 경로 해석 |
 | 1 | `session_store.py` | `state.db`, `session_id` | session row + messages | raw Hermes 데이터 조회 |
+| 1b | `codex_source.py` | `state_5.sqlite`, rollout JSONL, `thread_id` | `SessionBundle` | raw Codex source read-only 변환 |
 | 2 | `raw_extract.py` | session + messages | bundle dict / JSON | 세션 단위 export |
 | 3 | `summarizer.py` | raw bundle | `MicroSummary`, `UnitSummary`, v2 conversion helpers | request/outcome/key points/files 추출 |
 | 4 | `context_packet.py` | unit + micro summaries | `ContextPacket`, JSON/MD | 재개 가능한 작업 packet 생성 |
@@ -120,7 +125,7 @@ Both installers can write local `local_config.py` files containing the user's pr
 | 10 | `wiki_patches.py` | promotion candidates + wiki root | `data/wiki_patches/<packet_id>.json/.md` | dry-run patch proposal / managed block apply |
 | 11 | `semantic_lint.py` | promotions + patch logs | semantic lint JSON/MD | promotion/wiki patch consistency 검사 |
 | 12 | `topic_map.py` | wiki + substrate artifacts | `data/index/<report-id>.json/.md` | graph-style topic map 생성 |
-| 13 | `integration.py` | session id + policy | `IntegrationResult` | packet-only/full finalize orchestration |
+| 13 | `integration.py` / `codex_integration.py` | session/thread id + policy | `IntegrationResult` | Hermes and Codex finalize orchestration |
 | 14 | `promotion.py` | packet / unit summary | wiki Markdown pages | legacy page promotion + backlink |
 | 15 | `lint.py` | wiki + packet exports | lint JSON/MD | wiki quality + internal graph 검증 |
 | 16 | `recovery.py` | ledger + packet | recovery JSON + quality gate | 다음 세션용 compact brief와 재개 품질 검사 |
@@ -319,6 +324,9 @@ request-time retrieval 결과입니다.
 | --- | --- | --- |
 | Hermes home | `HERMES_HOME` | `~/.hermes` |
 | Hermes DB | derived | `HERMES_HOME/state.db` |
+| Codex home | `CODEX_HOME` or `--codex-home` | `~/.codex` |
+| Codex DB | derived | `~/.codex/state_5.sqlite` |
+| Codex rollout JSONL | derived | `~/.codex/sessions/**/rollout-*.jsonl` |
 | Wiki root | `WIKI_PATH` | `~/wiki` |
 | Project data | `--project-root` | CLI current directory |
 
@@ -530,6 +538,8 @@ status: active
 - recovery brief는 `task_title`, `macro_context`, 마지막 work state(`decisions` 또는 `progress`), active context(`critical_files` 또는 `related_pages`), next step(`next_actions` 또는 `open_questions`), `provenance`를 quality gate로 검사한다.
 - `quality_gate.ok`는 score가 0.8 이상이고 error issue가 없을 때만 true다.
 - quality gate는 artifact에 기록되어 다음 세션에서 brief 신뢰도를 바로 볼 수 있게 한다.
+
+Optional `summary_judge` treats the deterministic recovery `quality_gate` as input only. The LLM verdict is auxiliary and does not replace the deterministic gate.
 
 ### Semantic substrate level
 

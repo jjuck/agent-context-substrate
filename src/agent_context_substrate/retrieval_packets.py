@@ -143,5 +143,4 @@ def packet_search_text(packet: ContextPacket) -> str:
 def format_pointer(pointer: RawSessionReference | None) -> str:
     if pointer is None:
         return ""
-    message_ids = ",".join(str(message_id) for message_id in pointer.message_ids)
-    return f"hermes-session:{pointer.session_id}#messages={message_ids}"
+    return pointer.source_ref()

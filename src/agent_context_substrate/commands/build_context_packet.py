@@ -7,12 +7,14 @@ from typing import Any, Callable
 
 from ..packet_builder import PacketBuildOptions, PacketBuildResult
 from ..raw_extract import build_typed_session_bundle
+from ..safe_paths import safe_artifact_stem
 from ..summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from ..summary_pipeline import SummaryOptions, build_v2_summary_artifacts
 
 
 BuildPacketCallback = Callable[..., PacketBuildResult]
-ExportV2Callback = Callable[..., tuple[Any, Any, Any]]
+SummaryExportPaths = tuple[Any, Any, Any] | tuple[Any, Any, Any, Any | None]
+ExportV2Callback = Callable[..., tuple[Any, ...]]
 RoutingHintsCallback = Callable[..., dict[str, object]]
 LLMSafetyOptionsCallback = Callable[..., object]
 
@@ -55,6 +57,7 @@ def export_v2_summary_artifacts(
     routing_hints: dict[str, object] | None = None,
     summary_cache: bool = False,
     llm_safety: LLMInputSafetyOptions | None = None,
+    summary_judge_mode: str = "off",
 ) -> tuple[Path, Path, Path]:
     session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
     result = build_v2_summary_artifacts(
@@ -72,6 +75,7 @@ def export_v2_summary_artifacts(
             summary_cache=summary_cache,
             agent_llm_router=agent_llm_router,
             llm_safety=llm_safety or LLMInputSafetyOptions(),
+            summary_judge_mode=summary_judge_mode,
         ),
     )
     return result.as_tuple()
@@ -93,6 +97,9 @@ def handle_build_context_packet_command(
     command handler can be split out without changing packet-only behavior.
     """
 
+    summary_judge_mode = getattr(args, "summary_judge_mode", "off") or "off"
+    if summary_judge_mode != "off" and not args.summary_mode:
+        parser.error("--summary-judge-mode requires --summary-mode so there are summary artifacts to evaluate")
     if args.summary_mode == "custom-command" and not args.summarizer_command:
         parser.error("--summary-mode custom-command requires --summarizer-command")
     if args.summary_mode in {"agent-llm", "hybrid"}:
@@ -115,7 +122,7 @@ def handle_build_context_packet_command(
     print(result.packet_json_path)
     print(result.packet_markdown_path)
     if args.summary_mode:
-        micro_v2_path, unit_v2_path, evidence_path = export_v2_summary_artifacts(
+        summary_paths = export_v2_summary_artifacts(
             session_id=args.session_id,
             packet_id=args.packet_id,
             unit_title=args.unit_title,
@@ -129,6 +136,7 @@ def handle_build_context_packet_command(
                 summary_budget=args.summary_budget,
             ),
             summary_cache=args.summary_cache == "on",
+            summary_judge_mode=getattr(args, "summary_judge_mode", "off"),
             llm_safety=(
                 llm_safety_options(
                     llm_redact=getattr(args, "llm_redact", "on"),
@@ -140,9 +148,18 @@ def handle_build_context_packet_command(
                 else None
             ),
         )
+        micro_v2_path, unit_v2_path, evidence_path, judge_path = _unpack_v2_summary_paths(summary_paths)
+        judge_path = _summary_judge_path_if_exported(
+            paths=paths,
+            packet_id=args.packet_id,
+            summary_judge_mode=summary_judge_mode,
+            candidate=judge_path,
+        )
         print(micro_v2_path)
         print(unit_v2_path)
         print(evidence_path)
+        if judge_path is not None:
+            print(judge_path)
         _warn_for_summary_fallbacks(micro_v2_path, unit_v2_path)
     print(
         " ".join(
@@ -154,6 +171,34 @@ def handle_build_context_packet_command(
         )
     )
     return 0
+
+
+def _unpack_v2_summary_paths(summary_paths: tuple[Any, ...]) -> tuple[Any, Any, Any, Any | None]:
+    if len(summary_paths) == 3:
+        micro_path, unit_path, evidence_path = summary_paths
+        return micro_path, unit_path, evidence_path, None
+    if len(summary_paths) == 4:
+        micro_path, unit_path, evidence_path, judge_path = summary_paths
+        return micro_path, unit_path, evidence_path, judge_path
+    raise ValueError(f"v2 summary export returned {len(summary_paths)} paths; expected 3 or 4")
+
+
+def _summary_judge_path_if_exported(
+    *,
+    paths: Any,
+    packet_id: str,
+    summary_judge_mode: str,
+    candidate: Any | None = None,
+) -> Path | None:
+    if summary_judge_mode == "off":
+        return None
+    if candidate is not None:
+        candidate_path = Path(candidate)
+        if candidate_path.exists():
+            return candidate_path
+    safe_packet_id = safe_artifact_stem(packet_id, label="packet id")
+    judge_path = Path(paths.exports_dir) / "evals" / f"{safe_packet_id}-summary-judge.json"
+    return judge_path if judge_path.exists() else None
 
 
 def _warn_for_summary_fallbacks(*summary_paths: Path) -> None:

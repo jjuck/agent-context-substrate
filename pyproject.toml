@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-context-substrate"
 version = "0.2.0"
-description = "A multi-layer context and retrieval substrate for AI agents; currently packaged with Hermes Agent integration."
+description = "A local context and retrieval substrate for AI-agent sessions, packaged with Hermes Agent and Codex integrations."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 authors = [
   { name = "주완 이 + Hermes Agent" }
 ]
-keywords = ["ai-agent", "context", "memory", "rag", "obsidian", "hermes-agent"]
+keywords = ["ai-agent", "context", "memory", "rag", "obsidian", "hermes-agent", "codex"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -35,7 +35,10 @@ agent-context-substrate = "agent_context_substrate.cli:main"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-agent_context_substrate = ["assets/**/*"]
+agent_context_substrate = [
+  "assets/**/*",
+  "assets/codex_plugin/agent-context-substrate/.codex-plugin/plugin.json",
+]
 
 [tool.setuptools.exclude-package-data]
 agent_context_substrate = ["assets/**/__pycache__/*", "assets/**/*.pyc"]
@@ -56,3 +59,6 @@ select = ["E4", "E7", "E9", "F"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "integration: requires local Hermes Agent checkout/venv",
+]

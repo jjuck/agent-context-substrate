@@ -68,6 +68,41 @@ def build_agent_llm_router(host: object, *, path_policy: str = "redact") -> Call
     return router
 
 
+def build_hermes_auxiliary_llm_router(
+    call_llm: Callable[..., Any],
+    *,
+    extract_content: Callable[[Any], str] | None = None,
+    path_policy: str = "redact",
+) -> Callable[[dict[str, object]], dict[str, object]]:
+    """Build a router around Hermes' shared ``agent.auxiliary_client.call_llm``.
+
+    Hermes session-boundary hooks currently pass only hook metadata, not the
+    live AIAgent object. In that real host shape, the stable LLM routing seam is
+    the in-process auxiliary LLM router. Keep the substrate provider-agnostic by
+    depending only on that callable's public chat-message interface.
+    """
+
+    if path_policy not in {"redact", "allow"}:
+        raise ValueError("Hermes auxiliary LLM router path_policy must be one of: allow, redact")
+
+    def router(request: dict[str, object]) -> dict[str, object]:
+        host_request = build_host_llm_request(request, path_policy=path_policy)
+        raw_response = call_llm(
+            task="agent_context_substrate_summary",
+            messages=host_request["messages"],
+            temperature=0,
+            max_tokens=4096,
+            extra_body={"response_format": host_request["response_format"]},
+        )
+        if extract_content is not None:
+            content = extract_content(raw_response)
+            if content:
+                return _extract_json_object(content)
+        return _extract_json_object(raw_response)
+
+    return router
+
+
 def build_host_llm_request(request: dict[str, object], *, path_policy: str = "redact") -> dict[str, object]:
     safe_request = _redact_secret_like_values(request, path_policy=path_policy)
     routing_hints = safe_request.get("routing_hints")
@@ -125,7 +160,27 @@ def _extract_json_object(response: object) -> dict[str, object]:
         return response
     if isinstance(response, str):
         return _parse_json_object(response)
+    response_text = _extract_response_text(response)
+    if response_text:
+        return _parse_json_object(response_text)
     raise ValueError("Agent LLM router returned neither a JSON object nor JSON text")
+
+
+def _extract_response_text(response: object) -> str:
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+    choices = getattr(response, "choices", None)
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0]
+        message = getattr(first_choice, "message", None)
+        content = getattr(message, "content", None)
+        if isinstance(content, str) and content.strip():
+            return content
+        text = getattr(first_choice, "text", None)
+        if isinstance(text, str) and text.strip():
+            return text
+    return ""
 
 
 def _parse_json_object(text: str) -> dict[str, object]:

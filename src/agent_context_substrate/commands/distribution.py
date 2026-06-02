@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..distribution import doctor, init_wiki, install_context_engine, install_user_plugin, run_fresh_install_smoke
+from ..distribution import install_codex_plugin
 
 
 def handle_init_wiki_command(*, args: Any) -> int:
@@ -21,6 +22,27 @@ def handle_install_plugin_command(*, args: Any) -> int:
         hermes_home=Path(args.hermes_home).expanduser(),
         project_root=Path(args.project_root).expanduser(),
         wiki_root=Path(args.wiki_root).expanduser(),
+        overwrite=args.overwrite,
+    )
+    print(result.status)
+    for name, path in result.paths.items():
+        print(f"{name}={path}")
+    for message in result.messages:
+        print(message)
+    return 0
+
+
+def handle_install_codex_plugin_command(*, args: Any) -> int:
+    result = install_codex_plugin(
+        codex_home=Path(args.codex_home).expanduser(),
+        project_root=Path(args.project_root).expanduser(),
+        wiki_root=Path(args.wiki_root).expanduser(),
+        personal_marketplace_root=(
+            Path(args.personal_marketplace_root).expanduser()
+            if getattr(args, "personal_marketplace_root", None)
+            else None
+        ),
+        install_user_hook=args.install_user_hook,
         overwrite=args.overwrite,
     )
     print(result.status)

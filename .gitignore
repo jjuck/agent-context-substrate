@@ -25,6 +25,9 @@ data/cache/
 data/index/session_ledger.json
 data/index/topic_map.json
 data/index/topic_map.md
+data/index/codex_hook_events.jsonl
+data/index/codex_watcher_state.json
+data/logs/
 
 # Local Hermes session plans/cache
 .hermes/

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -9,6 +10,7 @@ if str(SRC) not in sys.path:
 from agent_context_substrate.agent_llm_router import (  # noqa: E402
     AgentLLMRouterUnavailable,
     build_agent_llm_router,
+    build_hermes_auxiliary_llm_router,
 )
 
 
@@ -81,3 +83,38 @@ def test_build_agent_llm_router_rejects_host_without_llm_route() -> None:
         assert "no compatible Agent LLM router" in str(exc)
     else:
         raise AssertionError("host without an LLM router should fail")
+
+
+def test_build_hermes_auxiliary_llm_router_uses_host_call_llm_shape() -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_call_llm(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content='{"summary": "ok", "mode": "agent-llm"}')
+                )
+            ]
+        )
+
+    router = build_hermes_auxiliary_llm_router(fake_call_llm)
+
+    response = router(
+        {
+            "kind": "micro",
+            "schema_version": "micro_summary_v2",
+            "evidence": {"session_id": "session-1", "message_ids": [1, 2]},
+            "routing_hints": {"budget": "cheap"},
+        }
+    )
+
+    assert response == {"summary": "ok", "mode": "agent-llm"}
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["task"] == "agent_context_substrate_summary"
+    assert call["messages"][0]["role"] == "system"
+    assert "strict JSON" in call["messages"][0]["content"]
+    assert '"session_id": "session-1"' in call["messages"][1]["content"]
+    assert call["extra_body"] == {"response_format": {"type": "json_object"}}
+    assert "response_format" not in call

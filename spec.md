@@ -103,7 +103,7 @@ This spec does **not** require:
 - adding provider SDKs as core dependencies;
 - rewriting existing wiki pages wholesale;
 - implementing every possible wiki patch operation in the alpha;
-- treating native Windows or non-Hermes agent compatibility as a blocker for the current Hermes-focused alpha.
+- expanding beyond Hermes and Codex before the current local adapters are stable.
 
 ## 4.1 Alpha MVP Scope
 
@@ -115,12 +115,14 @@ The alpha scope is intentionally split into **Implemented**, **MVP to implement*
 | LLM input safety flags | **MVP to implement** | `agent-llm`, `hybrid`, and `custom-command` modes need a visible input boundary before broader use. |
 | Wiki patch operations | **MVP subset only** | More operations would turn the project into an automatic wiki editor before review, rollback, and conflict UX are mature. |
 | Semantic lint | **Structural MVP now, semantic heuristics later** | Deep duplicate/stale/contradiction checks require ontology, similarity, and freshness policy to avoid noisy warnings. |
-| Native Windows / non-Hermes portability | **Future before expansion** | The current release remains Hermes-focused; see `docs/AGENT_PORTABILITY_NOTES.md` before claiming broader support. |
+| Native Windows support | **Implemented release gate** | Native Windows `pytest` and `ruff` are now required because Codex desktop usage is Windows-heavy. |
+| Codex local integration | **Implemented MVP** | Codex reads `~/.codex/state_5.sqlite` and rollout JSONL read-only, uses a plugin-bundled Stop hook as the primary trigger, and keeps watcher fallback available. |
+| Other non-Hermes adapters | **Future before expansion** | Claude Code/OpenCode/Gemini remain future adapters; see `docs/AGENT_PORTABILITY_NOTES.md` before claiming broader support. |
 
 ## 5. Target Architecture
 
 ```text
-Hermes state.db / raw sources
+Hermes state.db / Codex rollout JSONL / raw sources
         ↓
 Raw Export
         ↓
@@ -603,7 +605,48 @@ Agent LLM = semantic interpreter / brain
 
 This mode should first build bounded, redacted evidence with deterministic heuristics, then ask the Agent LLM router to produce structured semantic fields. It should never send unbounded raw transcripts by default.
 
-### 8.5 Custom command backend
+### 8.5 Hybrid Judge Harness
+
+`summary_judge` is an optional evaluator, not a summary generator and not a wiki writer.
+
+Default remains:
+
+```text
+--summary-judge-mode off
+```
+
+Opt-in host integration flow:
+
+```text
+MicroEvidenceBundle
+  + MicroSummaryV2 / UnitSummaryV2
+  + SummaryLintReport
+  + RecoveryQualityReport
+  -> Agent LLM router
+  -> JudgeVerdict
+  -> data/exports/evals/<PACKET_ID>-summary-judge.json
+```
+
+The judge uses the same provider-agnostic Agent LLM router as `agent-llm` and `hybrid`; it must not add direct provider SDK dependencies. If mechanical summary lint fails, the judge is bypassed and emits `review_required`. If the router is missing or fails, the harness emits a degraded mechanical verdict instead of mutating or deleting summary artifacts.
+
+Judge decisions:
+
+```text
+accept
+review_required
+fallback_to_heuristic
+revise_summary
+```
+
+Acceptance criteria:
+
+- The judge is default off and opt-in only.
+- The judge writes evaluation artifacts only.
+- The judge never applies wiki patches and never rewrites summary artifacts.
+- Recovery `quality_gate` is included as input, while deterministic recovery scoring remains the source of truth.
+- LLM input safety options apply to judge payloads: redaction, max input chars, code snippet policy, and path policy.
+
+### 8.6 Custom command backend
 
 Support external summarizers without adding core SDK dependencies.
 
@@ -659,6 +702,7 @@ Acceptance criteria:
 - Invented files fail lint.
 - Empty summaries fail lint.
 - Failed lint triggers repair or fallback.
+- `summary_judge` is separate from lint: lint is deterministic acceptance plumbing, while the optional judge is semantic evaluation for recovery usefulness, hallucination risk, missing next steps, and noisy wiki candidates.
 
 ### 9.3 Privacy and redaction
 
@@ -942,16 +986,17 @@ Acceptance criteria:
 - Add `AgentLLMSummarizerBackend` as the preferred packaged LLM path.
 - Add CLI flags for summary mode.
 
-### Phase 4: Agent LLM and hybrid summarization — **MVP to finish**
+### Phase 4: Agent LLM and hybrid summarization — **MVP implemented; WSL Hermes smoke pending**
 
 - Add structured JSON prompt templates.
 - Route `agent-llm` requests through the host AI Agent LLM router.
 - Treat `--summary-model` / `--summary-budget` as optional router hints.
 - Add JSON parse / repair / fallback.
 - Add privacy redaction before Agent LLM calls.
-- Add MVP CLI controls: `--llm-redact`, `--llm-max-input-chars`, and `--llm-allow-code-snippets`.
+- Add MVP CLI controls: `--llm-redact`, `--llm-max-input-chars`, `--llm-allow-code-snippets`, and `--llm-path-policy`.
 - Keep heuristic as default.
 - Do not add direct provider SDKs as core dependencies.
+- Hermes auxiliary-router smoke is covered by an integration test and still requires confirmation in a real WSL/Hermes checkout before release tagging.
 
 ### Phase 5: Atoms and promotion queue — **MVP implemented**
 
@@ -978,6 +1023,25 @@ Acceptance criteria:
 - Add topic map builder.
 - Leave ontology-heavy lint such as duplicate/stale/contradiction analysis for future work.
 
+### Phase 8: Summary Judge evaluation — **MVP implemented; opt-in**
+
+- Add `summary_judge.py` with `JudgeIssue` and `JudgeVerdict`.
+- Reuse `AgentLLMRouter`; do not add provider SDKs.
+- Export `data/exports/evals/<packet_id>-summary-judge.json`.
+- Keep default off through `summary_judge_mode="off"` / `--summary-judge-mode off`.
+- Use recovery `quality_gate` as judge input without making LLM judgment a blocking gate.
+- Degrade to mechanical lint verdict on router failure.
+
+### Phase 9: Codex native local integration — **Implemented MVP; hook-primary active**
+
+- Use Codex plugin Stop hooks as the primary finalize trigger when the plugin hook is installed and trusted.
+- Keep `codex-watch` as fallback for untrusted hooks, older runtimes, missed Stop events, and recovery.
+- Read `~/.codex/state_5.sqlite` and `~/.codex/sessions/**/rollout-*.jsonl` read-only.
+- Convert Codex user, assistant, function call, and function output events into `SessionBundle`.
+- Exclude system/developer/reasoning/token/encrypted content by default.
+- Add `codex-finalize`, `codex-watch`, `codex-status`, `search-knowledge`, `expand-hit`, and `install-codex-plugin`.
+- Package a non-MCP Codex plugin with no `mcpServers`, no `apps`, and no manifest `hooks`; default hook assets live under `hooks/hooks.json`. Provide an explicit user-level hook install fallback for runtimes where plugin-bundled hooks are unavailable or unverified.
+
 ## 15. Testing Requirements
 
 Minimum tests:
@@ -987,13 +1051,18 @@ tests/test_evidence_bundle.py
 tests/test_summary_metadata.py
 tests/test_micro_summary_v2.py
 tests/test_summary_lint.py
+tests/test_summary_judge.py
 tests/test_summarizer_backends.py
 tests/test_agent_llm_summarizer_backend.py
+tests/test_hermes_auxiliary_router_smoke.py
 tests/test_custom_command_summarizer.py
 tests/test_atom_extraction.py
 tests/test_promotion_candidates.py
 tests/test_wiki_patch_planner.py
 tests/test_semantic_lint.py
+tests/test_codex_source.py
+tests/test_codex_integration.py
+tests/test_codex_cli.py
 ```
 
 Verification commands:

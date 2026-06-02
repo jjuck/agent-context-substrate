@@ -8,6 +8,13 @@ from agent_context_substrate.retrieval import expand_hit, search_knowledge
 from agent_context_substrate.retrieval_ids import encode_hit_id
 
 
+def _symlink_or_skip(link: Path, target: Path, *, target_is_directory: bool = False) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlinks unavailable on this platform: {exc}")
+
+
 def test_search_knowledge_returns_wiki_hits_with_provenance(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"
@@ -317,7 +324,7 @@ def test_search_knowledge_skips_project_artifact_symlinks_that_escape_root(tmp_p
         ),
         encoding="utf-8",
     )
-    (promotions_dir / "linked.json").symlink_to(outside)
+    _symlink_or_skip(promotions_dir / "linked.json", outside)
 
     hits = search_knowledge("secret outside symlink", project_root=project_root, wiki_root=wiki_root, limit=10)
 
@@ -826,10 +833,7 @@ def test_expand_hit_rejects_project_artifact_symlink_boundary_bypass(
     secret_json.write_text('{"private": "symlink boundary bypass"}', encoding="utf-8")
     link = project_root / source_path
     link.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        link.symlink_to(secret_json)
-    except OSError:
-        pytest.skip("symlinks unavailable on this platform")
+    _symlink_or_skip(link, secret_json)
     hit_id = _forged_hit_id(
         {
             "source_type": source_type,
@@ -872,10 +876,7 @@ def test_search_knowledge_skips_wiki_symlink_outside_root(tmp_path: Path) -> Non
     outside = tmp_path / "outside-secret.md"
     outside.write_text("# Secret\n\noutside-only-sentinel", encoding="utf-8")
     link = wiki_root / "link.md"
-    try:
-        link.symlink_to(outside)
-    except OSError:
-        pytest.skip("symlinks unavailable on this platform")
+    _symlink_or_skip(link, outside)
 
     hits = search_knowledge("outside-only-sentinel", project_root=project_root, wiki_root=wiki_root)
 

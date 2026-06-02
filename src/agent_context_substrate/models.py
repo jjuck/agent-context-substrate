@@ -13,6 +13,11 @@ class RawSessionReference:
     ended_at: str | None
     title: str | None
 
+    def source_ref(self) -> str:
+        message_ids = ",".join(str(message_id) for message_id in self.message_ids)
+        prefix = "codex-thread" if self.source == "codex" else "hermes-session"
+        return f"{prefix}:{self.session_id}#messages={message_ids}"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "session_id": self.session_id,

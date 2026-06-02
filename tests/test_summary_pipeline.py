@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 
 from agent_context_substrate.models import EvidenceBackedText, MicroSummaryV2, SummaryMetadata, UnitSummaryV2  # noqa: E402
 from agent_context_substrate.paths import HarnessPaths  # noqa: E402
+from agent_context_substrate.recovery import RecoveryQualityReport  # noqa: E402
 from agent_context_substrate.session_bundle import SessionBundle  # noqa: E402
 from agent_context_substrate.summary_pipeline import (  # noqa: E402
     SummaryOptions,
@@ -343,6 +344,49 @@ def test_build_v2_summary_artifacts_exports_evidence_and_cache_then_reuses_cache
     assert second_result.unit_path.exists()
     assert second_result.evidence_path == first_result.evidence_path
     assert calls == ["micro", "unit"]
+
+
+def test_build_v2_summary_artifacts_exports_opt_in_summary_judge_verdict(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    options = SummaryOptions(
+        session_id="session-1",
+        packet_id="packet-judge",
+        unit_title="Unit",
+        goal="Keep summary judge opt-in and artifact-only.",
+        summary_mode="heuristic",
+        summary_judge_mode="hybrid",
+        routing_hints={"budget": "quality"},
+        recovery_quality_gate=RecoveryQualityReport(score=0.83, issues=[]),
+        agent_llm_router=lambda request: {
+            "ok": True,
+            "score": 0.92,
+            "decision": "accept",
+            "issues": [],
+            "rationale": f"Accepted {request['recovery_quality_gate']['score']}",
+            "metadata": {"kind": request["kind"], "budget": request["routing_hints"]["budget"]},
+        },
+    )
+    calls: list[str] = []
+
+    result = build_v2_summary_artifacts(
+        raw_bundle=_raw_bundle(),
+        paths=paths,
+        options=options,
+        backend_factory=lambda mode, command, router, routing_hints, llm_safety: CountingBackend(calls),
+    )
+
+    assert calls == ["micro", "unit"]
+    assert result.judge_path is not None
+    assert result.judge_path == paths.exports_dir / "evals" / "packet-judge-summary-judge.json"
+    payload = json.loads(result.judge_path.read_text(encoding="utf-8"))
+    assert payload["decision"] == "accept"
+    assert payload["score"] == 0.92
+    assert payload["metadata"] == {
+        "kind": "summary-judge",
+        "budget": "quality",
+        "judge_mode": "hybrid",
+        "schema_version": "summary_judge_v1",
+    }
 
 
 def test_build_v2_summary_artifacts_rejects_unsafe_packet_id_before_export(tmp_path: Path) -> None:
