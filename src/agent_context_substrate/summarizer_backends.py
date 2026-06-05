@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import shlex
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol
 
 from .models import EvidenceMessage, MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
@@ -482,6 +485,285 @@ class CustomCommandSummarizerBackend:
             raise ValueError(f"custom-command unit summary failed lint: {issue_codes}")
 
 
+class CodexCliSummarizerBackend:
+    name = "codex-cli"
+
+    def __init__(
+        self,
+        *,
+        codex_command: str | None = None,
+        project_root: Path | str | None = None,
+        timeout_seconds: int = 90,
+        fallback_backend: SummarizerBackend | None = None,
+        routing_hints: dict[str, object] | None = None,
+        llm_safety: LLMInputSafetyOptions | None = None,
+    ) -> None:
+        self.codex_command = codex_command
+        self.project_root = Path(project_root).expanduser() if project_root is not None else Path.cwd()
+        self.timeout_seconds = max(1, int(timeout_seconds))
+        self.fallback_backend = fallback_backend or HeuristicSummarizerBackend()
+        self.routing_hints = dict(routing_hints or {})
+        self.llm_safety = llm_safety or LLMInputSafetyOptions()
+
+    def summarize_micro(
+        self,
+        evidence: MicroEvidenceBundle,
+        *,
+        schema_version: str,
+    ) -> MicroSummaryV2:
+        if schema_version != "micro_summary_v2":
+            raise ValueError(f"Unsupported micro summary schema_version={schema_version!r}")
+        try:
+            payload = self._run_codex_exec(
+                kind="micro",
+                request={
+                    "kind": "micro",
+                    "schema_version": schema_version,
+                    "evidence": evidence.to_dict(),
+                    "routing_hints": self.routing_hints,
+                },
+                schema=_micro_summary_json_schema(),
+            )
+            summary = MicroSummaryV2.from_dict(payload)
+            self._raise_if_micro_summary_fails_lint(summary, evidence)
+            return summary
+        except Exception as exc:
+            fallback = self.fallback_backend.summarize_micro(evidence, schema_version=schema_version)
+            return _with_fallback_metadata(
+                fallback,
+                fallback_from=self.name,
+                fallback_reason=_summarizer_fallback_reason(exc),
+            )
+
+    def summarize_unit(
+        self,
+        *,
+        unit_id: str,
+        session_id: str,
+        title: str,
+        goal: str,
+        micro_summaries: list[MicroSummaryV2],
+        schema_version: str,
+        related_pages: list[str] | None = None,
+    ) -> UnitSummaryV2:
+        if schema_version != "unit_summary_v2":
+            raise ValueError(f"Unsupported unit summary schema_version={schema_version!r}")
+        try:
+            payload = self._run_codex_exec(
+                kind="unit",
+                request={
+                    "kind": "unit",
+                    "unit_id": unit_id,
+                    "session_id": session_id,
+                    "title": title,
+                    "goal": goal,
+                    "schema_version": schema_version,
+                    "related_pages": list(related_pages or []),
+                    "micro_summaries": [summary.to_dict() for summary in micro_summaries],
+                    "routing_hints": self.routing_hints,
+                },
+                schema=_unit_summary_json_schema(),
+            )
+            summary = UnitSummaryV2.from_dict(payload)
+            self._raise_if_unit_summary_fails_lint(summary, micro_summaries)
+            return summary
+        except Exception as exc:
+            fallback = self.fallback_backend.summarize_unit(
+                unit_id=unit_id,
+                session_id=session_id,
+                title=title,
+                goal=goal,
+                micro_summaries=micro_summaries,
+                schema_version=schema_version,
+                related_pages=list(related_pages or []),
+            )
+            return _with_fallback_metadata(
+                fallback,
+                fallback_from=self.name,
+                fallback_reason=_summarizer_fallback_reason(exc),
+            )
+
+    def _run_codex_exec(
+        self,
+        *,
+        kind: str,
+        request: dict[str, object],
+        schema: dict[str, object],
+    ) -> dict[str, object]:
+        codex_command = self._codex_command_for_execution()
+        prepared_request = _prepare_llm_request(request, safety=self.llm_safety)
+        request_json = json.dumps(prepared_request, ensure_ascii=False, sort_keys=True)
+        with TemporaryDirectory(prefix=".acs-codex-summary-", dir=self.project_root) as temp_dir:
+            temp_path = Path(temp_dir)
+            schema_path = temp_path / f"{kind}-summary-schema.json"
+            schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
+            command = self._codex_exec_command(
+                codex_command=codex_command,
+                request_json=request_json,
+                schema_path=schema_path,
+                kind=kind,
+            )
+            result = subprocess.run(
+                command,
+                cwd=str(self.project_root),
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                capture_output=True,
+                timeout=self.timeout_seconds,
+                check=False,
+                shell=False,
+                env=_codex_exec_env(),
+            )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"codex-cli summarizer failed with exit_code={result.returncode}: {result.stderr.strip()}"
+            )
+        return _parse_codex_exec_summary_payload(result.stdout)
+
+    def _codex_command_for_execution(self) -> str:
+        if self.codex_command:
+            return self.codex_command
+        detected = _detect_codex_cli_command()
+        if detected:
+            return detected
+        raise RuntimeError("codex-cli summarizer unavailable: codex command was not found")
+
+    def _codex_exec_command(
+        self,
+        *,
+        codex_command: str,
+        request_json: str,
+        schema_path: Path,
+        kind: str,
+    ) -> list[str]:
+        command = [
+            codex_command,
+            "exec",
+            "-C",
+            str(self.project_root),
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "-c",
+            "approval_policy=never",
+            "-c",
+            "service_tier=fast",
+            "-c",
+            "model_reasoning_effort=low",
+            "-c",
+            "features.hooks=false",
+            "--json",
+            "--output-schema",
+            str(schema_path),
+        ]
+        model = self.routing_hints.get("model")
+        if model:
+            command.extend(["--model", str(model)])
+        command.append(_codex_summary_prompt(kind=kind, request_json=request_json))
+        return command
+
+    def _raise_if_micro_summary_fails_lint(
+        self,
+        summary: MicroSummaryV2,
+        evidence: MicroEvidenceBundle,
+    ) -> None:
+        raw_bundle = _raw_bundle_from_evidence(evidence)
+        report = lint_micro_summary_v2(summary, raw_bundle=raw_bundle)
+        if not report.ok:
+            issue_codes = ", ".join(issue.code for issue in report.issues)
+            raise ValueError(f"codex-cli micro summary failed lint: {issue_codes}")
+
+    def _raise_if_unit_summary_fails_lint(
+        self,
+        summary: UnitSummaryV2,
+        micro_summaries: list[MicroSummaryV2],
+    ) -> None:
+        report = lint_unit_summary_v2(summary, micro_summaries=micro_summaries)
+        if not report.ok:
+            issue_codes = ", ".join(issue.code for issue in report.issues)
+            raise ValueError(f"codex-cli unit summary failed lint: {issue_codes}")
+
+
+class AutoSummarizerBackend:
+    name = "auto"
+
+    def __init__(
+        self,
+        *,
+        routing_hints: dict[str, object] | None = None,
+        llm_safety: LLMInputSafetyOptions | None = None,
+        fallback_backend: SummarizerBackend | None = None,
+    ) -> None:
+        self.routing_hints = dict(routing_hints or {})
+        self.llm_safety = llm_safety or LLMInputSafetyOptions()
+        self.fallback_backend = fallback_backend or HeuristicSummarizerBackend()
+        self.codex_command = _codex_cli_command_hint(self.routing_hints)
+        self.project_root = Path(str(self.routing_hints.get("codex_project_root") or Path.cwd()))
+        self.timeout_seconds = _positive_int_hint(self.routing_hints, "codex_timeout_seconds", default=90)
+
+    def summarize_micro(
+        self,
+        evidence: MicroEvidenceBundle,
+        *,
+        schema_version: str,
+    ) -> MicroSummaryV2:
+        if not _codex_cli_available(self.codex_command):
+            fallback = self.fallback_backend.summarize_micro(evidence, schema_version=schema_version)
+            return _with_fallback_metadata(
+                fallback,
+                fallback_from=self.name,
+                fallback_reason="codex_cli_unavailable",
+            )
+        return self._codex_backend().summarize_micro(evidence, schema_version=schema_version)
+
+    def summarize_unit(
+        self,
+        *,
+        unit_id: str,
+        session_id: str,
+        title: str,
+        goal: str,
+        micro_summaries: list[MicroSummaryV2],
+        schema_version: str,
+        related_pages: list[str] | None = None,
+    ) -> UnitSummaryV2:
+        if not _codex_cli_available(self.codex_command):
+            fallback = self.fallback_backend.summarize_unit(
+                unit_id=unit_id,
+                session_id=session_id,
+                title=title,
+                goal=goal,
+                micro_summaries=micro_summaries,
+                schema_version=schema_version,
+                related_pages=list(related_pages or []),
+            )
+            return _with_fallback_metadata(
+                fallback,
+                fallback_from=self.name,
+                fallback_reason="codex_cli_unavailable",
+            )
+        return self._codex_backend().summarize_unit(
+            unit_id=unit_id,
+            session_id=session_id,
+            title=title,
+            goal=goal,
+            micro_summaries=micro_summaries,
+            schema_version=schema_version,
+            related_pages=list(related_pages or []),
+        )
+
+    def _codex_backend(self) -> CodexCliSummarizerBackend:
+        return CodexCliSummarizerBackend(
+            codex_command=self.codex_command,
+            project_root=self.project_root,
+            timeout_seconds=self.timeout_seconds,
+            fallback_backend=self.fallback_backend,
+            routing_hints=self.routing_hints,
+            llm_safety=self.llm_safety,
+        )
+
+
 class HeuristicSummarizerBackend:
     name = "heuristic"
 
@@ -665,9 +947,270 @@ def _summarizer_fallback_reason(exc: Exception) -> str:
         return f"lint:{issue_codes}"
     if "custom-command summarizer failed" in message:
         return "command_failed"
+    if "codex-cli summarizer failed" in message:
+        return "command_failed"
+    if "codex-cli summarizer unavailable" in message:
+        return "codex_cli_unavailable"
     if "invalid JSON" in message or isinstance(exc, json.JSONDecodeError):
         return "invalid_json"
     return type(exc).__name__
+
+
+def _codex_summary_prompt(*, kind: str, request_json: str) -> str:
+    return (
+        "Use this Agent Context Substrate summary input JSON: "
+        f"{request_json}\n\nReturn only one strict JSON object for "
+        f"the {kind} summary. Use only provided evidence, preserve message ids, "
+        "do not invent files or claims, and do not include markdown fences. "
+        "Preserve unresolved explicit_questions in open_questions. "
+        "Only copy files, entities, and concepts that appear verbatim in the provided evidence."
+    )
+
+
+def _codex_exec_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["AGENT_CONTEXT_SUBSTRATE_CODEX_SUMMARY"] = "1"
+    return env
+
+
+def _parse_codex_exec_summary_payload(stdout: str) -> dict[str, object]:
+    stripped = stdout.strip()
+    if not stripped:
+        raise ValueError("codex-cli summarizer returned empty stdout")
+    try:
+        direct_payload = _parse_json_text_object(stripped)
+    except json.JSONDecodeError:
+        direct_payload = None
+    if direct_payload is not None and _looks_like_summary_payload(direct_payload):
+        return direct_payload
+
+    last_agent_text: str | None = None
+    for line in stripped.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+            last_agent_text = str(item["text"])
+            continue
+        if event.get("type") == "agent_message" and isinstance(event.get("text"), str):
+            last_agent_text = str(event["text"])
+    if last_agent_text is None:
+        raise ValueError("codex-cli summarizer JSONL output did not include an agent_message item")
+    return _parse_json_text_object(last_agent_text)
+
+
+def _looks_like_summary_payload(payload: dict[str, object]) -> bool:
+    return "metadata" in payload and ("micro_id" in payload or "unit_id" in payload)
+
+
+def _parse_json_text_object(text: str) -> dict[str, object]:
+    parsed = json.loads(_strip_json_fence(text))
+    if not isinstance(parsed, dict):
+        raise ValueError("codex-cli summarizer must return a JSON object")
+    return parsed
+
+
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+    return stripped
+
+
+def _detect_codex_cli_command() -> str | None:
+    configured = os.environ.get("AGENT_CONTEXT_SUBSTRATE_CODEX_CLI")
+    if configured:
+        return configured if _codex_cli_available(configured) else None
+    try:
+        from .codex_setup import detect_codex_cli
+
+        detection = detect_codex_cli()
+        if detection.recommended_path is not None:
+            return str(detection.recommended_path)
+    except Exception:
+        pass
+    return shutil.which("codex")
+
+
+def _codex_cli_available(command: str | None = None) -> bool:
+    if command:
+        command_path = Path(command).expanduser()
+        if command_path.is_absolute() or command_path.parent != Path("."):
+            return command_path.exists()
+        return shutil.which(command) is not None
+    return _detect_codex_cli_command() is not None
+
+
+def _codex_cli_command_hint(routing_hints: dict[str, object]) -> str | None:
+    value = routing_hints.get("codex_cli_command")
+    if value is None:
+        return os.environ.get("AGENT_CONTEXT_SUBSTRATE_CODEX_CLI")
+    text = str(value).strip()
+    return text or None
+
+
+def _positive_int_hint(routing_hints: dict[str, object], key: str, *, default: int) -> int:
+    try:
+        value = int(routing_hints.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return max(1, value)
+
+
+def _summary_metadata_json_schema(schema_version: str) -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": ["codex-cli"]},
+            "schema_version": {"type": "string", "const": schema_version},
+            "prompt_version": {"type": ["string", "null"]},
+            "model": {"type": ["string", "null"]},
+            "input_hash": {"type": "string"},
+            "created_at": {"type": "string"},
+            "confidence": {"type": ["number", "null"]},
+            "fallback_from": {"type": ["string", "null"]},
+            "fallback_reason": {"type": ["string", "null"]},
+        },
+        "required": [
+            "mode",
+            "schema_version",
+            "prompt_version",
+            "model",
+            "input_hash",
+            "created_at",
+            "confidence",
+            "fallback_from",
+            "fallback_reason",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _evidence_backed_text_json_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "evidence_message_ids": {"type": "array", "items": {"type": "integer"}},
+            "confidence": {"type": "number"},
+        },
+        "required": ["text", "evidence_message_ids", "confidence"],
+        "additionalProperties": False,
+    }
+
+
+def _raw_session_reference_json_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string"},
+            "message_ids": {"type": "array", "items": {"type": "integer"}},
+            "source": {"type": "string"},
+            "started_at": {"type": ["string", "null"]},
+            "ended_at": {"type": ["string", "null"]},
+            "title": {"type": ["string", "null"]},
+        },
+        "required": ["session_id", "message_ids", "source", "started_at", "ended_at", "title"],
+        "additionalProperties": False,
+    }
+
+
+def _micro_summary_json_schema() -> dict[str, object]:
+    required = [
+        "micro_id",
+        "session_id",
+        "message_ids",
+        "recovery_summary",
+        "knowledge_summary",
+        "retrieval_summary",
+        "user_intent",
+        "assistant_outcome",
+        "decisions",
+        "claims",
+        "action_items",
+        "open_questions",
+        "files",
+        "entities",
+        "concepts",
+        "metadata",
+        "provenance",
+    ]
+    evidence_text = _evidence_backed_text_json_schema()
+    return {
+        "type": "object",
+        "properties": {
+            "micro_id": {"type": "string"},
+            "session_id": {"type": "string"},
+            "message_ids": {"type": "array", "items": {"type": "integer"}},
+            "recovery_summary": {"type": "string"},
+            "knowledge_summary": {"type": "string"},
+            "retrieval_summary": {"type": "string"},
+            "user_intent": {"type": ["string", "null"]},
+            "assistant_outcome": {"type": ["string", "null"]},
+            "decisions": {"type": "array", "items": evidence_text},
+            "claims": {"type": "array", "items": evidence_text},
+            "action_items": {"type": "array", "items": evidence_text},
+            "open_questions": {"type": "array", "items": {"type": "string"}},
+            "files": {"type": "array", "items": {"type": "string"}},
+            "entities": {"type": "array", "items": {"type": "string"}},
+            "concepts": {"type": "array", "items": {"type": "string"}},
+            "metadata": _summary_metadata_json_schema("micro_summary_v2"),
+            "provenance": {"anyOf": [{"type": "null"}, _raw_session_reference_json_schema()]},
+        },
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _unit_summary_json_schema() -> dict[str, object]:
+    evidence_text = _evidence_backed_text_json_schema()
+    return {
+        "type": "object",
+        "properties": {
+            "unit_id": {"type": "string"},
+            "session_id": {"type": "string"},
+            "title": {"type": "string"},
+            "goal": {"type": "string"},
+            "state": {"type": "string"},
+            "decisions": {"type": "array", "items": evidence_text},
+            "progress": {"type": "array", "items": {"type": "string"}},
+            "next_actions": {"type": "array", "items": {"type": "string"}},
+            "open_questions": {"type": "array", "items": {"type": "string"}},
+            "risk_notes": {"type": "array", "items": {"type": "string"}},
+            "wiki_candidates": {"type": "array", "items": evidence_text},
+            "micro_ids": {"type": "array", "items": {"type": "string"}},
+            "related_pages": {"type": "array", "items": {"type": "string"}},
+            "metadata": _summary_metadata_json_schema("unit_summary_v2"),
+            "provenance": {"anyOf": [{"type": "null"}, _raw_session_reference_json_schema()]},
+        },
+        "required": [
+            "unit_id",
+            "session_id",
+            "title",
+            "goal",
+            "state",
+            "decisions",
+            "progress",
+            "next_actions",
+            "open_questions",
+            "risk_notes",
+            "wiki_candidates",
+            "micro_ids",
+            "related_pages",
+            "metadata",
+            "provenance",
+        ],
+        "additionalProperties": False,
+    }
 
 
 def _with_fallback_metadata(
@@ -699,6 +1242,17 @@ def get_summarizer_backend(
     normalized = name.strip().lower()
     if normalized == "heuristic":
         return HeuristicSummarizerBackend()
+    if normalized == "auto":
+        return AutoSummarizerBackend(routing_hints=routing_hints, llm_safety=llm_safety)
+    if normalized in {"codex-cli", "codex-exec"}:
+        hints = dict(routing_hints or {})
+        return CodexCliSummarizerBackend(
+            codex_command=_codex_cli_command_hint(hints),
+            project_root=Path(str(hints.get("codex_project_root") or Path.cwd())),
+            timeout_seconds=_positive_int_hint(hints, "codex_timeout_seconds", default=90),
+            routing_hints=hints,
+            llm_safety=llm_safety,
+        )
     if normalized == "custom-command":
         return CustomCommandSummarizerBackend(command=command or "", llm_safety=llm_safety)
     if normalized == "agent-llm":

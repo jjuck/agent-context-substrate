@@ -176,7 +176,11 @@ cssclasses: [knowledge-page]
 ---
 ```
 
-### 5.3 언어별 template
+### 5.3 LLM Wiki rubric과 언어별 template
+
+LLM Wiki는 고정 양식 생성기가 아니라 LLM이 유지보수하는 markdown 지식 그래프입니다. `_system/templates`는 사람과 agent가 참고하는 시작점이며, 실제 page 본문은 새 지식을 가장 잘 통합하는 구조를 자유롭게 사용할 수 있습니다.
+
+자동화에서 끝까지 지키는 최소 계약은 page path 안전성, provenance/evidence, 유효한 wikilink, index/log 등록, review 상태, 불확실성/모순/open question 표시입니다. page type별 섹션명과 순서는 참고용 rubric으로만 취급합니다.
 
 ```text
 _system/templates/ko/home.md
@@ -191,7 +195,7 @@ _system/templates/en/project.md
 
 1. page type을 고릅니다. (`knowledge`, `idea`, `source`, `project`, `spec`, `plan`, `decision` 등)
 2. 언어를 고릅니다. (`ko` 또는 `en`)
-3. 해당 template을 복사합니다.
+3. 필요하면 해당 template을 시작점으로 복사합니다.
 4. frontmatter의 `title`, `lang`, `type`, `category`, `status`, `tags`를 채웁니다.
 
 ### 5.4 언어 lint
@@ -208,6 +212,8 @@ cd '<PROJECT_ROOT>'
 
 - `Missing language`
 - `Unsupported language`
+
+언어와 섹션 구성 문제는 advisory로 보고됩니다. 자동화 gate를 막는 blocking issue는 provenance 누락, broken wikilink, index 누락, generated/session-id page, internal artifact graph 오류처럼 안전성과 graph 무결성에 직접 영향을 주는 항목입니다.
 
 ## 6. Hermes 연동 설치와 활성화
 
@@ -322,7 +328,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 .\.venv\Scripts\agent-context-substrate.exe diagnose-codex
 ```
 
-경로를 확인하며 설치하려면 `setup-codex-wizard`를 사용합니다. `diagnose-codex --fix`는 wiki skeleton, Codex plugin, user hook fallback, local config처럼 안전한 ACS 로컬 파일만 복구합니다.
+경로를 확인하며 설치하려면 `setup-codex-wizard`를 사용합니다. `diagnose-codex --fix`는 wiki skeleton, Codex plugin Stop hook, local config처럼 안전한 ACS 로컬 파일만 복구합니다. `~/.codex/hooks.json` user hook fallback은 중복 Stop hook을 피하기 위해 명시적으로 요청한 경우에만 사용합니다.
 
 Codex의 non-managed hook 정책상 실제 실행 전 `/hooks` review/trust는 여전히 필요합니다.
 
@@ -344,10 +350,21 @@ Hook 승인 확인 뒤 fallback dry run도 실행할 수 있습니다.
   --thread-id "<CODEX_THREAD_ID>" `
   --codex-home $CodexHome `
   --project-root $ProjectRoot `
-  --wiki-root $WikiRoot
+  --wiki-root $WikiRoot `
+  --summary-mode auto
 ```
 
 Codex raw export는 `data/exports/raw/codex/<thread_id>.json`에 저장됩니다. 이후 context packet, recovery, retrieval, atoms, promotions, wiki patch 명령은 Hermes session artifact와 같은 layout을 사용합니다.
+
+`summary_mode=auto`는 ACS가 Codex credential을 직접 다루지 않으면서 LLM summary를 쓰고 싶을 때 권장하는 Codex UX입니다. 사용 가능한 Codex CLI를 감지한 뒤 `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, `features.hooks=false`, inline bounded JSON input으로 실행하고 strict JSON을 ACS schema/lint로 검증합니다. timeout, CLI 실패, invalid JSON, lint 실패 시 heuristic summary로 degrade하고 summary metadata와 finalize ledger에 `fallback_from` / `fallback_reason`을 남깁니다.
+
+| 선택지 | 사용 시점 | 주의점 |
+| --- | --- | --- |
+| `codex-cli` / `auto` | 로컬 Codex CLI/App에 이미 로그인되어 있을 때 | Codex CLI 인증을 재사용하며 ACS가 Codex OAuth token을 읽거나 저장하지 않습니다. |
+| `custom-command` | 신뢰하는 local summarizer command가 있을 때 | command가 인증, API 사용량, schema 출력, 안전장치를 책임집니다. |
+| OpenAI Platform API key | CI나 Codex 밖 자동화에서 명시적 API 과금이 필요할 때 | Codex 로그인과 별개로 key 발급과 API 비용이 필요합니다. |
+| 직접 Codex OAuth 구현 | ACS에서는 피합니다. | token lifecycle과 private endpoint 안정성을 ACS가 책임지게 됩니다. |
+| Codex Python SDK | app-server 기반 후속 실험 후보 | 이번 backend는 자동화 flag가 명확한 `codex exec`를 먼저 사용합니다. |
 
 ## 8. Plugin 설정
 
@@ -497,8 +514,10 @@ agent-context-substrate build-context-packet \
 | `agent-llm` | host Agent가 제공하는 LLM router를 사용합니다. |
 | `hybrid` | heuristic evidence + Agent LLM 해석을 조합합니다. |
 | `custom-command` | 외부 command가 stdin JSON을 받아 stdout JSON을 반환합니다. |
+| `codex-cli` | `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks-disabled, inline bounded JSON input, JSONL 출력, ACS schema/lint 검증으로 호출합니다. |
+| `auto` | 사용 가능한 Codex CLI가 있으면 `codex-cli`를 우선 사용하고, 없으면 heuristic fallback metadata를 기록합니다. |
 
-참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`과 `custom-command`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다.
+참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`, `custom-command`, `codex-cli`, `auto`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다.
 
 Summary judge evaluation is opt-in and artifact-only:
 
@@ -521,6 +540,18 @@ agent-context-substrate plan-wiki-patches \
   --wiki-root '<WIKI_ROOT>' \
   --project-root .
 ```
+
+기본 `plan-wiki-patches`는 기존 managed claim block proposal을 유지합니다. 고정 섹션 템플릿 대신 rubric 기반 전체 page draft/revision을 만들고 싶으면 명시적으로 flexible mode를 사용합니다.
+
+```bash
+agent-context-substrate plan-wiki-patches \
+  --promotion-file data/promotions/<packet_id>.json \
+  --write-mode flexible \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root .
+```
+
+Flexible proposal은 semantic judge 승인 metadata가 없으면 proposal-only로 남습니다. 실제 apply 단계에서도 safe target path, evidence, 현재 page hash, `--apply` 여부를 기계적으로 다시 확인합니다.
 
 여기까지는 Obsidian을 수정하지 않습니다. 실제 쓰기는 patch Markdown/JSON을 검토한 뒤 아래처럼 명시합니다.
 

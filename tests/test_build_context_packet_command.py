@@ -34,7 +34,15 @@ def test_build_context_packet_helpers_build_routing_hints_and_llm_safety_options
         "model": "sonnet",
         "budget": "small",
     }
-    assert build_summary_routing_hints(summary_model=None, summary_budget=None) == {}
+    assert build_summary_routing_hints(
+        summary_model=None,
+        summary_budget=None,
+        codex_cli_command="C:/OpenAI/Codex/bin/codex.exe",
+        codex_project_root=Path("C:/project"),
+    ) == {
+        "codex_cli_command": "C:/OpenAI/Codex/bin/codex.exe",
+        "codex_project_root": str(Path("C:/project")),
+    }
 
     safety = build_llm_safety_options(
         llm_redact="off",
@@ -292,6 +300,60 @@ def test_build_context_packet_handler_passes_summary_judge_mode_to_export(tmp_pa
     assert exit_code == 0
     assert captured["summary_judge_mode"] == "hybrid"
     assert captured["routing_hints"] == {"budget": "quality"}
+
+
+def test_build_context_packet_handler_allows_codex_cli_and_passes_codex_hints(tmp_path, capsys) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    captured: dict[str, object] = {}
+
+    def fake_packet_builder(*, paths, options):
+        return PacketBuildResult(
+            packet=_FakePacket(),
+            raw_export_path=paths.project_root / "data" / "exports" / "session-1.json",
+            packet_json_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.json",
+            packet_markdown_path=paths.project_root / "data" / "exports" / "context_packets" / "packet-1.md",
+        )
+
+    def fake_export_v2_summary_artifacts(**kwargs):
+        captured.update(kwargs)
+        return (
+            paths.project_root / "micro.json",
+            paths.project_root / "unit.json",
+            paths.project_root / "evidence.json",
+        )
+
+    exit_code = handle_build_context_packet_command(
+        args=SimpleNamespace(
+            session_id="session-1",
+            packet_id="packet-1",
+            task_title="Task",
+            macro_context="Context",
+            unit_title="Unit",
+            goal="Goal",
+            related_pages=[],
+            summary_mode="codex-cli",
+            summarizer_command=None,
+            summary_model="gpt-5.4",
+            summary_budget="balanced",
+            summary_cache="off",
+            summary_judge_mode="off",
+            codex_cli_command="C:/OpenAI/Codex/bin/codex.exe",
+        ),
+        parser=argparse.ArgumentParser(prog="acs"),
+        paths=paths,
+        build_packet_from_session=fake_packet_builder,
+        export_v2_summary_artifacts=fake_export_v2_summary_artifacts,
+        summary_routing_hints=build_summary_routing_hints,
+    )
+
+    assert exit_code == 0
+    assert captured["summary_mode"] == "codex-cli"
+    assert captured["routing_hints"] == {
+        "model": "gpt-5.4",
+        "budget": "balanced",
+        "codex_cli_command": "C:/OpenAI/Codex/bin/codex.exe",
+        "codex_project_root": str(paths.project_root),
+    }
 
 
 def test_build_context_packet_handler_prints_summary_judge_path(tmp_path, capsys) -> None:

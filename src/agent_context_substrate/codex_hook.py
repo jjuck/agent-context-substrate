@@ -86,6 +86,7 @@ def build_codex_stop_finalize_decision(
     codex_home = config.get("codex_home")
     if codex_home:
         command.extend(["--codex-home", str(_resolve_non_strict(Path(str(codex_home)).expanduser()))])
+    _append_summary_args(command, config)
 
     return CodexStopFinalizeDecision(
         should_finalize=True,
@@ -151,6 +152,57 @@ def _non_blocking_failure(message: str) -> dict[str, Any]:
         "continue": True,
         "systemMessage": f"{message}. codex-watch remains available as fallback.",
     }
+
+
+def _append_summary_args(command: list[str], config: dict[str, Any]) -> None:
+    summary_mode = str(config.get("summary_mode") or "").strip().lower()
+    if not summary_mode or summary_mode in {"off", "none", "disabled"}:
+        return
+    command.extend(["--summary-mode", summary_mode])
+    for config_key, flag in [
+        ("summarizer_command", "--summarizer-command"),
+        ("summary_model", "--summary-model"),
+        ("summary_budget", "--summary-budget"),
+        ("codex_cli_command", "--codex-cli-command"),
+        ("codex_timeout_seconds", "--codex-timeout-seconds"),
+        ("llm_redact", "--llm-redact"),
+        ("llm_max_input_chars", "--llm-max-input-chars"),
+        ("llm_allow_code_snippets", "--llm-allow-code-snippets"),
+        ("llm_path_policy", "--llm-path-policy"),
+    ]:
+        value = _summary_cli_value(config_key=config_key, value=config.get(config_key))
+        if value is not None:
+            command.extend([flag, value])
+    if _config_bool(config.get("summary_cache")):
+        command.extend(["--summary-cache", "on"])
+
+
+def _summary_cli_value(*, config_key: str, value: Any) -> str | None:
+    if value is None:
+        return None
+    if config_key in {"llm_redact", "llm_allow_code_snippets"}:
+        return _config_on_off(value)
+    text = str(value).strip()
+    return text or None
+
+
+def _config_on_off(value: Any) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return "on"
+    if text in {"0", "false", "no", "off"}:
+        return "off"
+    return text
+
+
+def _config_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _hook_timeout_seconds(config: dict[str, Any]) -> int:

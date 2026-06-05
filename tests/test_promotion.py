@@ -174,11 +174,11 @@ def test_promote_context_packet_to_query_writes_frontmatter_provenance_and_wikil
     assert 'tags: [question, context-packet, implementation]' in markdown
     assert 'context-packet:packet-1' in markdown
     assert 'hermes-session:session-1#messages=1,2' in markdown
-    assert "## Summary" in markdown
-    assert "## Related Pages" in markdown
+    assert "## Current Understanding" in markdown
+    assert "## Connections" in markdown
     assert "[[context-packet]]" in markdown
     assert "[[agent-context-substrate]]" in markdown
-    assert "## Provenance" in markdown
+    assert "## Evidence and Provenance" in markdown
     assert "## Open Questions" in markdown
     assert "Should plans be promoted in the same module?" in markdown
 
@@ -272,17 +272,14 @@ def test_promote_unit_summary_to_concept_writes_concept_page_with_micro_context(
     assert "type: concept" in markdown
     assert 'tags: [summarization, implementation, knowledge-base]' in markdown
     assert 'hermes-session:session-1#messages=1,2,3' in markdown
-    assert "## Summary" in markdown
-    assert "## Goal" in markdown
+    assert "## Current Understanding" in markdown
     assert "Promote reusable outputs into the Obsidian wiki" in markdown
-    assert "## Decisions" in markdown
     assert "Keep promotion pages typed and provenance-rich" in markdown
-    assert "## Progress" in markdown
     assert "Added query writer" in markdown
-    assert "## Evidence" in markdown
+    assert "## Evidence and Provenance" in markdown
     assert "`micro-a`" in markdown
     assert "`micro-b`" in markdown
-    assert "## Related Pages" in markdown
+    assert "## Connections" in markdown
     assert "[[context-packet]]" in markdown
     assert "[[hierarchical-summaries]]" in markdown
 
@@ -363,12 +360,11 @@ def test_promote_context_packet_to_plan_writes_plan_page_with_steps_and_backlink
     assert output_path == wiki_root / "plans" / "resume-harness-plan.md"
     assert "type: plan" in markdown
     assert 'tags: [plan, implementation, context-packet]' in markdown
-    assert "## Objective" in markdown
+    assert "## Current Understanding" in markdown
     assert "Resume harness execution plan" in markdown
-    assert "## Proposed Steps" in markdown
-    assert "- [ ] **Build durable promotion layer** — Promote reusable outputs into the Obsidian wiki" in markdown
-    assert "## Critical Files" in markdown
-    assert "## Provenance" in markdown
+    assert "- [ ] **Build durable promotion layer**" in markdown
+    assert "Promote reusable outputs into the Obsidian wiki" in markdown
+    assert "## Evidence and Provenance" in markdown
     assert "[[context-packet]]" in markdown
     assert "[[agent-context-substrate]]" in markdown
 
@@ -446,14 +442,12 @@ def test_promote_unit_summary_to_architecture_writes_architecture_page_with_deci
     assert output_path == wiki_root / "architectures" / "promotion-system-architecture.md"
     assert "type: architecture" in markdown
     assert 'tags: [implementation, architecture, summarization]' in markdown
-    assert "## Goal" in markdown
+    assert "## Current Understanding" in markdown
     assert "Promote reusable outputs into the Obsidian wiki" in markdown
-    assert "## Architectural Decisions" in markdown
     assert "Keep promotion pages typed and provenance-rich" in markdown
-    assert "## Key Artifacts" in markdown
     assert "`src/agent_context_substrate/promotion.py`" in markdown
     assert "`tests/test_promotion.py`" in markdown
-    assert "## Evidence" in markdown
+    assert "## Evidence and Provenance" in markdown
     assert "Outcome for micro-a" in markdown
     assert "Request for micro-b" in markdown
     assert "[[hierarchical-summaries]]" in markdown

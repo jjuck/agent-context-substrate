@@ -16,6 +16,9 @@ def test_windows_codex_bootstrap_script_documents_single_command_flow() -> None:
     assert "Git.Git" in script
     assert "Python.Python.3.13" in script
     assert "Obsidian.Obsidian" in script
+    assert "OpenAI\\Codex\\bin" in script
+    assert "npm shim" in script
+    assert "--user-hook-fallback" not in script
     assert "--dangerously-bypass-hook-trust" not in script
 
 
@@ -39,8 +42,17 @@ def test_windows_codex_docs_explain_one_shot_and_diagnostic_commands() -> None:
         "Python.Python.3.13",
         "Git.Git",
         "Obsidian.Obsidian",
+        "npm shim",
+        "%LOCALAPPDATA%\\OpenAI\\Codex\\bin",
+        "--user-hook-fallback",
+        "Hooks need review",
+        "Trust all and continue",
+        "Running Stop hook: Finalizing Codex thread into Agent Context Substrate",
+        "codex_hook_events.jsonl",
+        "search-knowledge",
         "state_5.sqlite",
         "Documents\\LLM Wiki",
         "data\\...",
     ]:
         assert required in docs
+    assert "--dangerously-bypass-hook-trust" not in docs

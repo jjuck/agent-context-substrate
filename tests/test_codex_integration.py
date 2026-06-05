@@ -71,6 +71,46 @@ def test_codex_finalize_exports_packet_recovery_and_ledger(tmp_path: Path) -> No
     assert all("codex-thread:thread-1#messages=1,2" in hit.provenance for hit in codex_hits)
 
 
+def test_codex_finalize_auto_summary_falls_back_and_records_ledger_metadata(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    missing_codex = tmp_path / "missing-codex.exe"
+    codex_home.mkdir()
+    wiki_root.mkdir()
+    _write_codex_thread(
+        codex_home,
+        thread_id="thread-auto",
+        rollout_path=codex_home / "sessions" / "rollout-thread-auto.jsonl",
+    )
+
+    result = run_codex_thread_finalize_pipeline(
+        thread_id="thread-auto",
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        summary_mode="auto",
+        codex_cli_command=missing_codex,
+        summary_cache=True,
+    )
+
+    assert result.summary_micro_path is not None
+    assert result.summary_unit_path is not None
+    micro_payload = json.loads(result.summary_micro_path.read_text(encoding="utf-8"))
+    unit_payload = json.loads(result.summary_unit_path.read_text(encoding="utf-8"))
+    assert micro_payload["metadata"]["mode"] == "heuristic"
+    assert micro_payload["metadata"]["fallback_from"] == "auto"
+    assert micro_payload["metadata"]["fallback_reason"] == "codex_cli_unavailable"
+    assert unit_payload["metadata"]["fallback_from"] == "auto"
+
+    ledger_payload = json.loads((project_root / "data" / "index" / "session_ledger.json").read_text(encoding="utf-8"))
+    record = ledger_payload["session_finalize"]["thread-auto"]
+    assert record["artifact_paths"]["summary_mode"] == "auto"
+    assert record["artifact_paths"]["summary_micro_mode"] == "heuristic"
+    assert record["artifact_paths"]["summary_micro_fallback_from"] == "auto"
+    assert record["artifact_paths"]["summary_micro_fallback_reason"] == "codex_cli_unavailable"
+
+
 def test_codex_watcher_selects_idle_threads_once(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex"
     project_root = tmp_path / "project"

@@ -12,6 +12,7 @@ from agent_context_substrate.evidence import build_micro_evidence_bundle  # noqa
 from agent_context_substrate.models import MicroSummaryV2, UnitSummaryV2  # noqa: E402
 from agent_context_substrate.summarizer_backends import (  # noqa: E402
     AgentLLMSummarizerBackend,
+    CodexCliSummarizerBackend,
     CustomCommandSummarizerBackend,
     HeuristicSummarizerBackend,
     HybridSummarizerBackend,
@@ -55,6 +56,163 @@ def test_get_summarizer_backend_returns_heuristic_backend() -> None:
     backend = get_summarizer_backend("heuristic")
 
     assert isinstance(backend, HeuristicSummarizerBackend)
+
+
+def test_codex_cli_summarizer_invokes_codex_exec_with_safety_flags_and_parses_jsonl(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-codex")
+    calls: list[dict[str, object]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append({"command": command, **kwargs})
+        schema_index = command.index("--output-schema") + 1
+        schema_payload = json.loads(Path(command[schema_index]).read_text(encoding="utf-8"))
+        assert schema_payload["required"] == [
+            "micro_id",
+            "session_id",
+            "message_ids",
+            "recovery_summary",
+            "knowledge_summary",
+            "retrieval_summary",
+            "user_intent",
+            "assistant_outcome",
+            "decisions",
+            "claims",
+            "action_items",
+            "open_questions",
+            "files",
+            "entities",
+            "concepts",
+            "metadata",
+            "provenance",
+        ]
+        payload = _valid_micro_summary_payload(evidence=evidence, mode="codex-cli")
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "thread-summary"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps(payload, ensure_ascii=False),
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    backend = CodexCliSummarizerBackend(
+        codex_command=str(tmp_path / "codex.exe"),
+        project_root=project_root,
+        timeout_seconds=7,
+    )
+
+    summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    command = calls[0]["command"]
+    assert command[:2] == [str(tmp_path / "codex.exe"), "exec"]
+    assert "-C" in command
+    assert str(tmp_path / "project") in command
+    assert "--sandbox" in command
+    assert "read-only" in command
+    assert "--skip-git-repo-check" in command
+    assert "approval_policy=never" in command
+    assert "-c" in command
+    assert "service_tier=fast" in command
+    assert "model_reasoning_effort=low" in command
+    assert "features.hooks=false" in command
+    assert "--json" in command
+    assert "--output-schema" in command
+    schema_index = command.index("--output-schema") + 1
+    assert Path(command[schema_index]).is_relative_to(project_root)
+    assert "summary input JSON:" in command[-1]
+    assert "micro-codex" in command[-1]
+    assert "Preserve unresolved explicit_questions in open_questions" in command[-1]
+    assert "summary-input.json" not in command[-1]
+    assert calls[0]["shell"] is False
+    assert calls[0]["timeout"] == 7
+    assert calls[0]["encoding"] == "utf-8"
+    assert calls[0]["errors"] == "replace"
+    assert summary.metadata.mode == "codex-cli"
+    assert summary.metadata.fallback_from is None
+
+
+def test_codex_cli_summarizer_falls_back_to_heuristic_when_exec_fails(monkeypatch, tmp_path: Path) -> None:
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-codex-fallback")
+
+    def fake_run(command, **kwargs):
+        return subprocess.CompletedProcess(args=command, returncode=9, stdout="", stderr="not logged in")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    backend = CodexCliSummarizerBackend(
+        codex_command=str(tmp_path / "codex.exe"),
+        project_root=project_root,
+    )
+
+    summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert summary.metadata.mode == "heuristic"
+    assert summary.metadata.fallback_from == "codex-cli"
+    assert summary.metadata.fallback_reason == "command_failed"
+    assert summary.micro_id == "micro-codex-fallback"
+
+
+def test_codex_cli_summarizer_falls_back_when_jsonl_output_is_not_summary_json(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-codex-invalid-json")
+
+    def fake_run(command, **kwargs):
+        stdout = json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "not json"},
+            }
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    backend = CodexCliSummarizerBackend(
+        codex_command=str(tmp_path / "codex.exe"),
+        project_root=project_root,
+    )
+
+    summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert summary.metadata.mode == "heuristic"
+    assert summary.metadata.fallback_from == "codex-cli"
+    assert summary.metadata.fallback_reason == "invalid_json"
+    assert summary.micro_id == "micro-codex-invalid-json"
+
+
+def test_auto_summarizer_falls_back_when_codex_cli_is_unavailable(tmp_path: Path) -> None:
+    backend = get_summarizer_backend(
+        "auto",
+        routing_hints={
+            "codex_cli_command": str(tmp_path / "missing-codex.exe"),
+            "codex_project_root": str(tmp_path / "project"),
+        },
+    )
+    evidence = build_micro_evidence_bundle(raw_bundle=_raw_bundle(), micro_id="micro-auto")
+
+    summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+
+    assert summary.metadata.mode == "heuristic"
+    assert summary.metadata.fallback_from == "auto"
+    assert summary.metadata.fallback_reason == "codex_cli_unavailable"
 
 
 def _valid_micro_summary_payload(*, evidence, mode: str) -> dict[str, object]:

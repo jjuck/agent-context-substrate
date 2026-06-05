@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,9 @@ from .safe_paths import safe_wiki_target_path
 MANAGED_CLAIMS_START = "<!-- acs:auto:claims:start -->"
 MANAGED_CLAIMS_END = "<!-- acs:auto:claims:end -->"
 
-ALPHA_WIKI_PATCH_OPERATIONS = frozenset({"create_page", "insert_claim_block", "append_section", "append_managed_section"})
+ALPHA_WIKI_PATCH_OPERATIONS = frozenset(
+    {"create_page", "replace_page", "insert_claim_block", "append_section", "append_managed_section"}
+)
 EXPERIMENTAL_WIKI_PATCH_OPERATIONS = frozenset({"add_link", "mark_stale"})
 FUTURE_WIKI_PATCH_OPERATIONS = frozenset(
     {"replace_section", "add_alias", "mark_deprecated", "merge_pages", "split_page"}
@@ -81,6 +84,7 @@ class WikiPatchProposal:
     packet_id: str
     operations: list[WikiPatchOperation]
     status: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -88,6 +92,7 @@ class WikiPatchProposal:
             "packet_id": self.packet_id,
             "operations": [operation.to_dict() for operation in self.operations],
             "status": self.status,
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -97,6 +102,7 @@ class WikiPatchProposal:
             packet_id=str(payload["packet_id"]),
             operations=[WikiPatchOperation.from_dict(item) for item in payload.get("operations", [])],
             status=str(payload["status"]),
+            metadata=dict(payload.get("metadata", {})),
         )
 
 
@@ -105,7 +111,12 @@ def plan_wiki_patch_proposal(
     packet_id: str,
     candidates: list[PromotionCandidate],
     wiki_root: Path,
+    write_mode: str = "managed",
+    judge_mode: str = "off",
+    judge_verdict: str | None = None,
 ) -> WikiPatchProposal:
+    if write_mode not in {"managed", "flexible"}:
+        raise ValueError(f"Unsupported wiki write_mode: {write_mode}")
     operations: list[WikiPatchOperation] = []
     for candidate in candidates:
         if candidate.status != "pending":
@@ -119,10 +130,21 @@ def plan_wiki_patch_proposal(
         if target_path is None:
             continue
         existing_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-        claim_block = _claim_block_for_candidate(candidate)
-        before = _existing_claim_block(existing_text)
-        operation = "insert_claim_block" if target_path.exists() else "create_page"
-        after = claim_block if operation != "create_page" else _seed_page_for_candidate(candidate=candidate, target_path=target_path)
+        if write_mode == "flexible":
+            operation = "replace_page" if target_path.exists() else "create_page"
+            before = existing_text
+            after = _flexible_page_revision_for_candidate(
+                candidate=candidate,
+                target_path=target_path,
+                existing_text=existing_text,
+            )
+            diff = {"before": before, "after": after, "base_sha256": _sha256(existing_text)}
+        else:
+            claim_block = _claim_block_for_candidate(candidate)
+            before = _existing_claim_block(existing_text)
+            operation = "insert_claim_block" if target_path.exists() else "create_page"
+            after = claim_block if operation != "create_page" else _seed_page_for_candidate(candidate=candidate, target_path=target_path)
+            diff = {"before": before, "after": after}
         operations.append(
             WikiPatchOperation(
                 patch_id=f"{packet_id}-patch-{index}",
@@ -131,8 +153,8 @@ def plan_wiki_patch_proposal(
                 operation=operation,
                 rationale=candidate.reason,
                 evidence=list(candidate.evidence),
-                risk="low" if target_path.exists() else "medium",
-                diff={"before": before, "after": after},
+                risk=_risk_for_operation(operation),
+                diff=diff,
                 status="proposed",
             )
         )
@@ -141,6 +163,11 @@ def plan_wiki_patch_proposal(
         packet_id=packet_id,
         operations=operations,
         status="proposed",
+        metadata=_proposal_metadata(
+            write_mode=write_mode,
+            judge_mode=judge_mode,
+            judge_verdict=judge_verdict,
+        ),
     )
 
 
@@ -209,6 +236,11 @@ def apply_wiki_patch_proposal(
             skipped_patch_ids.append(operation.patch_id)
             skipped_reasons[operation.patch_id] = f"unsupported operation: {operation.operation}"
             continue
+        policy_reason = _write_policy_rejection_reason(proposal=proposal, operation=operation)
+        if policy_reason is not None:
+            skipped_patch_ids.append(operation.patch_id)
+            skipped_reasons[operation.patch_id] = policy_reason
+            continue
         conflict_reason = _preflight_conflict_reason(operation=operation, target_path=target_path)
         if conflict_reason is not None:
             skipped_patch_ids.append(operation.patch_id)
@@ -248,8 +280,88 @@ def _claim_block_for_candidate(candidate: PromotionCandidate) -> str:
     )
 
 
+def _proposal_metadata(*, write_mode: str, judge_mode: str, judge_verdict: str | None) -> dict[str, Any]:
+    if write_mode != "flexible":
+        return {}
+    verdict = judge_verdict or "not_requested"
+    return {
+        "write_mode": "flexible",
+        "judge_mode": judge_mode,
+        "judge_verdict": verdict,
+        "policy_verdict": "approved" if verdict == "approved" else "proposal_only",
+        "rubric_advisories": [
+            "Treat page-type sections as examples, not mandatory structure.",
+            "Integrate new claims into readable wiki prose with evidence and links.",
+            "Mark uncertainty, contradictions, and unresolved questions instead of hiding them.",
+        ],
+    }
+
+
+def _risk_for_operation(operation: str) -> str:
+    if operation == "insert_claim_block":
+        return "low"
+    if operation == "replace_page":
+        return "medium"
+    return "medium"
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _flexible_page_revision_for_candidate(
+    *,
+    candidate: PromotionCandidate,
+    target_path: Path,
+    existing_text: str,
+) -> str:
+    title = _title_for_target(target_path)
+    addition = _flexible_candidate_note(candidate)
+    if existing_text.strip():
+        base = existing_text.rstrip()
+        if candidate.proposed_change in existing_text:
+            return base + "\n"
+        return f"{base}\n\n{addition}\n"
+    return "\n".join(
+        [
+            "---",
+            f"title: {title}",
+            "status: seed",
+            "review_needed: true",
+            "---",
+            f"# {title}",
+            "",
+            candidate.proposed_change,
+            "",
+            _evidence_sentence(candidate.evidence),
+            "",
+        ]
+    )
+
+
+def _flexible_candidate_note(candidate: PromotionCandidate) -> str:
+    return "\n".join(
+        [
+            candidate.proposed_change,
+            "",
+            _evidence_sentence(candidate.evidence),
+        ]
+    )
+
+
+def _evidence_sentence(evidence: list[str]) -> str:
+    if not evidence:
+        return "Evidence: review required before this claim is promoted."
+    rendered = ", ".join(f"`{item}`" for item in evidence)
+    return f"Evidence: {rendered}"
+
+
+def _title_for_target(target_path: Path) -> str:
+    return target_path.stem.replace("-", " ").title()
+
+
 def _seed_page_for_candidate(*, candidate: PromotionCandidate, target_path: Path) -> str:
-    title = target_path.stem.replace("-", " ").title()
+    title = _title_for_target(target_path)
     return "\n".join(
         [
             "---",
@@ -280,6 +392,14 @@ def _safe_target_path(*, wiki_root: Path, target: str) -> Path | None:
 def _preflight_conflict_reason(*, operation: WikiPatchOperation, target_path: Path) -> str | None:
     if operation.operation == "create_page" and target_path.exists():
         return "conflict: create_page target already exists"
+    if operation.operation == "replace_page":
+        expected_hash = operation.diff.get("base_sha256", "")
+        if not expected_hash:
+            return "conflict: replace_page missing base hash"
+        current_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+        if _sha256(current_text) != expected_hash:
+            return "conflict: current page hash differs from proposal base"
+        return None
     if operation.operation not in {"insert_claim_block", "create_page"}:
         return None
     expected_before = operation.diff.get("before", "")
@@ -302,7 +422,9 @@ def _apply_operation(*, operation: WikiPatchOperation, target_path: Path) -> Non
         return
 
     existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-    if operation.operation in {"insert_claim_block", "create_page"}:
+    if operation.operation == "replace_page":
+        updated = after
+    elif operation.operation in {"insert_claim_block", "create_page"}:
         updated = _replace_or_append_claim_block(markdown=existing, claim_block=after)
     elif operation.operation in {"append_section", "append_managed_section"}:
         updated = _append_to_section(
@@ -314,6 +436,24 @@ def _apply_operation(*, operation: WikiPatchOperation, target_path: Path) -> Non
         return
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(updated, encoding="utf-8")
+
+
+def _write_policy_rejection_reason(*, proposal: WikiPatchProposal, operation: WikiPatchOperation) -> str | None:
+    if operation.operation == "replace_page" and proposal.metadata.get("write_mode") != "flexible":
+        return "replace_page requires flexible write metadata"
+    if not _requires_flexible_write_policy(proposal=proposal, operation=operation):
+        return None
+    if not operation.evidence:
+        return "flexible write requires evidence"
+    if proposal.metadata.get("judge_verdict") != "approved":
+        return "flexible write requires approved judge verdict"
+    return None
+
+
+def _requires_flexible_write_policy(*, proposal: WikiPatchProposal, operation: WikiPatchOperation) -> bool:
+    if operation.operation == "replace_page":
+        return True
+    return proposal.metadata.get("write_mode") == "flexible" and operation.operation == "create_page"
 
 
 

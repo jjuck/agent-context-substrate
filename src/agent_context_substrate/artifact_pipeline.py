@@ -155,6 +155,7 @@ def export_wiki_patch_proposal(
     promotion_file: Path,
     paths: HarnessPaths,
     wiki_root: Path | None = None,
+    write_mode: str = "managed",
 ) -> tuple[Path, Path, WikiPatchProposal]:
     candidates = load_promotion_candidates(promotion_file)
     packet_id = packet_id_from_promotion_file(promotion_file, candidates)
@@ -162,6 +163,7 @@ def export_wiki_patch_proposal(
         packet_id=packet_id,
         candidates=candidates,
         wiki_root=wiki_root or paths.wiki_root,
+        write_mode=write_mode,
     )
     wiki_patches_dir = paths.project_root / "data" / "wiki_patches"
     wiki_patches_dir.mkdir(parents=True, exist_ok=True)

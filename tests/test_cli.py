@@ -1273,6 +1273,62 @@ def test_cli_plan_wiki_patches_writes_json_and_markdown_from_promotion_file(tmp_
     assert "# Wiki Patch Proposal: packet-1" in patch_md_path.read_text(encoding="utf-8")
 
 
+def test_cli_plan_wiki_patches_can_emit_flexible_page_revisions(tmp_path, monkeypatch, capsys) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    project_root.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("WIKI_PATH", str(wiki_root))
+    _write(wiki_root / "concepts" / "summarization.md", "# Summarization\n\nExisting prose.\n")
+    promotion_file = project_root / "data" / "promotions" / "packet-1.json"
+    _write(
+        promotion_file,
+        json.dumps(
+            [
+                {
+                    "candidate_id": "packet-1-candidate-1",
+                    "packet_id": "packet-1",
+                    "kind": "concept_update",
+                    "target_page": "summarization",
+                    "reason": "Flexible maintainer revision.",
+                    "evidence": ["claim:packet-1-claim-1"],
+                    "proposed_change": "LLM wiki writes should use rubric-guided prose.",
+                    "proposed_action": "update_existing",
+                    "confidence": 0.8,
+                    "status": "pending",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+    )
+
+    exit_code = main(
+        [
+            "plan-wiki-patches",
+            "--promotion-file",
+            str(promotion_file),
+            "--write-mode",
+            "flexible",
+            "--project-root",
+            str(project_root),
+            "--wiki-root",
+            str(wiki_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    patch_json_path = project_root / "data" / "wiki_patches" / "packet-1.json"
+    proposal = json.loads(patch_json_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert str(patch_json_path) in captured.out
+    assert proposal["metadata"]["write_mode"] == "flexible"
+    assert proposal["metadata"]["judge_verdict"] == "not_requested"
+    assert proposal["operations"][0]["operation"] == "replace_page"
+    assert proposal["operations"][0]["diff"]["base_sha256"]
+    assert "rubric-guided prose" in proposal["operations"][0]["diff"]["after"]
+
+
 def test_cli_list_promotions_prints_queue_summary(tmp_path, monkeypatch, capsys) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -2062,10 +2118,10 @@ def test_cli_promote_packet_query_and_unit_concept_from_packet_json(tmp_path, mo
     query_markdown = query_path.read_text(encoding="utf-8")
     concept_markdown = concept_path.read_text(encoding="utf-8")
 
-    assert "## Provenance" in query_markdown
+    assert "## Evidence and Provenance" in query_markdown
     assert "[[context-packet]]" in query_markdown
     assert "hermes-session:session-1#messages=1,2" in query_markdown
-    assert "## Evidence" in concept_markdown
+    assert "## Evidence and Provenance" in concept_markdown
     assert "[[hierarchical-summaries]]" in concept_markdown
     assert "Bootstrap project scaffold" in concept_markdown
 
@@ -2168,11 +2224,11 @@ def test_cli_promote_packet_plan_and_unit_architecture_from_packet_json(tmp_path
     architecture_markdown = architecture_path.read_text(encoding="utf-8")
 
     assert "type: plan" in plan_markdown
-    assert "## Proposed Steps" in plan_markdown
+    assert "## Current Understanding" in plan_markdown
     assert "Resume harness work" in plan_markdown
     assert "type: architecture" in architecture_markdown
-    assert "## Goal" in architecture_markdown
-    assert "## Key Artifacts" in architecture_markdown
+    assert "## Current Understanding" in architecture_markdown
+    assert "## Evidence and Provenance" in architecture_markdown
 
 
 def test_cli_promotion_commands_auto_register_index_and_log(tmp_path, monkeypatch, capsys) -> None:
@@ -2527,16 +2583,16 @@ Links to [[agent-context-substrate]].
     architecture_markdown = architecture_path.read_text(encoding="utf-8")
     lint_payload = json.loads(lint_json_path.read_text(encoding="utf-8"))
 
-    assert "## Provenance" in query_markdown
+    assert "## Evidence and Provenance" in query_markdown
     assert "[[context-packet]]" in query_markdown
-    assert "## Source Unit" in concept_markdown
+    assert "## Current Understanding" in concept_markdown
     assert concept_markdown.count("Bootstrap project scaffold") >= 1
     assert "type: plan" in plan_markdown
-    assert "## Proposed Steps" in plan_markdown
+    assert "## Current Understanding" in plan_markdown
     assert "[[context-packet]]" in plan_markdown
     assert "type: architecture" in architecture_markdown
-    assert "## Goal" in architecture_markdown
-    assert "## Key Artifacts" in architecture_markdown
+    assert "## Current Understanding" in architecture_markdown
+    assert "## Evidence and Provenance" in architecture_markdown
     assert "[[hierarchical-summaries]]" in architecture_markdown
     assert lint_payload["broken_wikilinks"] == []
     assert lint_payload["missing_provenance_pages"] == []

@@ -24,7 +24,7 @@ def handle_setup_codex_command(*, args: Any) -> int:
         project_root=args.project_root,
         wiki_root=args.wiki_root,
         personal_marketplace_root=args.personal_marketplace_root,
-        install_user_hook=not args.no_user_hook,
+        install_user_hook=bool(args.user_hook_fallback and not args.no_user_hook),
         install_marketplace=not args.no_marketplace,
         overwrite=not args.no_overwrite,
         dry_run=args.dry_run,

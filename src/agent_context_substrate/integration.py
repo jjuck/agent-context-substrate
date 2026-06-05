@@ -450,9 +450,27 @@ def _summary_artifact_paths(summary_artifacts: SummaryArtifactResult | None) -> 
         "summary_unit_path": str(summary_artifacts.unit_path),
         "summary_evidence_path": str(summary_artifacts.evidence_path),
     }
+    artifact_paths.update(_summary_metadata_artifact_paths(summary_artifacts.micro_path, prefix="summary_micro"))
+    artifact_paths.update(_summary_metadata_artifact_paths(summary_artifacts.unit_path, prefix="summary_unit"))
     if summary_artifacts.judge_path is not None:
         artifact_paths["summary_judge_path"] = str(summary_artifacts.judge_path)
     return artifact_paths
+
+
+def _summary_metadata_artifact_paths(path: Path, *, prefix: str) -> dict[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key in ["mode", "fallback_from", "fallback_reason"]:
+        value = metadata.get(key)
+        if value:
+            result[f"{prefix}_{key}"] = str(value)
+    return result
 
 
 def _build_base_artifact_paths(

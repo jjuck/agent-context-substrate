@@ -187,6 +187,44 @@ def _render_micro_evidence(summary_item: MicroSummary) -> str:
     return f"- `{summary_item.micro_id}`: {' | '.join(parts)}{file_suffix}"
 
 
+def _render_rubric_body(
+    *,
+    title: str,
+    summary: str,
+    understanding: list[str],
+    evidence: list[str],
+    related_links: list[str],
+    open_questions: list[str],
+) -> list[str]:
+    body_lines = [
+        f"# {title}",
+        "",
+        "## Current Understanding",
+        summary,
+    ]
+    body_lines.extend(_prefixed_lines(understanding))
+
+    if evidence:
+        body_lines.extend(["", "## Evidence and Provenance"])
+        body_lines.extend(evidence)
+
+    if related_links:
+        body_lines.extend(["", "## Connections"])
+        for link in related_links:
+            body_lines.append(f"- {link}")
+
+    if open_questions:
+        body_lines.extend(["", "## Open Questions"])
+        for question in open_questions:
+            body_lines.append(f"- {question}")
+
+    return body_lines
+
+
+def _prefixed_lines(lines: list[str]) -> list[str]:
+    return [line if line.startswith(("- ", "- [ ] ")) else f"- {line}" for line in lines if line]
+
+
 def promote_context_packet_to_query(
     *,
     packet: ContextPacket,
@@ -203,38 +241,27 @@ def promote_context_packet_to_query(
         _format_provenance_reference(pointer) for pointer in packet.raw_pointers
     )
 
-    body_lines: list[str] = [
-        f"# {title}",
-        "",
-        "## Summary",
-        summary,
-        "",
-        "## Macro Context",
-        packet.macro_context,
-    ]
+    understanding = [f"Task: {packet.task_title}", f"Context: {packet.macro_context}"]
 
     if packet.critical_files:
-        body_lines.extend(["", "## Critical Files"])
         for file_path in packet.critical_files:
-            body_lines.append(f"- `{file_path}`")
+            understanding.append(f"Relevant file: `{file_path}`")
 
-    if related_links:
-        body_lines.extend(["", "## Related Pages"])
-        for link in related_links:
-            body_lines.append(f"- {link}")
-
-    if packet.open_questions:
-        body_lines.extend(["", "## Open Questions"])
-        for question in packet.open_questions:
-            body_lines.append(f"- {question}")
-
-    body_lines.extend(["", "## Provenance", f"- Context packet: `{packet.packet_id}`"])
+    evidence = [f"- Context packet: `{packet.packet_id}`"]
     for pointer in packet.raw_pointers:
-        body_lines.append(
+        evidence.append(
             "- "
             f"`{_format_provenance_reference(pointer)}`"
             f" ({pointer.source}; title={pointer.title or 'unknown'})"
         )
+    body_lines = _render_rubric_body(
+        title=title,
+        summary=summary,
+        understanding=understanding,
+        evidence=evidence,
+        related_links=related_links,
+        open_questions=list(packet.open_questions),
+    )
 
     output_path = _write_markdown_page(
         root_dir=paths.wiki_root / "queries",
@@ -265,46 +292,26 @@ def promote_context_packet_to_plan(
         _format_provenance_reference(pointer) for pointer in packet.raw_pointers
     )
 
-    body_lines: list[str] = [
-        f"# {title}",
-        "",
-        "## Summary",
-        summary,
-        "",
-        "## Objective",
-        packet.task_title,
-        "",
-        "## Macro Context",
-        packet.macro_context,
-    ]
-
-    if packet.unit_summaries:
-        body_lines.extend(["", "## Proposed Steps"])
-        for unit in packet.unit_summaries:
-            body_lines.append(f"- [ ] **{unit.title}** — {unit.goal}")
-
-    if packet.critical_files:
-        body_lines.extend(["", "## Critical Files"])
-        for file_path in packet.critical_files:
-            body_lines.append(f"- `{file_path}`")
-
-    if related_links:
-        body_lines.extend(["", "## Related Pages"])
-        for link in related_links:
-            body_lines.append(f"- {link}")
-
-    if packet.open_questions:
-        body_lines.extend(["", "## Open Questions"])
-        for question in packet.open_questions:
-            body_lines.append(f"- {question}")
-
-    body_lines.extend(["", "## Provenance", f"- Context packet: `{packet.packet_id}`"])
+    understanding = [f"Objective: {packet.task_title}", f"Context: {packet.macro_context}"]
+    for unit in packet.unit_summaries:
+        understanding.append(f"- [ ] **{unit.title}** - {unit.goal}")
+    for file_path in packet.critical_files:
+        understanding.append(f"Relevant file: `{file_path}`")
+    evidence = [f"- Context packet: `{packet.packet_id}`"]
     for pointer in packet.raw_pointers:
-        body_lines.append(
+        evidence.append(
             "- "
             f"`{_format_provenance_reference(pointer)}`"
             f" ({pointer.source}; title={pointer.title or 'unknown'})"
         )
+    body_lines = _render_rubric_body(
+        title=title,
+        summary=summary,
+        understanding=understanding,
+        evidence=evidence,
+        related_links=related_links,
+        open_questions=list(packet.open_questions),
+    )
 
     output_path = _write_markdown_page(
         root_dir=paths.wiki_root / "plans",
@@ -336,54 +343,30 @@ def promote_unit_summary_to_concept(
     )
     source_refs = _unit_source_refs(unit_summary, relevant_micro_summaries)
 
-    body_lines: list[str] = [
-        f"# {title}",
-        "",
-        "## Summary",
-        summary,
-        "",
-        "## Source Unit",
-        unit_summary.title,
-        "",
-        "## Goal",
-        unit_summary.goal,
-    ]
-
-    if unit_summary.decisions:
-        body_lines.extend(["", "## Decisions"])
-        for decision in unit_summary.decisions:
-            body_lines.append(f"- {decision}")
-
-    if unit_summary.progress:
-        body_lines.extend(["", "## Progress"])
-        for item in unit_summary.progress:
-            body_lines.append(f"- {item}")
-
-    if relevant_micro_summaries:
-        body_lines.extend(["", "## Evidence"])
-        for summary_item in relevant_micro_summaries:
-            files = ", ".join(f"`{file_path}`" for file_path in summary_item.files)
-            file_suffix = f" | files: {files}" if files else ""
-            body_lines.append(
-                f"- `{summary_item.micro_id}`: {summary_item.summary}{file_suffix}"
-            )
-
-    if related_links:
-        body_lines.extend(["", "## Related Pages"])
-        for link in related_links:
-            body_lines.append(f"- {link}")
-
-    body_lines.extend(["", "## Provenance"])
+    understanding = [f"Source unit: {unit_summary.title}", f"Goal: {unit_summary.goal}"]
+    for decision in unit_summary.decisions:
+        understanding.append(f"Decision: {decision}")
+    for item in unit_summary.progress:
+        understanding.append(f"Progress: {item}")
+    evidence: list[str] = []
+    for summary_item in relevant_micro_summaries:
+        files = ", ".join(f"`{file_path}`" for file_path in summary_item.files)
+        file_suffix = f" | files: {files}" if files else ""
+        evidence.append(f"- `{summary_item.micro_id}`: {summary_item.summary}{file_suffix}")
     if unit_summary.provenance is not None:
-        body_lines.append(
-            f"- Unit summary: `{_format_provenance_reference(unit_summary.provenance)}`"
-        )
+        evidence.append(f"- Unit summary: `{_format_provenance_reference(unit_summary.provenance)}`")
     for summary_item in relevant_micro_summaries:
         if summary_item.provenance is None:
             continue
-        body_lines.append(
-            f"- Micro `{summary_item.micro_id}`: `{_format_provenance_reference(summary_item.provenance)}`"
-        )
+        evidence.append(f"- Micro `{summary_item.micro_id}`: `{_format_provenance_reference(summary_item.provenance)}`")
+    body_lines = _render_rubric_body(
+        title=title,
+        summary=summary,
+        understanding=understanding,
+        evidence=evidence,
+        related_links=related_links,
+        open_questions=list(unit_summary.open_questions),
+    )
 
     output_path = _write_markdown_page(
         root_dir=paths.wiki_root / "concepts",
@@ -420,50 +403,26 @@ def promote_unit_summary_to_architecture(
     source_refs = _unit_source_refs(unit_summary, relevant_micro_summaries)
     key_artifacts = _collect_files_from_micros(relevant_micro_summaries)
 
-    body_lines: list[str] = [
-        f"# {title}",
-        "",
-        "## Summary",
-        summary,
-        "",
-        "## Scope",
-        unit_summary.title,
-        "",
-        "## Goal",
-        unit_summary.goal,
-    ]
-
-    if unit_summary.decisions:
-        body_lines.extend(["", "## Architectural Decisions"])
-        for decision in unit_summary.decisions:
-            body_lines.append(f"- {decision}")
-
-    if key_artifacts:
-        body_lines.extend(["", "## Key Artifacts"])
-        for file_path in key_artifacts:
-            body_lines.append(f"- `{file_path}`")
-
-    if relevant_micro_summaries:
-        body_lines.extend(["", "## Evidence"])
-        for summary_item in relevant_micro_summaries:
-            body_lines.append(_render_micro_evidence(summary_item))
-
-    if related_links:
-        body_lines.extend(["", "## Related Pages"])
-        for link in related_links:
-            body_lines.append(f"- {link}")
-
-    body_lines.extend(["", "## Provenance"])
+    understanding = [f"Scope: {unit_summary.title}", f"Goal: {unit_summary.goal}"]
+    for decision in unit_summary.decisions:
+        understanding.append(f"Decision: {decision}")
+    for file_path in key_artifacts:
+        understanding.append(f"Artifact: `{file_path}`")
+    evidence = [_render_micro_evidence(summary_item) for summary_item in relevant_micro_summaries]
     if unit_summary.provenance is not None:
-        body_lines.append(
-            f"- Unit summary: `{_format_provenance_reference(unit_summary.provenance)}`"
-        )
+        evidence.append(f"- Unit summary: `{_format_provenance_reference(unit_summary.provenance)}`")
     for summary_item in relevant_micro_summaries:
         if summary_item.provenance is None:
             continue
-        body_lines.append(
-            f"- Micro `{summary_item.micro_id}`: `{_format_provenance_reference(summary_item.provenance)}`"
-        )
+        evidence.append(f"- Micro `{summary_item.micro_id}`: `{_format_provenance_reference(summary_item.provenance)}`")
+    body_lines = _render_rubric_body(
+        title=title,
+        summary=summary,
+        understanding=understanding,
+        evidence=evidence,
+        related_links=related_links,
+        open_questions=list(unit_summary.open_questions),
+    )
 
     output_path = _write_markdown_page(
         root_dir=paths.wiki_root / "architectures",

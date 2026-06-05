@@ -18,6 +18,7 @@ def handle_plan_wiki_patches_command(
         promotion_file=Path(args.promotion_file).expanduser(),
         paths=paths,
         wiki_root=Path(args.wiki_root).expanduser() if args.wiki_root else None,
+        write_mode=args.write_mode,
     )
     print(patch_json_path)
     print(patch_markdown_path)

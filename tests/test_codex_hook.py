@@ -85,6 +85,66 @@ def test_stop_hook_decision_skips_non_project_cwd(tmp_path: Path) -> None:
     assert decision.skip_reason == "cwd outside configured project_root"
 
 
+def test_stop_hook_decision_passes_summary_config_to_codex_finalize(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    codex_cli = tmp_path / "Codex" / "bin" / "codex.exe"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "summary_mode": "auto",
+                "summary_cache": True,
+                "summary_model": "gpt-5.4",
+                "summary_budget": "balanced",
+                "codex_cli_command": str(codex_cli),
+                "llm_redact": False,
+                "llm_max_input_chars": 2048,
+                "llm_allow_code_snippets": True,
+                "llm_path_policy": "allow",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is True
+    assert "--summary-mode" in decision.command
+    assert decision.command[decision.command.index("--summary-mode") + 1] == "auto"
+    assert "--summary-cache" in decision.command
+    assert decision.command[decision.command.index("--summary-cache") + 1] == "on"
+    assert "--summary-model" in decision.command
+    assert decision.command[decision.command.index("--summary-model") + 1] == "gpt-5.4"
+    assert "--summary-budget" in decision.command
+    assert decision.command[decision.command.index("--summary-budget") + 1] == "balanced"
+    assert "--codex-cli-command" in decision.command
+    assert decision.command[decision.command.index("--codex-cli-command") + 1] == str(codex_cli)
+    assert "--llm-redact" in decision.command
+    assert decision.command[decision.command.index("--llm-redact") + 1] == "off"
+    assert "--llm-max-input-chars" in decision.command
+    assert decision.command[decision.command.index("--llm-max-input-chars") + 1] == "2048"
+    assert "--llm-allow-code-snippets" in decision.command
+    assert decision.command[decision.command.index("--llm-allow-code-snippets") + 1] == "on"
+    assert "--llm-path-policy" in decision.command
+    assert decision.command[decision.command.index("--llm-path-policy") + 1] == "allow"
+    assert "False" not in decision.command
+    assert "True" not in decision.command
+
+
 def test_stop_hook_runner_never_blocks_codex_on_finalize_failure(tmp_path: Path) -> None:
     plugin_root = tmp_path / "plugin"
     project_root = tmp_path / "project"
@@ -163,6 +223,11 @@ def test_packaged_stop_hook_script_accepts_utf8_stdin_on_windows_paths(tmp_path:
                 "python_executable": sys.executable,
                 "python_path_entries": [str(Path(__file__).resolve().parents[1] / "src")],
                 "hook_timeout_seconds": 60,
+                "summary_mode": "auto",
+                "summary_cache": True,
+                "codex_cli_command": str(tmp_path / "missing-codex.exe"),
+                "llm_redact": False,
+                "llm_allow_code_snippets": True,
             },
             ensure_ascii=False,
         ),
@@ -211,3 +276,7 @@ def test_packaged_stop_hook_script_accepts_utf8_stdin_on_windows_paths(tmp_path:
     assert state["thread-utf8"]["rollout_path"] == str(rollout_path)
     assert events[-1]["status"] == "finalized"
     assert events[-1]["session_id"] == "thread-utf8"
+    summary_path = project_root / "data" / "exports" / "summaries" / "thread-utf8-micro-v2.json"
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary_payload["metadata"]["fallback_from"] == "auto"
+    assert summary_payload["metadata"]["fallback_reason"] == "codex_cli_unavailable"

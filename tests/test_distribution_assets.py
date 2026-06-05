@@ -86,6 +86,8 @@ def test_codex_plugin_bundles_default_stop_hook_without_manifest_hooks() -> None
     assert stop_handlers[0]["type"] == "command"
     assert "codex_stop_finalize.py" in stop_handlers[0]["command"]
     assert "commandWindows" in stop_handlers[0]
+    assert stop_handlers[0]["commandWindows"].startswith("cmd /c ")
+    assert "%PLUGIN_ROOT%" in stop_handlers[0]["commandWindows"]
 
 
 def test_user_plugin_registers_single_wiki_language_command() -> None:

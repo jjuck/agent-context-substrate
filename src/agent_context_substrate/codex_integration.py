@@ -16,13 +16,15 @@ from .codex_source import (
     resolve_codex_home,
 )
 from .context_packet import build_context_packet, export_context_packet
-from .integration import IntegrationResult, _lint_issue_count
+from .integration import IntegrationResult, _lint_issue_count, _summary_artifact_paths
 from .ledger import SessionLedger
 from .lint import export_lint_report, lint_wiki
 from .naming import derive_goal, derive_task_title, derive_unit_title
 from .paths import HarnessPaths
 from .recovery import build_recovery_brief
 from .summarizer import build_micro_summary, build_unit_summary
+from .summarizer_backends import LLMInputSafetyOptions
+from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,14 @@ def run_codex_thread_finalize_pipeline(
     goal: str | None = None,
     related_pages: list[str] | None = None,
     max_tool_output_chars: int = 12_000,
+    summary_mode: str | None = None,
+    summarizer_command: str | None = None,
+    summary_model: str | None = None,
+    summary_budget: str | None = None,
+    summary_cache: bool = False,
+    codex_cli_command: Path | str | None = None,
+    codex_timeout_seconds: int | None = None,
+    llm_safety: LLMInputSafetyOptions | None = None,
 ) -> IntegrationResult:
     related_pages = list(related_pages or [])
     codex_home_path = resolve_codex_home(codex_home)
@@ -146,6 +156,30 @@ def run_codex_thread_finalize_pipeline(
                 micro_summaries=[micro_summary],
             )
             packet_json_path, packet_markdown_path = export_context_packet(packet=packet, paths=paths)
+            summary_artifacts: SummaryArtifactResult | None = None
+            if summary_mode:
+                summary_artifacts = build_v2_summary_artifacts(
+                    session_bundle=session_bundle,
+                    paths=paths,
+                    options=SummaryOptions(
+                        session_id=thread_id,
+                        packet_id=packet_id,
+                        unit_title=resolved_unit_title,
+                        goal=resolved_goal,
+                        related_pages=related_pages,
+                        summary_mode=summary_mode,
+                        summarizer_command=summarizer_command,
+                        routing_hints=_build_codex_summary_routing_hints(
+                            summary_model=summary_model,
+                            summary_budget=summary_budget,
+                            codex_cli_command=codex_cli_command,
+                            codex_project_root=paths.project_root,
+                            codex_timeout_seconds=codex_timeout_seconds,
+                        ),
+                        summary_cache=summary_cache,
+                        llm_safety=llm_safety or LLMInputSafetyOptions(),
+                    ),
+                )
             lint_report = lint_wiki(paths)
             lint_json_path, lint_markdown_path = export_lint_report(
                 report=lint_report,
@@ -154,7 +188,7 @@ def run_codex_thread_finalize_pipeline(
             )
             artifact_paths = {
                 "promotion_mode": "packet-only",
-                "summary_mode": "",
+                "summary_mode": summary_mode or "",
                 "summary_judge_mode": "off",
                 "raw_export_path": str(raw_export_path),
                 "packet_json_path": str(packet_json_path),
@@ -162,6 +196,7 @@ def run_codex_thread_finalize_pipeline(
                 "lint_json_path": str(lint_json_path),
                 "lint_markdown_path": str(lint_markdown_path),
             }
+            artifact_paths.update(_summary_artifact_paths(summary_artifacts))
             partial_artifact_paths = dict(artifact_paths)
             lint_issue_count = _lint_issue_count(lint_report)
             ledger.mark_completed(
@@ -194,6 +229,9 @@ def run_codex_thread_finalize_pipeline(
                 recovery_json_path=recovery_brief.recovery_json_path,
                 lint_issue_count=lint_issue_count,
                 skipped=False,
+                summary_micro_path=summary_artifacts.micro_path if summary_artifacts is not None else None,
+                summary_unit_path=summary_artifacts.unit_path if summary_artifacts is not None else None,
+                summary_evidence_path=summary_artifacts.evidence_path if summary_artifacts is not None else None,
             )
         except Exception as exc:
             ledger.mark_failed(
@@ -213,6 +251,14 @@ def run_codex_watch_once(
     idle_seconds: int,
     state_path: Path | str | None = None,
     max_tool_output_chars: int = 12_000,
+    summary_mode: str | None = None,
+    summarizer_command: str | None = None,
+    summary_model: str | None = None,
+    summary_budget: str | None = None,
+    summary_cache: bool = False,
+    codex_cli_command: Path | str | None = None,
+    codex_timeout_seconds: int | None = None,
+    llm_safety: LLMInputSafetyOptions | None = None,
 ) -> CodexWatchResult:
     state = CodexWatcherState(state_path or default_codex_watcher_state_path(project_root))
     results: list[IntegrationResult] = []
@@ -225,6 +271,14 @@ def run_codex_watch_once(
             project_root=project_root,
             wiki_root=wiki_root,
             max_tool_output_chars=max_tool_output_chars,
+            summary_mode=summary_mode,
+            summarizer_command=summarizer_command,
+            summary_model=summary_model,
+            summary_budget=summary_budget,
+            summary_cache=summary_cache,
+            codex_cli_command=codex_cli_command,
+            codex_timeout_seconds=codex_timeout_seconds,
+            llm_safety=llm_safety,
         )
         if thread.fingerprint == fingerprint:
             state.mark_processed(thread, fingerprint=fingerprint)
@@ -242,6 +296,14 @@ def run_codex_watch_loop(
     idle_seconds: int,
     state_path: Path | str | None = None,
     max_tool_output_chars: int = 12_000,
+    summary_mode: str | None = None,
+    summarizer_command: str | None = None,
+    summary_model: str | None = None,
+    summary_budget: str | None = None,
+    summary_cache: bool = False,
+    codex_cli_command: Path | str | None = None,
+    codex_timeout_seconds: int | None = None,
+    llm_safety: LLMInputSafetyOptions | None = None,
 ) -> None:
     while True:
         run_codex_watch_once(
@@ -251,8 +313,36 @@ def run_codex_watch_loop(
             idle_seconds=idle_seconds,
             state_path=state_path,
             max_tool_output_chars=max_tool_output_chars,
+            summary_mode=summary_mode,
+            summarizer_command=summarizer_command,
+            summary_model=summary_model,
+            summary_budget=summary_budget,
+            summary_cache=summary_cache,
+            codex_cli_command=codex_cli_command,
+            codex_timeout_seconds=codex_timeout_seconds,
+            llm_safety=llm_safety,
         )
         time.sleep(interval_seconds)
+
+
+def _build_codex_summary_routing_hints(
+    *,
+    summary_model: str | None,
+    summary_budget: str | None,
+    codex_cli_command: Path | str | None,
+    codex_project_root: Path,
+    codex_timeout_seconds: int | None,
+) -> dict[str, object]:
+    hints: dict[str, object] = {"codex_project_root": str(codex_project_root)}
+    if summary_model:
+        hints["model"] = summary_model
+    if summary_budget:
+        hints["budget"] = summary_budget
+    if codex_cli_command:
+        hints["codex_cli_command"] = str(codex_cli_command)
+    if codex_timeout_seconds is not None:
+        hints["codex_timeout_seconds"] = codex_timeout_seconds
+    return hints
 
 
 @contextmanager

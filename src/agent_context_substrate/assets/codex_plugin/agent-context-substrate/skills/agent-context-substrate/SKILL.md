@@ -45,6 +45,14 @@ Finalize a specific thread:
 agent-context-substrate codex-finalize --thread-id THREAD_ID --project-root . --wiki-root "$WIKI_PATH"
 ```
 
+To opt into Codex-backed LLM summaries without ACS reading Codex tokens, use auto summary mode:
+
+```bash
+agent-context-substrate codex-finalize --thread-id THREAD_ID --project-root . --wiki-root "$WIKI_PATH" --summary-mode auto
+```
+
+`auto` tries `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks disabled, and inline bounded JSON input, then falls back to heuristic summaries when the CLI is unavailable or output validation fails.
+
 ## Retrieval
 
 Search durable knowledge:

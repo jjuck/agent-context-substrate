@@ -19,12 +19,25 @@ RoutingHintsCallback = Callable[..., dict[str, object]]
 LLMSafetyOptionsCallback = Callable[..., object]
 
 
-def build_summary_routing_hints(*, summary_model: str | None, summary_budget: str | None) -> dict[str, object]:
+def build_summary_routing_hints(
+    *,
+    summary_model: str | None,
+    summary_budget: str | None,
+    codex_cli_command: str | None = None,
+    codex_project_root: Path | str | None = None,
+    codex_timeout_seconds: int | None = None,
+) -> dict[str, object]:
     hints: dict[str, object] = {}
     if summary_model:
         hints["model"] = summary_model
     if summary_budget:
         hints["budget"] = summary_budget
+    if codex_cli_command:
+        hints["codex_cli_command"] = codex_cli_command
+    if codex_project_root is not None:
+        hints["codex_project_root"] = str(codex_project_root)
+    if codex_timeout_seconds is not None:
+        hints["codex_timeout_seconds"] = codex_timeout_seconds
     return hints
 
 
@@ -134,6 +147,17 @@ def handle_build_context_packet_command(
             routing_hints=summary_routing_hints(
                 summary_model=args.summary_model,
                 summary_budget=args.summary_budget,
+                codex_cli_command=(
+                    getattr(args, "codex_cli_command", None)
+                    if args.summary_mode in {"codex-cli", "auto"}
+                    else None
+                ),
+                codex_project_root=paths.project_root if args.summary_mode in {"codex-cli", "auto"} else None,
+                codex_timeout_seconds=(
+                    getattr(args, "codex_timeout_seconds", None)
+                    if args.summary_mode in {"codex-cli", "auto"}
+                    else None
+                ),
             ),
             summary_cache=args.summary_cache == "on",
             summary_judge_mode=getattr(args, "summary_judge_mode", "off"),

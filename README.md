@@ -68,7 +68,7 @@ Hermes state.db or Codex rollout JSONL
 | Planned adapter direction | Additional agents such as Claude Code, OpenCode, or Gemini can be added later; they are not packaged yet. |
 | Default output | `data/exports/`, `data/index/session_ledger.json` |
 | Default promotion mode | `packet-only` |
-| Optional summary modes | `heuristic`, `agent-llm`, `hybrid`, `custom-command` via `--summary-mode` |
+| Optional summary modes | `heuristic`, `agent-llm`, `hybrid`, `custom-command`, `codex-cli`, `auto` via `--summary-mode` |
 | Recommended wiki growth | atoms -> promotion candidates -> dry-run wiki patch proposals |
 | Legacy wiki promotion | Explicit `promotion_mode="full"` or `promote-*` CLI only |
 | Wiki role | Human-facing semantic Obsidian vault |
@@ -81,7 +81,7 @@ Hermes state.db or Codex rollout JSONL
 - Export one Codex thread from `~/.codex/state_5.sqlite` and rollout JSONL into raw JSON.
 - Build heuristic `MicroSummary`, `UnitSummary`, and `ContextPacket` artifacts.
 - Optionally export evidence bundles plus `MicroSummaryV2` / `UnitSummaryV2` artifacts with separated recovery, knowledge, and retrieval summaries.
-- Use pluggable summary backends: default heuristic, host Agent LLM, hybrid, or custom command.
+- Use pluggable summary backends: default heuristic, host Agent LLM, hybrid, custom command, or Codex CLI.
 - Extract claim atoms, propose promotion candidates, and plan reviewable wiki patches without touching Obsidian by default.
 - Generate compact recovery briefs for resume workflows.
 - Maintain a ledger for idempotency, stale-artifact rebuilds, retry budgets, and partial-failure diagnostics.
@@ -141,6 +141,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 
 The winget package IDs are `Python.Python.3.13`, `Git.Git`, and optional `Obsidian.Obsidian`.
 
+If plain `codex` resolves to an npm shim such as `%APPDATA%\npm\codex.ps1`, use the Windows app CLI direct path under `%LOCALAPPDATA%\OpenAI\Codex\bin` for hook review. `doctor-codex` reports both the PATH command and the recommended app CLI candidate when it can find one.
+
 After install:
 
 ```powershell
@@ -161,7 +163,7 @@ For an interactive path review:
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-Codex still requires one human hook review before non-managed command hooks run. Open Codex CLI, enter `/hooks`, and trust the `agent-context-substrate` Stop hook. This is separate from Full Access or approval-mode settings. See the full [Windows Codex app setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md), including a prompt that a fresh Codex thread can follow from the GitHub repo alone.
+Codex still requires one human hook review before non-managed command hooks run. Open Codex CLI, enter `/hooks`, or use the startup `Hooks need review` modal. Review the ACS command, then choose `Trust all and continue` or the equivalent trust action. This is separate from Full Access or approval-mode settings. A real smoke test should show `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`, append `status=finalized` to `data\index\codex_hook_events.jsonl`, and produce a `search-knowledge --mode recovery` hit. See the full [Windows Codex app setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md), including a prompt that a fresh Codex thread can follow from the GitHub repo alone.
 
 ## Install into Hermes
 
@@ -237,7 +239,6 @@ cd '<PROJECT_ROOT>'
   --codex-home ~/.codex \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
-  --install-user-hook \
   --overwrite
 
 .venv/bin/agent-context-substrate codex-status --codex-home ~/.codex
@@ -249,6 +250,8 @@ cd '<PROJECT_ROOT>'
 ```
 
 Codex still requires one hook review before non-managed command hooks run. Open Codex CLI, enter `/hooks`, and trust the `agent-context-substrate` Stop hook. If hook review is not available yet, run watcher fallback explicitly:
+
+Do not install both the plugin hook and `~/.codex/hooks.json` fallback by default. If a specific Codex runtime cannot load plugin-bundled hooks, opt in to the user hook fallback with `setup-codex --user-hook-fallback` or lower-level `install-codex-plugin --install-user-hook`.
 
 ```bash
 .venv/bin/agent-context-substrate codex-watch \
@@ -411,8 +414,39 @@ Optional modes:
 | `agent-llm` | Uses the host Agent's LLM routing layer when provided by the integration. |
 | `hybrid` | Heuristic evidence spine plus Agent LLM semantic interpretation. |
 | `custom-command` | Sends JSON to an external command and expects strict JSON back. |
+| `codex-cli` | Calls `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks disabled, inline bounded JSON input, JSONL output, and strict schema validation. |
+| `auto` | Uses `codex-cli` when a usable Codex CLI is detected, otherwise writes heuristic summaries with fallback metadata. |
 
-Note: standalone CLI runs `heuristic` and `custom-command` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
+Standalone CLI runs `heuristic`, `custom-command`, `codex-cli`, and `auto` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
+
+Codex users can opt into LLM summaries without ACS reading Codex OAuth tokens or requiring an OpenAI Platform API key:
+
+```bash
+agent-context-substrate build-context-packet \
+  --session-id '<SESSION_ID>' \
+  --packet-id '<PACKET_ID>' \
+  --task-title 'Resume context-substrate work' \
+  --macro-context 'Recover the main context without replaying the full session.' \
+  --unit-title 'Inspect packet-only finalize policy' \
+  --goal 'Capture the current implementation state and next actions.' \
+  --summary-mode auto \
+  --summary-cache on \
+  --project-root '<PROJECT_ROOT>'
+```
+
+For Codex Stop-hook installs, enable the same behavior in the installed plugin config:
+
+```powershell
+agent-context-substrate config-codex set --key summary_mode --value auto --project-root "<PROJECT_ROOT>"
+```
+
+| Option | When to use | Trade-off |
+| --- | --- | --- |
+| `codex-cli` / `auto` | Codex users already signed in through the Codex CLI/app. | Subprocess UX, but ACS never stores Codex credentials and falls back to heuristic on CLI/validation failure. |
+| `custom-command` | You already have a local summarizer command or API wrapper. | Most flexible, but you own auth, safety, schema output, and cost behavior. |
+| OpenAI Platform API key | CI or non-Codex environments that should use explicit API billing. | Simple automation auth, but separate key provisioning and API usage cost. |
+| Direct Codex OAuth implementation | Not recommended. | Would make ACS responsible for token storage, refresh, revocation, and private endpoint stability. |
+| Codex Python SDK | Promising follow-up for app-server workflows. | Current implementation keeps `codex exec` as the MVP because its sandbox, approval, JSONL, and schema flags are explicit and script-friendly. |
 
 Optional summary evaluation is separate from summary generation:
 

@@ -22,7 +22,7 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_count_lint_issues_includes_human_quality_and_internal_graph_fields() -> None:
+def test_count_lint_issues_separates_blocking_issues_from_advisories() -> None:
     report = WikiLintReport(
         wiki_root="wiki",
         checked_pages=[],
@@ -51,7 +51,11 @@ def test_count_lint_issues_includes_human_quality_and_internal_graph_fields() ->
         insufficient_related_links_pages=["isolated.md"],
     )
 
-    assert count_lint_issues(report) == 7
+    payload = report.to_dict()
+
+    assert count_lint_issues(report) == 4
+    assert payload["blocking_issue_count"] == 4
+    assert payload["advisory_count"] == 3
 
 
 def test_lint_wiki_detects_missing_provenance_orphans_broken_links_and_index_gaps(tmp_path, monkeypatch) -> None:

@@ -89,7 +89,7 @@ ContextPacket
 | 장기 확장 방향 | Claude Code, OpenCode, Gemini 등은 추후 adapter로 추가 가능하나 아직 packaged support는 없음 |
 | 기본 산출물 | `data/exports/`, `data/index/session_ledger.json` |
 | 기본 promotion mode | `packet-only` |
-| 선택 요약 모드 | `heuristic`, `agent-llm`, `hybrid`, `custom-command` |
+| 선택 요약 모드 | `heuristic`, `agent-llm`, `hybrid`, `custom-command`, `codex-cli`, `auto` |
 | 권장 wiki 성장 경로 | atoms -> promotion candidates -> dry-run wiki patch proposals |
 | Obsidian 역할 | 사람이 읽는 semantic wiki |
 | 지원 wiki 언어 | `ko`, `en` |
@@ -165,6 +165,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
+plain `codex`가 `%APPDATA%\npm\codex.ps1` 같은 npm shim을 가리키면 Windows Codex 앱 CLI가 아닐 수 있습니다. `doctor-codex`와 setup script는 `%LOCALAPPDATA%\OpenAI\Codex\bin` 아래의 direct app CLI 후보를 보여주며, `/hooks` review에는 그 경로를 쓰는 편이 안전합니다.
+
 설치 후 확인:
 
 ```powershell
@@ -185,7 +187,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-마지막으로 Codex CLI에서 `/hooks`를 열고 `agent-context-substrate` Stop hook을 한 번 trust해야 자동 finalize가 실행됩니다. 이 단계는 `전체권한` 설정과 별개이며, installer가 몰래 우회하지 않습니다.
+마지막으로 Codex CLI에서 `/hooks`를 열거나 시작 시 `Hooks need review` modal이 뜨면 hook command를 확인한 뒤 `Trust all and continue` 또는 해당 trust 동작을 선택해야 자동 finalize가 실행됩니다. 이 단계는 `전체권한` 설정과 별개이며, installer가 몰래 우회하지 않습니다. 기본 설치는 plugin Stop hook 하나만 활성화하고, `~\.codex\hooks.json` fallback은 중복 Stop hook을 피하기 위해 기본으로 설치하지 않습니다. plugin hook을 쓸 수 없는 런타임에서만 `--user-hook-fallback`을 명시하세요.
+
+실제 smoke에서는 짧은 Codex thread 종료 후 `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`가 보이고, `data\index\codex_hook_events.jsonl`에 `status=finalized`가 남으며, `search-knowledge --mode recovery`로 방금 만든 recovery artifact가 검색되어야 합니다.
 
 순정 Codex에게 GitHub repo만 주고 설치를 맡기려면 [Windows 상세 가이드의 프롬프트](./docs/WINDOWS_CODEX_APP_SETUP.ko.md#5-순정-codex에게-맡기는-프롬프트)를 그대로 붙여넣으세요.
 
@@ -269,7 +273,6 @@ cd '<PROJECT_ROOT>'
   --codex-home ~/.codex \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
-  --install-user-hook \
   --overwrite
 
 .venv/bin/agent-context-substrate codex-status --codex-home ~/.codex
@@ -281,6 +284,8 @@ cd '<PROJECT_ROOT>'
 ```
 
 Codex의 non-managed hook은 한 번 review/trust 해야 실행됩니다. Codex CLI에서 `/hooks`를 열고 `agent-context-substrate` Stop hook을 trust하세요. Hook 승인이 안 되었거나 Stop event를 놓친 환경에서는 watcher fallback을 명시적으로 실행할 수 있습니다.
+
+기본으로 plugin hook과 `~/.codex/hooks.json` fallback을 함께 설치하지 마세요. 특정 Codex 런타임에서 plugin-bundled hook을 읽지 못할 때만 `setup-codex --user-hook-fallback` 또는 lower-level `install-codex-plugin --install-user-hook`을 사용하세요.
 
 ```bash
 .venv/bin/agent-context-substrate codex-watch \
@@ -483,7 +488,21 @@ agent-context-substrate plan-wiki-patches \
 
 검토 후 실제 반영할 때만 `apply-wiki-patch --apply`를 사용합니다.
 
-참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`과 `custom-command`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다.
+참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`, `custom-command`, `codex-cli`, `auto`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다. `auto`는 사용 가능한 Codex CLI가 있으면 `codex exec`를 read-only, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks-disabled, inline bounded JSON input으로 호출하고, 실패하거나 JSON/lint 검증을 통과하지 못하면 heuristic summary로 fallback metadata를 남깁니다.
+
+Codex 사용자는 ACS가 Codex OAuth token을 직접 읽거나 저장하지 않아도 LLM summary를 켤 수 있습니다.
+
+```powershell
+agent-context-substrate config-codex set --key summary_mode --value auto --project-root "<PROJECT_ROOT>"
+```
+
+| 선택지 | 사용 시점 | 주의점 |
+| --- | --- | --- |
+| `codex-cli` / `auto` | Codex CLI/App에 이미 로그인되어 있는 로컬 Codex 사용자 | subprocess 경로지만 ACS가 credential을 저장하지 않고 실패 시 heuristic으로 degrade |
+| `custom-command` | 별도 local summarizer나 API wrapper를 이미 갖고 있을 때 | 인증, 비용, schema 출력, 안전장치는 command 작성자가 책임짐 |
+| OpenAI Platform API key | CI나 Codex 밖 자동화에서 명시적 API 과금이 필요할 때 | 별도 key 발급과 사용량 비용이 필요 |
+| 직접 Codex OAuth 구현 | 권장하지 않음 | token 저장/갱신/폐기/endpoint 안정성을 ACS가 떠안게 됨 |
+| Codex Python SDK | app-server 기반 후속 실험 후보 | 이번 MVP는 sandbox/approval/JSONL/schema flag가 명확한 `codex exec`를 우선 사용 |
 
 ## 개인정보와 안전
 

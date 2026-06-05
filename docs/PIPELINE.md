@@ -36,7 +36,9 @@ raw session bundle
        ├── heuristic
        ├── agent-llm
        ├── hybrid
-       └── custom-command
+       ├── custom-command
+       ├── codex-cli
+       └── auto
   -> Summary lint / fallback
   -> MicroSummaryV2 / UnitSummaryV2
   -> optional SummaryJudge eval JSON (default off)
@@ -45,17 +47,23 @@ raw session bundle
   -> WikiPatchProposal JSON/Markdown
   -> dry-run review
   -> optional --apply managed-block write
+  -> optional --write-mode flexible page-revision proposal
 ```
 
 핵심 정책:
 
 - `heuristic`이 기본 안전 경로입니다.
 - `agent-llm`과 `hybrid`는 host Agent의 LLM router를 재사용하는 opt-in 경로입니다.
-- direct provider SDK는 core dependency가 아닙니다.
+- `codex-cli`는 `codex exec` subprocess를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, `model_reasoning_effort=low`, `features.hooks=false`, inline bounded JSON input, JSONL output, `--output-schema`로 호출한 뒤 ACS schema/lint를 통과한 결과만 신뢰합니다.
+- `auto`는 Codex CLI가 감지되면 `codex-cli`를 먼저 쓰고, unavailable/timeout/exit/error/invalid JSON/lint 실패 시 `heuristic`으로 fallback metadata를 남깁니다.
+- ACS 내부 `codex exec` summary thread는 Codex SQLite/rollout에 남을 수 있으므로, discovery/watch/finalize 대상에서는 summary prompt prefix로 제외해 recursive ingestion을 막습니다.
+- 직접 Codex OAuth 구현과 direct provider SDK는 core dependency가 아닙니다. Codex Python SDK는 app-server 기반 후속 실험 후보이고, 현재 MVP는 script-friendly한 `codex exec`를 사용합니다.
 - `summary_judge.py` is a separate opt-in evaluator. It consumes mechanical lint, summaries, evidence, and recovery `quality_gate`, then writes `data/exports/evals/<packet_id>-summary-judge.json`. It does not rewrite summaries or apply wiki patches.
+- `plan-wiki-patches --write-mode flexible` creates rubric-guided full-page draft/revision proposals instead of fixed section templates. Flexible proposals remain proposal-only unless metadata carries an approved semantic judge verdict; mechanical policy still checks safe target paths, evidence, and current page hashes.
 - promotion candidate와 wiki patch proposal 생성은 Obsidian을 수정하지 않습니다.
 - `apply-wiki-patch`도 기본은 dry-run이며, 실제 쓰기는 `--apply`가 있을 때만 합니다.
 - alpha에서 기본 적용되는 wiki patch operation은 `create_page`, `insert_claim_block`, `append_managed_section`, `append_section`으로 제한합니다.
+- `replace_page`는 `--write-mode flexible` proposal에서만 사용하며, apply 시 judge 승인 metadata와 현재 page hash preflight를 요구합니다.
 - `add_link`, `mark_stale`는 proposal/실험 단계로 남기고 alpha 기본 apply에서는 skip합니다.
 
 ### 1.3 Legacy full promotion
@@ -479,7 +487,7 @@ status: active
 | `extract-atoms` | v2 summary -> claim atoms | 아니오 |
 | `propose-promotions` | claim atoms -> promotion candidates | 아니오 |
 | `plan-wiki-patches` | promotion candidates -> patch proposals | 아니오 |
-| `apply-wiki-patch` | patch proposal dry-run or managed-block apply | 기본 아니오, `--apply`면 예 |
+| `apply-wiki-patch` | patch proposal dry-run or guarded managed/flexible apply | 기본 아니오, `--apply`면 예 |
 | `list-promotions` | promotion queue 조회 | 아니오 |
 | `list-wiki-patches` | patch proposal/apply log 조회 | 아니오 |
 | `lint-promotions` | promotion/wiki patch semantic lint | report만 project `data/lint`에 씀 |
@@ -559,6 +567,7 @@ Optional `summary_judge` treats the deterministic recovery `quality_gate` as inp
    - 단순 normalized-name `duplicate_concept` warning은 유지하되, `stale_claim`, `contradiction_unresolved` 같은 ontology/freshness 검사는 similarity 정책 이후 future로 보류
 3. Wiki patch operation 확장
    - alpha 기본 apply는 `create_page`, `insert_claim_block`, `append_managed_section`, `append_section`에 고정
+   - `replace_page`는 flexible proposal의 judge 승인 + 현재 page hash preflight가 있을 때만 적용
    - `add_link`, `mark_stale`는 실험/후속 opt-in 후보로 유지
    - `replace_section`, `merge_pages`, `split_page` 같은 broad edit은 review/rollback UX 이후 future로 보류
 4. LLM safety hardening

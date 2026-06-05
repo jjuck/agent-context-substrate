@@ -101,6 +101,8 @@ class WikiLintReport:
         return {
             "wiki_root": self.wiki_root,
             "checked_pages": list(self.checked_pages),
+            "blocking_issue_count": count_lint_issues(self),
+            "advisory_count": count_lint_advisories(self),
             "missing_provenance_pages": list(self.missing_provenance_pages),
             "orphan_pages": list(self.orphan_pages),
             "pages_missing_from_index": list(self.pages_missing_from_index),
@@ -128,20 +130,60 @@ class WikiLintReport:
 
 
 def count_lint_issues(report: WikiLintReport) -> int:
-    """Count all actionable wiki lint issues in one place."""
+    """Count blocking wiki lint issues that should fail automation gates."""
 
     return sum(
         len(items)
+        for items in _blocking_issue_groups(report)
+    )
+
+
+def count_lint_advisories(report: WikiLintReport) -> int:
+    """Count non-blocking wiki quality hints for maintainer review."""
+
+    return sum(
+        len(items)
+        for items in _advisory_issue_groups(report)
+    )
+
+
+def _blocking_issue_groups(report: WikiLintReport) -> list[list[object]]:
+    return [
+        report.missing_provenance_pages,
+        report.orphan_pages,
+        report.pages_missing_from_index,
+        report.broken_wikilinks,
+        report.micro_summaries_missing_parent_unit,
+        report.micro_summaries_with_unknown_parent_unit,
+        report.unit_summaries_with_missing_micro_references,
+        report.packet_micro_summaries_unreferenced,
+        report.packets_missing_raw_pointers,
+        report.numeric_slug_pages,
+        report.session_id_slug_pages,
+        report.generated_summary_only_pages,
+        report.multiline_frontmatter_title_pages,
+        report.transient_command_title_pages,
+        report.smoke_or_test_pages,
+        report.session_derived_plan_pages,
+        report.excessive_critical_files_pages,
+    ]
+
+
+def _advisory_issue_groups(report: WikiLintReport) -> list[list[str]]:
+    return [
+        report.missing_lang_pages,
+        report.unsupported_lang_pages,
+        report.missing_required_sections_pages,
+        report.thin_content_pages,
+        report.unexplained_english_terms_pages,
+        report.insufficient_related_links_pages,
+    ]
+
+
+def _human_quality_issue_count(report: WikiLintReport) -> int:
+    return sum(
+        len(items)
         for items in [
-            report.missing_provenance_pages,
-            report.orphan_pages,
-            report.pages_missing_from_index,
-            report.broken_wikilinks,
-            report.micro_summaries_missing_parent_unit,
-            report.micro_summaries_with_unknown_parent_unit,
-            report.unit_summaries_with_missing_micro_references,
-            report.packet_micro_summaries_unreferenced,
-            report.packets_missing_raw_pointers,
             report.numeric_slug_pages,
             report.session_id_slug_pages,
             report.generated_summary_only_pages,
@@ -462,7 +504,9 @@ def render_lint_report_markdown(report: WikiLintReport) -> str:
         f"- Orphan pages: **{len(report.orphan_pages)}**",
         f"- Missing from index: **{len(report.pages_missing_from_index)}**",
         f"- Broken wikilinks: **{len(report.broken_wikilinks)}**",
-        f"- Human-facing quality issues: **{sum(len(items) for items in [report.numeric_slug_pages, report.session_id_slug_pages, report.generated_summary_only_pages, report.multiline_frontmatter_title_pages, report.transient_command_title_pages, report.smoke_or_test_pages, report.session_derived_plan_pages, report.excessive_critical_files_pages, report.missing_lang_pages, report.unsupported_lang_pages, report.missing_required_sections_pages, report.thin_content_pages, report.unexplained_english_terms_pages, report.insufficient_related_links_pages])}**",
+        f"- Blocking issues: **{count_lint_issues(report)}**",
+        f"- Advisories: **{count_lint_advisories(report)}**",
+        f"- Human-facing quality issues: **{_human_quality_issue_count(report)}**",
         f"- Internal graph issues: **{sum(len(items) for items in [report.micro_summaries_missing_parent_unit, report.micro_summaries_with_unknown_parent_unit, report.unit_summaries_with_missing_micro_references, report.packet_micro_summaries_unreferenced, report.packets_missing_raw_pointers])}**",
         "",
         "## Missing Provenance",

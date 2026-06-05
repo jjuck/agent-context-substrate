@@ -164,7 +164,17 @@ tags: [context, hermes, recovery]
 
 Korean pages use `lang: ko`; English pages use `lang: en`.
 
-### 6.3 Language-specific templates
+### 6.3 Rubric and optional templates
+
+The LLM Wiki is a maintained markdown knowledge graph, not a strict form generator. Templates under `_system/templates` are examples for humans and agents, but page bodies may use whatever structure best integrates the new knowledge.
+
+The durable contract is intentionally smaller than the example templates:
+
+- preserve source material as the immutable ground truth;
+- keep page paths safe and human-readable;
+- include provenance or evidence for durable claims;
+- keep useful wikilinks, index/log registration, and review state;
+- surface uncertainty, contradictions, and open questions instead of hiding them.
 
 ```text
 _system/templates/ko/home.md
@@ -175,11 +185,11 @@ _system/templates/en/knowledge.md
 _system/templates/en/project.md
 ```
 
-When creating a new page:
+When creating a new page manually:
 
 1. choose a page type, such as `knowledge`, `idea`, `source`, `project`, `spec`, `plan`, or `decision`;
 2. choose `ko` or `en`;
-3. copy the matching template;
+3. optionally copy a matching template as a starting point;
 4. fill in `title`, `lang`, `type`, `category`, `status`, and `tags`.
 
 ### 6.4 Language lint
@@ -196,6 +206,8 @@ Language issues appear in the `Human-Facing Quality` section as:
 
 - `Missing language`
 - `Unsupported language`
+
+Language and section-shape issues are advisories. Blocking wiki lint remains focused on safety and graph integrity, such as provenance gaps, broken wikilinks, missing index entries, unsafe/generated page shapes, and internal artifact graph errors.
 
 ## 7. Install and enable Hermes integration
 
@@ -318,7 +330,7 @@ After install, inspect health and paths:
 .\.venv\Scripts\agent-context-substrate.exe diagnose-codex
 ```
 
-Use `setup-codex-wizard` for an interactive path review. `diagnose-codex --fix` repairs only safe ACS local files such as the wiki skeleton, Codex plugin, user hook fallback, and local config.
+Use `setup-codex-wizard` for an interactive path review. `diagnose-codex --fix` repairs only safe ACS local files such as the wiki skeleton, Codex plugin Stop hook, and local config. The `~/.codex/hooks.json` user hook fallback is opt-in to avoid duplicate Stop hooks.
 
 Codex still requires hook review/trust before non-managed hooks run.
 
@@ -340,10 +352,23 @@ Manual finalize:
   --thread-id "<CODEX_THREAD_ID>" `
   --codex-home $CodexHome `
   --project-root $ProjectRoot `
-  --wiki-root $WikiRoot
+  --wiki-root $WikiRoot `
+  --summary-mode auto
 ```
 
 Codex raw exports are written under `data/exports/raw/codex/<thread_id>.json`; packet, lint, recovery, ledger, retrieval, atoms, promotions, and wiki patch commands then use the same artifact layout as Hermes sessions.
+
+`summary_mode=auto` is the recommended Codex LLM summary UX when you want model summaries but do not want ACS to handle credentials. It detects a usable Codex CLI, runs `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, `features.hooks=false`, and inline bounded JSON input, then validates the returned strict JSON before trusting it. Timeout, CLI failure, invalid JSON, or lint failure degrades to heuristic summaries and records `fallback_from` / `fallback_reason` in summary metadata and the finalize ledger.
+
+Credential choices:
+
+| Option | Use it when | Notes |
+| --- | --- | --- |
+| `codex-cli` / `auto` | You already use Codex CLI/App locally. | Reuses Codex auth through the CLI; ACS does not read or store Codex OAuth tokens. |
+| `custom-command` | You have a trusted local summarizer command. | The command owns auth, API usage, schema correctness, and safety controls. |
+| OpenAI Platform API key | You are running CI or non-Codex automation. | Explicit key provisioning and API billing are separate from Codex login. |
+| Direct Codex OAuth | Avoid for ACS. | It would make ACS responsible for token lifecycle and private endpoint stability. |
+| Codex Python SDK | Consider later for app-server integrations. | The current backend uses `codex exec` first because its automation flags are stable and explicit. |
 
 ## 9. Plugin configuration
 
@@ -527,8 +552,10 @@ Summary modes:
 | `agent-llm` | Uses the host Agent's LLM router when the integration provides one. |
 | `hybrid` | Heuristic evidence spine plus Agent LLM interpretation. |
 | `custom-command` | External command receives stdin JSON and returns stdout JSON. |
+| `codex-cli` | Runs `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks disabled, inline bounded JSON input, JSONL output, and ACS schema/lint validation. |
+| `auto` | Prefers `codex-cli` when Codex CLI is available and otherwise records heuristic fallback metadata. |
 
-Note: standalone CLI can run `heuristic` and `custom-command` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
+Note: standalone CLI can run `heuristic`, `custom-command`, `codex-cli`, and `auto` directly. `agent-llm` and `hybrid` require a host integration that injects an Agent LLM router.
 
 Summary judge evaluation is opt-in and artifact-only:
 
@@ -552,6 +579,16 @@ agent-context-substrate plan-wiki-patches \
   --project-root .
 ```
 
+The default `plan-wiki-patches` mode preserves the legacy managed-claim-block behavior. To ask ACS for a rubric-guided full-page draft/revision instead, opt in explicitly:
+
+```bash
+agent-context-substrate plan-wiki-patches \
+  --promotion-file data/promotions/<packet_id>.json \
+  --write-mode flexible \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root .
+```
+
 These commands do not edit Obsidian. After reviewing the generated Markdown/JSON proposal, apply explicitly:
 
 ```bash
@@ -561,6 +598,8 @@ agent-context-substrate apply-wiki-patch \
   --project-root . \
   --apply
 ```
+
+Flexible proposals are proposal-only unless their metadata includes an approved semantic judge verdict. The mechanical write policy still checks safe target paths, evidence, current page hash, and dry-run/apply intent before writing.
 
 ## 13. What is not automatic
 

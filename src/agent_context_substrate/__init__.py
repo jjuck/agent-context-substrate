@@ -52,7 +52,14 @@ from .integration import (
     should_process_session,
 )
 from .ledger import LedgerRecord, SessionLedger
-from .lint import WikiLintReport, BrokenWikilink, export_lint_report, lint_wiki, render_lint_report_markdown
+from .lint import (
+    WikiLintReport,
+    BrokenWikilink,
+    count_lint_advisories,
+    export_lint_report,
+    lint_wiki,
+    render_lint_report_markdown,
+)
 from .models import (
     ContextPacket,
     EvidenceBackedText,
@@ -261,6 +268,7 @@ __all__ = [
     "render_context_packet_markdown",
     "get_summarizer_backend",
     "lint_wiki",
+    "count_lint_advisories",
     "lint_micro_summary_v2",
     "lint_promotion_substrate",
     "render_lint_report_markdown",

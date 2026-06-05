@@ -17,6 +17,7 @@ from ..codex_source import (
     resolve_codex_home,
 )
 from ..retrieval import expand_hit, search_knowledge
+from ..summarizer_backends import LLMInputSafetyOptions
 
 
 def default_wiki_root() -> str:
@@ -46,6 +47,8 @@ def handle_codex_status_command(*, args: Any) -> int:
 
 
 def handle_codex_finalize_command(*, args: Any) -> int:
+    if args.summary_mode == "custom-command" and not args.summarizer_command:
+        raise SystemExit("--summary-mode custom-command requires --summarizer-command")
     result = run_codex_thread_finalize_pipeline(
         thread_id=args.thread_id,
         codex_home=args.codex_home,
@@ -56,16 +59,32 @@ def handle_codex_finalize_command(*, args: Any) -> int:
         goal=args.goal,
         related_pages=list(args.related_pages),
         max_tool_output_chars=args.max_tool_output_chars,
+        summary_mode=args.summary_mode,
+        summarizer_command=args.summarizer_command,
+        summary_model=args.summary_model,
+        summary_budget=args.summary_budget,
+        summary_cache=args.summary_cache == "on",
+        codex_cli_command=args.codex_cli_command,
+        codex_timeout_seconds=args.codex_timeout_seconds,
+        llm_safety=_llm_safety_from_args(args),
     )
     print(f"raw_export_path={result.raw_export_path}")
     print(f"packet_json_path={result.packet_json_path}")
     print(f"packet_markdown_path={result.packet_markdown_path}")
     print(f"recovery_json_path={result.recovery_json_path}")
+    if result.summary_micro_path is not None:
+        print(f"summary_micro_path={result.summary_micro_path}")
+    if result.summary_unit_path is not None:
+        print(f"summary_unit_path={result.summary_unit_path}")
+    if result.summary_evidence_path is not None:
+        print(f"summary_evidence_path={result.summary_evidence_path}")
     print(f"lint_issue_count={result.lint_issue_count}")
     return 0
 
 
 def handle_codex_watch_command(*, args: Any) -> int:
+    if args.summary_mode == "custom-command" and not args.summarizer_command:
+        raise SystemExit("--summary-mode custom-command requires --summarizer-command")
     if args.once:
         result = run_codex_watch_once(
             codex_home=args.codex_home,
@@ -74,6 +93,14 @@ def handle_codex_watch_command(*, args: Any) -> int:
             idle_seconds=args.idle_seconds,
             state_path=args.state_path,
             max_tool_output_chars=args.max_tool_output_chars,
+            summary_mode=args.summary_mode,
+            summarizer_command=args.summarizer_command,
+            summary_model=args.summary_model,
+            summary_budget=args.summary_budget,
+            summary_cache=args.summary_cache == "on",
+            codex_cli_command=args.codex_cli_command,
+            codex_timeout_seconds=args.codex_timeout_seconds,
+            llm_safety=_llm_safety_from_args(args),
         )
         print(f"processed={len(result.processed_thread_ids)}")
         for thread_id in result.processed_thread_ids:
@@ -88,10 +115,27 @@ def handle_codex_watch_command(*, args: Any) -> int:
             idle_seconds=args.idle_seconds,
             state_path=args.state_path,
             max_tool_output_chars=args.max_tool_output_chars,
+            summary_mode=args.summary_mode,
+            summarizer_command=args.summarizer_command,
+            summary_model=args.summary_model,
+            summary_budget=args.summary_budget,
+            summary_cache=args.summary_cache == "on",
+            codex_cli_command=args.codex_cli_command,
+            codex_timeout_seconds=args.codex_timeout_seconds,
+            llm_safety=_llm_safety_from_args(args),
         )
     except KeyboardInterrupt:
         print("codex-watch stopped")
     return 0
+
+
+def _llm_safety_from_args(args: Any) -> LLMInputSafetyOptions:
+    return LLMInputSafetyOptions(
+        redact=getattr(args, "llm_redact", "on") == "on",
+        max_input_chars=getattr(args, "llm_max_input_chars", 12_000),
+        allow_code_snippets=getattr(args, "llm_allow_code_snippets", "off") == "on",
+        path_policy=getattr(args, "llm_path_policy", "redact"),
+    )
 
 
 def handle_search_knowledge_command(*, args: Any) -> int:

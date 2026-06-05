@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 
 from .artifact_pipeline import (
     apply_wiki_patch_file,
@@ -71,6 +72,13 @@ from .packet_builder import build_packet_from_session
 from .paths import HarnessPaths
 
 
+def configure_text_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--project-root",
@@ -96,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     plan_wiki_patches = subparsers.add_parser("plan-wiki-patches", help="Plan dry-run wiki patch proposals from promotion candidates")
     plan_wiki_patches.add_argument("--promotion-file", required=True, help="Path to data/promotions/<packet_id>.json")
     plan_wiki_patches.add_argument("--wiki-root", help="Wiki root used to inspect existing target pages")
+    plan_wiki_patches.add_argument(
+        "--write-mode",
+        choices=["managed", "flexible"],
+        default="managed",
+        help="Wiki proposal style: managed claim blocks or flexible rubric-guided page revisions.",
+    )
     _add_project_root_argument(plan_wiki_patches)
 
     apply_wiki_patch = subparsers.add_parser(
@@ -138,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     build_packet.add_argument(
         "--summary-mode",
-        choices=["heuristic", "agent-llm", "hybrid", "custom-command"],
+        choices=["heuristic", "agent-llm", "hybrid", "custom-command", "codex-cli", "auto"],
         help="Optional v2 summary export mode. Default build remains legacy packet-only summaries.",
     )
     build_packet.add_argument(
@@ -158,6 +172,16 @@ def build_parser() -> argparse.ArgumentParser:
     build_packet.add_argument(
         "--summary-budget",
         help="Optional budget routing hint for host Agent LLM summary modes, e.g. cheap, balanced, or quality.",
+    )
+    build_packet.add_argument(
+        "--codex-cli-command",
+        help="Optional Codex executable path for --summary-mode codex-cli/auto; auto-detects when omitted.",
+    )
+    build_packet.add_argument(
+        "--codex-timeout-seconds",
+        type=int,
+        default=None,
+        help="Timeout for each codex exec summary call in codex-cli/auto modes.",
     )
     build_packet.add_argument(
         "--summary-judge-mode",
@@ -510,7 +534,16 @@ def build_parser() -> argparse.ArgumentParser:
     setup_codex.add_argument("--yes", action="store_true", help="Accept the displayed defaults for non-interactive setup")
     setup_codex.add_argument("--dry-run", action="store_true", help="Print planned setup actions without writing files")
     setup_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
-    setup_codex.add_argument("--no-user-hook", action="store_true", help="Do not register ~/.codex/hooks.json fallback")
+    setup_codex.add_argument(
+        "--user-hook-fallback",
+        action="store_true",
+        help="Also register ~/.codex/hooks.json fallback. Off by default to avoid duplicate Stop hooks.",
+    )
+    setup_codex.add_argument(
+        "--no-user-hook",
+        action="store_true",
+        help="Deprecated compatibility flag; user hook fallback is already off by default.",
+    )
     setup_codex.add_argument("--no-marketplace", action="store_true", help="Do not install personal marketplace/cache entry")
     setup_codex.add_argument("--no-overwrite", action="store_true", help="Do not replace an existing ACS Codex plugin")
     _add_project_root_argument(setup_codex)
@@ -585,6 +618,37 @@ def build_parser() -> argparse.ArgumentParser:
         default=12_000,
         help="Maximum function_call_output characters retained in raw Codex exports",
     )
+    codex_finalize.add_argument(
+        "--summary-mode",
+        choices=["heuristic", "custom-command", "codex-cli", "auto"],
+        help="Optional v2 summary export mode for this Codex thread.",
+    )
+    codex_finalize.add_argument(
+        "--summarizer-command",
+        help="Command for --summary-mode custom-command. Receives JSON on stdin and returns JSON on stdout.",
+    )
+    codex_finalize.add_argument(
+        "--summary-cache",
+        choices=["on", "off"],
+        default="off",
+        help="Reuse v2 summary artifacts from data/cache/summaries when input/schema/mode match.",
+    )
+    codex_finalize.add_argument("--summary-model", help="Optional model hint for LLM summary modes.")
+    codex_finalize.add_argument("--summary-budget", help="Optional budget hint for LLM summary modes.")
+    codex_finalize.add_argument(
+        "--codex-cli-command",
+        help="Optional Codex executable path for --summary-mode codex-cli/auto; auto-detects when omitted.",
+    )
+    codex_finalize.add_argument(
+        "--codex-timeout-seconds",
+        type=int,
+        default=None,
+        help="Timeout for each codex exec summary call in codex-cli/auto modes.",
+    )
+    codex_finalize.add_argument("--llm-redact", choices=["on", "off"], default="on")
+    codex_finalize.add_argument("--llm-max-input-chars", type=int, default=12_000)
+    codex_finalize.add_argument("--llm-allow-code-snippets", choices=["on", "off"], default="off")
+    codex_finalize.add_argument("--llm-path-policy", choices=["redact", "allow"], default="redact")
     _add_project_root_argument(codex_finalize)
 
     codex_watch = subparsers.add_parser("codex-watch", help="Watch Codex rollout JSONL files and finalize idle threads")
@@ -600,6 +664,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=12_000,
         help="Maximum function_call_output characters retained in raw Codex exports",
     )
+    codex_watch.add_argument(
+        "--summary-mode",
+        choices=["heuristic", "custom-command", "codex-cli", "auto"],
+        help="Optional v2 summary export mode for finalized Codex threads.",
+    )
+    codex_watch.add_argument(
+        "--summarizer-command",
+        help="Command for --summary-mode custom-command. Receives JSON on stdin and returns JSON on stdout.",
+    )
+    codex_watch.add_argument("--summary-cache", choices=["on", "off"], default="off")
+    codex_watch.add_argument("--summary-model", help="Optional model hint for LLM summary modes.")
+    codex_watch.add_argument("--summary-budget", help="Optional budget hint for LLM summary modes.")
+    codex_watch.add_argument(
+        "--codex-cli-command",
+        help="Optional Codex executable path for --summary-mode codex-cli/auto; auto-detects when omitted.",
+    )
+    codex_watch.add_argument("--codex-timeout-seconds", type=int, default=None)
+    codex_watch.add_argument("--llm-redact", choices=["on", "off"], default="on")
+    codex_watch.add_argument("--llm-max-input-chars", type=int, default=12_000)
+    codex_watch.add_argument("--llm-allow-code-snippets", choices=["on", "off"], default="off")
+    codex_watch.add_argument("--llm-path-policy", choices=["redact", "allow"], default="redact")
     _add_project_root_argument(codex_watch)
 
     search_parser = subparsers.add_parser("search-knowledge", help="Search wiki, packets, recovery, graph, and optional raw messages")
@@ -621,6 +706,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_text_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
 

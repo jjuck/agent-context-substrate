@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -395,3 +396,140 @@ def test_plan_wiki_patch_proposal_never_reads_unsafe_target_page(tmp_path) -> No
     assert operation.target == "_review/untriaged.md"
     assert "outside managed claim" not in operation.diff["before"]
     assert "Safe generated claim." in operation.diff["after"]
+
+
+def test_plan_flexible_wiki_patch_proposes_full_page_revision_with_policy_metadata(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "concepts" / "summarization.md"
+    target.parent.mkdir(parents=True)
+    original = "# Summarization\n\nExisting human prose.\n"
+    target.write_text(original, encoding="utf-8")
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    operation = proposal.operations[0]
+    assert proposal.metadata["write_mode"] == "flexible"
+    assert proposal.metadata["judge_mode"] == "off"
+    assert proposal.metadata["judge_verdict"] == "not_requested"
+    assert proposal.metadata["policy_verdict"] == "proposal_only"
+    assert proposal.metadata["rubric_advisories"]
+    assert operation.operation == "replace_page"
+    assert operation.diff["base_sha256"] == hashlib.sha256(original.encode("utf-8")).hexdigest()
+    assert operation.diff["before"] == original
+    assert "Existing human prose." in operation.diff["after"]
+    assert "Heuristic summarizer should remain the default for privacy." in operation.diff["after"]
+    assert "claim:packet-1-claim-1" in operation.diff["after"]
+
+
+def test_apply_flexible_replace_page_requires_approved_judge_verdict(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "concepts" / "summarization.md"
+    target.parent.mkdir(parents=True)
+    original = "# Summarization\n\nExisting human prose.\n"
+    target.write_text(original, encoding="utf-8")
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    assert result.applied_patch_ids == []
+    assert result.skipped_patch_ids == ["packet-1-patch-1"]
+    assert result.skipped_reasons == {
+        "packet-1-patch-1": "flexible write requires approved judge verdict"
+    }
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_apply_replace_page_requires_flexible_policy_metadata(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "concepts" / "summarization.md"
+    target.parent.mkdir(parents=True)
+    original = "# Summarization\n\nExisting human prose.\n"
+    target.write_text(original, encoding="utf-8")
+    proposal = WikiPatchProposal(
+        proposal_id="packet-1-wiki-patch-proposal",
+        packet_id="packet-1",
+        status="proposed",
+        operations=[
+            WikiPatchOperation(
+                patch_id="packet-1-patch-1",
+                candidate_id="packet-1-candidate-1",
+                target="concepts/summarization.md",
+                operation="replace_page",
+                rationale="Hand-edited proposal should not bypass write policy.",
+                evidence=["claim:packet-1-claim-1"],
+                risk="medium",
+                diff={
+                    "before": original,
+                    "after": "# Summarization\n\nUnsafe replacement.\n",
+                    "base_sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+                },
+                status="proposed",
+            )
+        ],
+    )
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    assert result.applied_patch_ids == []
+    assert result.skipped_patch_ids == ["packet-1-patch-1"]
+    assert result.skipped_reasons == {
+        "packet-1-patch-1": "replace_page requires flexible write metadata"
+    }
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_apply_flexible_replace_page_updates_when_judge_approved_and_hash_matches(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "concepts" / "summarization.md"
+    target.parent.mkdir(parents=True)
+    original = "# Summarization\n\nExisting human prose.\n"
+    target.write_text(original, encoding="utf-8")
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+        judge_verdict="approved",
+    )
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    assert result.applied_patch_ids == ["packet-1-patch-1"]
+    updated = target.read_text(encoding="utf-8")
+    assert "Existing human prose." in updated
+    assert "Heuristic summarizer should remain the default for privacy." in updated
+    assert "claim:packet-1-claim-1" in updated
+
+
+def test_apply_flexible_replace_page_skips_hash_conflict(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "concepts" / "summarization.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Summarization\n\nOriginal prose.\n", encoding="utf-8")
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+        judge_verdict="approved",
+    )
+    target.write_text("# Summarization\n\nHuman changed prose.\n", encoding="utf-8")
+
+    result = apply_wiki_patch_proposal(proposal=proposal, wiki_root=wiki_root, dry_run=False)
+
+    assert result.applied_patch_ids == []
+    assert result.skipped_patch_ids == ["packet-1-patch-1"]
+    assert result.skipped_reasons == {
+        "packet-1-patch-1": "conflict: current page hash differs from proposal base"
+    }
+    assert "Human changed prose." in target.read_text(encoding="utf-8")

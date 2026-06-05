@@ -215,6 +215,17 @@ def _write_codex_local_config(destination: Path, *, project_root: Path, wiki_roo
                 "trigger_strategy": "hook-primary",
                 "watcher_fallback": True,
                 "hook_timeout_seconds": 110,
+                "summary_mode": "",
+                "summary_cache": False,
+                "summary_model": None,
+                "summary_budget": None,
+                "summarizer_command": None,
+                "codex_cli_command": None,
+                "codex_timeout_seconds": 90,
+                "llm_redact": "on",
+                "llm_max_input_chars": 12_000,
+                "llm_allow_code_snippets": "off",
+                "llm_path_policy": "redact",
                 "commands": {
                     "status": "agent-context-substrate codex-status",
                     "watch": "agent-context-substrate codex-watch",
@@ -333,6 +344,27 @@ def _install_codex_user_stop_hook(*, codex_home: Path, plugin_dir: Path) -> Path
     return hooks_path
 
 
+def _remove_codex_user_stop_hook(*, codex_home: Path) -> Path | None:
+    hooks_path = codex_home / "hooks.json"
+    if not hooks_path.exists():
+        return None
+    payload = json.loads(hooks_path.read_text(encoding="utf-8-sig"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{hooks_path} must contain a JSON object")
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return None
+    stop_groups = hooks.get("Stop")
+    if not isinstance(stop_groups, list):
+        return None
+    retained_groups = [group for group in stop_groups if not _is_acs_codex_stop_hook_group(group)]
+    if len(retained_groups) == len(stop_groups):
+        return None
+    hooks["Stop"] = retained_groups
+    hooks_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return hooks_path
+
+
 def install_user_plugin(
     *,
     hermes_home: Path | str,
@@ -416,6 +448,11 @@ def install_codex_plugin(
     if install_user_hook:
         paths["codex_user_hooks_path"] = _install_codex_user_stop_hook(codex_home=codex_home, plugin_dir=plugin_dir)
         messages.append("Codex user hooks.json Stop hook installed for non-plugin hook fallback")
+    else:
+        removed_user_hook_path = _remove_codex_user_stop_hook(codex_home=codex_home)
+        if removed_user_hook_path is not None:
+            paths["codex_user_hooks_path"] = removed_user_hook_path
+            messages.append("removed existing Codex user hooks.json ACS Stop hook fallback to avoid duplicate Stop hooks")
     return InstallResult(
         status="installed",
         paths=paths,

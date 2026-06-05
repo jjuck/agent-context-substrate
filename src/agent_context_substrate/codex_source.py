@@ -15,6 +15,10 @@ from .session_bundle import SessionBundle, SessionMessage
 DEFAULT_MAX_TOOL_OUTPUT_CHARS = 12_000
 _SENSITIVE_KEY_RE = re.compile(r"(?i)(api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*([^\s,\"]+)")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_INTERNAL_CODEX_SUMMARY_PROMPT_PREFIXES = (
+    "Use this Agent Context Substrate summary input JSON:",
+    "Read the Agent Context Substrate summary input JSON at ",
+)
 
 
 @dataclass(frozen=True)
@@ -187,17 +191,17 @@ def _discover_threads_from_state_db(root: Path, *, include_archived: bool) -> li
             rollout = root / rollout
         if not rollout.exists():
             continue
-        records.append(
-            CodexThreadRecord(
-                thread_id=str(row["id"]),
-                rollout_path=rollout,
-                created_at=_optional_row_str(row, "created_at"),
-                updated_at=_optional_row_str(row, "updated_at"),
-                cwd=_optional_row_str(row, "cwd"),
-                title=_optional_row_str(row, "title"),
-                archived=archived,
-            )
+        record = CodexThreadRecord(
+            thread_id=str(row["id"]),
+            rollout_path=rollout,
+            created_at=_optional_row_str(row, "created_at"),
+            updated_at=_optional_row_str(row, "updated_at"),
+            cwd=_optional_row_str(row, "cwd"),
+            title=_optional_row_str(row, "title"),
+            archived=archived,
         )
+        if not _is_internal_summary_thread(record):
+            records.append(record)
     return records
 
 
@@ -207,14 +211,14 @@ def _discover_threads_from_rollout_glob(root: Path) -> list[CodexThreadRecord]:
     if not session_root.exists():
         return records
     for path in sorted(session_root.rglob("rollout-*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True):
-        records.append(
-            CodexThreadRecord(
-                thread_id=path.stem.removeprefix("rollout-"),
-                rollout_path=path,
-                updated_at=None,
-                title=path.stem,
-            )
+        record = CodexThreadRecord(
+            thread_id=path.stem.removeprefix("rollout-"),
+            rollout_path=path,
+            updated_at=None,
+            title=path.stem,
         )
+        if not _is_internal_summary_thread(record):
+            records.append(record)
     return records
 
 
@@ -222,6 +226,46 @@ def _optional_row_str(row: sqlite3.Row, key: str) -> str | None:
     if key not in row.keys() or row[key] is None:
         return None
     return str(row[key])
+
+
+def _is_internal_summary_thread(record: CodexThreadRecord) -> bool:
+    if _looks_like_internal_summary_prompt(record.title):
+        return True
+    return _rollout_looks_like_internal_summary_prompt(record.rollout_path)
+
+
+def _rollout_looks_like_internal_summary_prompt(path: Path) -> bool:
+    try:
+        payloads = _iter_rollout_payloads(path)
+        for _, _, payload in payloads:
+            prompt_text = _prompt_text_from_payload(payload)
+            if prompt_text is not None:
+                return _looks_like_internal_summary_prompt(prompt_text)
+    except OSError:
+        return False
+    return False
+
+
+def _prompt_text_from_payload(payload: dict[str, Any]) -> str | None:
+    event_type = str(payload.get("type") or "")
+    if event_type == "user_message" and isinstance(payload.get("message"), str):
+        return str(payload["message"])
+    if event_type == "message" and payload.get("role") == "user":
+        content = payload.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = [
+                str(item.get("text"))
+                for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            ]
+            return "\n".join(parts) if parts else None
+    return None
+
+
+def _looks_like_internal_summary_prompt(value: str | None) -> bool:
+    return bool(value and value.startswith(_INTERNAL_CODEX_SUMMARY_PROMPT_PREFIXES))
 
 
 def _iter_rollout_payloads(path: Path) -> Iterable[tuple[int, str | None, dict[str, Any]]]:

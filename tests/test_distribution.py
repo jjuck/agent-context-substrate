@@ -160,6 +160,46 @@ def test_install_codex_plugin_user_hook_accepts_existing_bom_json(tmp_path: Path
     assert stop_groups[1]["hooks"][0]["command"].endswith("/hooks/codex_stop_finalize.py\"")
 
 
+def test_install_codex_plugin_default_removes_existing_acs_user_hook_fallback(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    hooks_path = codex_home / "hooks.json"
+    hooks_path.parent.mkdir(parents=True)
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "Stop": [
+                        {"hooks": [{"type": "command", "command": "echo preserved"}]},
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "python3 /tmp/agent-context-substrate/hooks/codex_stop_finalize.py",
+                                    "commandWindows": "python C:\\agent-context-substrate\\hooks\\codex_stop_finalize.py",
+                                }
+                            ]
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = install_codex_plugin(
+        codex_home=codex_home,
+        project_root=tmp_path / "project",
+        wiki_root=tmp_path / "wiki",
+        install_user_hook=False,
+    )
+
+    hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
+    stop_groups = hooks["hooks"]["Stop"]
+    assert result.paths["codex_user_hooks_path"] == hooks_path
+    assert stop_groups == [{"hooks": [{"type": "command", "command": "echo preserved"}]}]
+    assert "removed existing Codex user hooks.json ACS Stop hook fallback" in "\n".join(result.messages)
+
+
 def test_install_user_plugin_overwrite_backup_is_not_discoverable_plugin(tmp_path: Path) -> None:
     hermes_home = tmp_path / "hermes-home"
     plugins_root = hermes_home / "plugins"

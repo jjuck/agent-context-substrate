@@ -127,7 +127,9 @@ agent-context-substrate config-codex paths \
   --wiki-root <wiki-root>
 ```
 
-Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, and paths for `state_5.sqlite`, `Documents\LLM Wiki`, and `data\...`. Codex still requires `/hooks` review/trust before non-managed command hooks run; do not document or use trust bypass as a normal install path.
+Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, and paths for `state_5.sqlite`, `Documents\LLM Wiki`, and `data\...`. Default Windows setup should not leave an ACS Stop hook in `~/.codex/hooks.json`; use `--user-hook-fallback` only when plugin-bundled hooks are unavailable. Codex still requires `/hooks` or `Hooks need review` review/trust before non-managed command hooks run; do not document or use trust bypass as a normal install path.
+
+For Codex LLM summary smoke, set `summary_mode=auto` in the installed Codex plugin config, run an interactive Stop hook smoke, and verify summary artifacts under `data/exports/summaries/`. The metadata should show either `mode=codex-cli` or heuristic fallback fields such as `fallback_from=auto` / `fallback_reason=codex_cli_unavailable`; ledger artifact paths should include the requested `summary_mode` plus actual summary mode/fallback metadata.
 
 Windows one-shot bootstrap smoke:
 

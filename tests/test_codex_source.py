@@ -20,7 +20,14 @@ def _write_rollout(path: Path, events: list[dict[str, object]]) -> None:
     )
 
 
-def _write_state(codex_home: Path, *, thread_id: str, rollout_path: Path, cwd: Path | None = None) -> Path:
+def _write_state(
+    codex_home: Path,
+    *,
+    thread_id: str,
+    rollout_path: Path,
+    cwd: Path | None = None,
+    title: str = "Codex rollout review",
+) -> Path:
     state_path = codex_home / "state_5.sqlite"
     with sqlite3.connect(state_path) as connection:
         connection.execute(
@@ -47,7 +54,7 @@ def _write_state(codex_home: Path, *, thread_id: str, rollout_path: Path, cwd: P
                 "2026-06-01T00:00:00Z",
                 "2026-06-01T00:05:00Z",
                 str(cwd or codex_home / "project"),
-                "Codex rollout review",
+                title,
             ),
         )
     return state_path
@@ -65,6 +72,51 @@ def test_discover_codex_threads_reads_state_db_rollout_paths(tmp_path: Path) -> 
     assert [thread.thread_id for thread in threads] == ["thread-1"]
     assert threads[0].rollout_path == rollout_path
     assert threads[0].title == "Codex rollout review"
+
+
+def test_discover_codex_threads_excludes_internal_summary_threads_from_state_db(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    rollout_path = codex_home / "sessions" / "rollout-summary-thread.jsonl"
+    _write_rollout(
+        rollout_path,
+        [{"type": "user_message", "message": "Use this Agent Context Substrate summary input JSON: {}"}],
+    )
+    _write_state(
+        codex_home,
+        thread_id="summary-thread",
+        rollout_path=rollout_path,
+        title="Use this Agent Context Substrate summary input JSON: {}",
+    )
+
+    assert discover_codex_threads(codex_home=codex_home) == []
+
+
+def test_discover_codex_threads_excludes_internal_summary_threads_from_rollout_glob(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    rollout_path = codex_home / "sessions" / "rollout-summary-thread.jsonl"
+    _write_rollout(
+        rollout_path,
+        [{"type": "user_message", "message": "Use this Agent Context Substrate summary input JSON: {}"}],
+    )
+
+    assert discover_codex_threads(codex_home=codex_home) == []
+
+
+def test_discover_codex_threads_excludes_legacy_internal_summary_prompt(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    rollout_path = codex_home / "sessions" / "rollout-legacy-summary-thread.jsonl"
+    legacy_prompt = "Read the Agent Context Substrate summary input JSON at C:/tmp/input.json."
+    _write_rollout(rollout_path, [{"type": "user_message", "message": legacy_prompt}])
+    _write_state(
+        codex_home,
+        thread_id="legacy-summary-thread",
+        rollout_path=rollout_path,
+        title=legacy_prompt,
+    )
+
+    assert discover_codex_threads(codex_home=codex_home) == []
 
 
 def test_build_codex_session_bundle_filters_and_formats_messages(tmp_path: Path) -> None:
