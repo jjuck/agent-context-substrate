@@ -43,7 +43,7 @@ python -m pytest -q
 ruff check .
 ```
 
-Expected current public alpha baseline: `305 passed, 12 skipped` and `All checks passed!` from Ruff.
+Expected current public alpha baseline: `337 passed, 12 skipped` and `All checks passed!` from Ruff.
 
 For a Windows Codex app release, also verify the Windows-facing one-shot install docs and hook-trust instructions in `README.ko.md`, `README.md`, and `docs/WINDOWS_CODEX_APP_SETUP*.md`.
 
@@ -196,7 +196,7 @@ Latest verified local baseline for the v0.2.0 release candidate after spec pipel
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: public
-project tests: 305 passed, 12 skipped
+project tests: 337 passed, 12 skipped
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
 live Codex runtime: plugin agent-context-substrate, Stop hook installed, watcher fallback available

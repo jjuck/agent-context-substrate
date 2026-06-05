@@ -306,7 +306,7 @@ The current public alpha baseline has been verified from the published repositor
 
 | Check | Current result |
 | --- | --- |
-| Project tests | `305 passed, 12 skipped` |
+| Project tests | `337 passed, 12 skipped` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Codex attachment | plugin `agent-context-substrate`, Stop hook installed, watcher fallback available |
@@ -324,7 +324,7 @@ Keep this table current when cutting a release or changing installer/runtime beh
 | `extract-atoms` | Extract claim, decision, entity, concept, and question atoms from v2 summary artifacts into `data/atoms/*.jsonl`. |
 | `propose-promotions` | Propose reviewable wiki promotion candidates from claim atoms. Does not write Obsidian. |
 | `plan-wiki-patches` | Convert promotion candidates into dry-run wiki patch proposals. |
-| `apply-wiki-patch` | Dry-run by default; writes only with `--apply` and safe managed-block operations. |
+| `apply-wiki-patch` | Dry-run by default; writes only with `--apply` and guarded managed/flexible operations. |
 | `list-promotions` | List promotion queue candidates and statuses. |
 | `list-wiki-patches` | List proposed/applied wiki patch records. |
 | `lint-promotions` | Run semantic lint checks on promotions and wiki patch records. |
@@ -487,6 +487,13 @@ agent-context-substrate plan-wiki-patches \
   --wiki-root '<WIKI_ROOT>' \
   --project-root '<PROJECT_ROOT>'
 
+# Opt in when a page needs a rubric-guided draft/revision instead of a managed claim block.
+agent-context-substrate plan-wiki-patches \
+  --promotion-file '<PROJECT_ROOT>/data/promotions/<PACKET_ID>.json' \
+  --write-mode flexible \
+  --wiki-root '<WIKI_ROOT>' \
+  --project-root '<PROJECT_ROOT>'
+
 # Dry-run is the default. Add --apply only after reviewing the proposal.
 agent-context-substrate apply-wiki-patch \
   --patch-file '<PROJECT_ROOT>/data/wiki_patches/<PACKET_ID>.json' \
@@ -503,6 +510,8 @@ data/promotions/<PACKET_ID>.md
 data/wiki_patches/<PACKET_ID>.json
 data/wiki_patches/<PACKET_ID>.md
 ```
+
+Flexible proposals remain proposal-only unless their metadata carries an approved semantic judge verdict. `apply-wiki-patch --apply` also checks evidence, target safety, and current page hashes before writing.
 
 ### Lint a real wiki
 
@@ -588,7 +597,7 @@ LLM Wiki/
 
 Active durable pages should include `lang: ko` or `lang: en`, provenance/sources, and type-appropriate sections. The harness linter checks structural graph quality and human-facing quality issues.
 
-For machine-assisted updates, prefer managed blocks over full-page rewrites:
+Machine-assisted updates default to managed claim blocks. Use rubric-guided flexible proposals only when a page needs prose-level integration rather than another managed claim block:
 
 ```md
 <!-- acs:auto:claims:start -->
@@ -596,7 +605,7 @@ For machine-assisted updates, prefer managed blocks over full-page rewrites:
 <!-- acs:auto:claims:end -->
 ```
 
-Canonical pages should receive reviewed patch proposals before any `--apply` run.
+Canonical pages should receive reviewed patch proposals before any `--apply` run. Flexible `replace_page` writes require evidence, approved judge metadata, and a current-page hash match.
 
 ## Project structure
 
@@ -686,6 +695,6 @@ This project works with sensitive local data. Treat exports as private unless de
 - Claim atoms are implemented first; decision/entity/concept/question atom stores are planned extensions.
 - Recovery brief quality is now surfaced in exported recovery JSON through a `quality_gate` score and issue list.
 - Semantic lint currently covers promotion/wiki-patch structural checks, including missing evidence, missing targets, claim sources, patch→candidate integrity, and applied-patch logs; deeper wiki health checks are planned.
-- Wiki patch apply is intentionally narrow and managed-block oriented.
+- Wiki patch apply is intentionally guarded: managed blocks are the default write path, and flexible `replace_page` writes require evidence, approved judge metadata, and a current-page hash match.
 - Legacy full promotion still writes old `queries/`, `concepts/`, `plans/`, and `architectures/` paths.
 - Long-running Hermes gateway processes need restart after plugin/context-engine deployment.

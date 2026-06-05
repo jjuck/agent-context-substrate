@@ -46,7 +46,7 @@ raw session bundle
   -> PromotionCandidate JSON/Markdown
   -> WikiPatchProposal JSON/Markdown
   -> dry-run review
-  -> optional --apply managed-block write
+  -> optional --apply guarded managed/flexible write
   -> optional --write-mode flexible page-revision proposal
 ```
 
@@ -126,11 +126,11 @@ Hermes installers can write local `local_config.py` files containing the user's 
 | 3 | `summarizer.py` | raw bundle | `MicroSummary`, `UnitSummary`, v2 conversion helpers | request/outcome/key points/files 추출 |
 | 4 | `context_packet.py` | unit + micro summaries | `ContextPacket`, JSON/MD | 재개 가능한 작업 packet 생성 |
 | 5 | `evidence.py` | raw bundle | `MicroEvidenceBundle` JSON | bounded summarizer input + message id 보존 |
-| 6 | `summarizer_backends.py` / `agent_llm_router.py` | evidence + routing hints | `MicroSummaryV2`, `UnitSummaryV2` | heuristic/agent-llm/hybrid/custom-command backend |
+| 6 | `summarizer_backends.py` / `agent_llm_router.py` | evidence + routing hints | `MicroSummaryV2`, `UnitSummaryV2` | heuristic/agent-llm/hybrid/custom-command/codex-cli/auto backend |
 | 7 | `summary_lint.py` | v2 summary + evidence | lint report object | evidence ids, empty summary, invented files 등 검증 |
 | 8 | `atoms.py` | v2 summary | `data/atoms/claims.jsonl` | claim atom 추출 |
 | 9 | `promotions.py` | claim atoms | `data/promotions/<packet_id>.json/.md` | wiki 반영 후보 제안 |
-| 10 | `wiki_patches.py` | promotion candidates + wiki root | `data/wiki_patches/<packet_id>.json/.md` | dry-run patch proposal / managed block apply |
+| 10 | `wiki_patches.py` | promotion candidates + wiki root | `data/wiki_patches/<packet_id>.json/.md` | dry-run patch proposal / guarded managed or flexible apply |
 | 11 | `semantic_lint.py` | promotions + patch logs | semantic lint JSON/MD | promotion/wiki patch consistency 검사 |
 | 12 | `topic_map.py` | wiki + substrate artifacts | `data/index/<report-id>.json/.md` | graph-style topic map 생성 |
 | 13 | `integration.py` / `codex_integration.py` | session/thread id + policy | `IntegrationResult` | Hermes and Codex finalize orchestration |
