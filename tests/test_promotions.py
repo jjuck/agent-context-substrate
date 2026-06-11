@@ -38,7 +38,7 @@ def test_propose_promotion_candidates_from_claim_atoms() -> None:
         PromotionCandidate(
             candidate_id="packet-1-candidate-1",
             packet_id="packet-1",
-            kind="concept_update",
+            kind="wiki_update",
             target_page="summarization",
             reason="Claim atom packet-1-claim-1 may update durable wiki knowledge.",
             proposed_change="Heuristic summarizer should remain the default for privacy.",
@@ -49,6 +49,28 @@ def test_propose_promotion_candidates_from_claim_atoms() -> None:
         )
     ]
     assert PromotionCandidate.from_dict(candidates[0].to_dict()) == candidates[0]
+
+
+def test_promotion_candidate_loads_legacy_json_without_optional_fields() -> None:
+    candidate = PromotionCandidate.from_dict(
+        {
+            "candidate_id": "packet-1-candidate-legacy",
+            "packet_id": "packet-1",
+            "kind": "concept_update",
+            "target_page": "summarization",
+            "reason": "Legacy candidate.",
+            "evidence": ["claim:legacy"],
+            "proposed_change": "Legacy concept update.",
+            "proposed_action": "update_existing",
+            "confidence": 0.7,
+            "status": "pending",
+        }
+    )
+
+    assert candidate.category is None
+    assert candidate.language is None
+    assert candidate.page_type is None
+    assert candidate.placement_reason is None
 
 
 def test_render_promotion_candidates_markdown() -> None:

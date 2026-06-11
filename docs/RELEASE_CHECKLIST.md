@@ -43,7 +43,7 @@ python -m pytest -q
 ruff check .
 ```
 
-Expected current public alpha baseline: `337 passed, 12 skipped` and `All checks passed!` from Ruff.
+Expected current public alpha baseline: `347 passed, 12 skipped` and `All checks passed!` from Ruff.
 
 For a Windows Codex app release, also verify the Windows-facing one-shot install docs and hook-trust instructions in `README.ko.md`, `README.md`, and `docs/WINDOWS_CODEX_APP_SETUP*.md`.
 
@@ -127,9 +127,9 @@ agent-context-substrate config-codex paths \
   --wiki-root <wiki-root>
 ```
 
-Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, and paths for `state_5.sqlite`, `Documents\LLM Wiki`, and `data\...`. Default Windows setup should not leave an ACS Stop hook in `~/.codex/hooks.json`; use `--user-hook-fallback` only when plugin-bundled hooks are unavailable. Codex still requires `/hooks` or `Hooks need review` review/trust before non-managed command hooks run; do not document or use trust bypass as a normal install path.
+Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, direct Codex CLI diagnostics, and paths for `state_5.sqlite`, the `%USERPROFILE%\Documents\LLM Wiki` default template plus its effective root, and `data\...`. Default Windows setup should not leave an ACS Stop hook in `~/.codex/hooks.json`; use `--user-hook-fallback` only when plugin-bundled hooks are unavailable. Codex still requires Settings > Hooks, `/hooks`, or `Hooks need review` review/trust before non-managed command hooks run; do not document or use trust bypass as a normal install path.
 
-For Codex LLM summary smoke, set `summary_mode=auto` in the installed Codex plugin config, run an interactive Stop hook smoke, and verify summary artifacts under `data/exports/summaries/`. The metadata should show either `mode=codex-cli` or heuristic fallback fields such as `fallback_from=auto` / `fallback_reason=codex_cli_unavailable`; ledger artifact paths should include the requested `summary_mode` plus actual summary mode/fallback metadata.
+For Codex LLM summary and wiki-write smoke, confirm `local_config.json` has the default `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`, plus a direct `codex_cli_command` when one is detected. Run `doctor-codex --summary-smoke`, then run an interactive Stop hook smoke and verify summary artifacts under `data/exports/summaries/`, wiki proposals under `data/wiki_patches/`, and write decisions under `data/wiki_decisions/`. The summary metadata should show either `mode=codex-cli` or heuristic fallback fields such as `fallback_from=auto` / `fallback_reason=codex_cli_unavailable`; ledger artifact paths should include the requested `summary_mode`, `wiki_auto_mode`, write decision, and summary fallback metadata. If `doctor-codex` reports `service_tier="default"`, remove that Codex config value or set a supported tier before treating Codex summaries as healthy.
 
 Windows one-shot bootstrap smoke:
 
@@ -196,7 +196,7 @@ Latest verified local baseline for the v0.2.0 release candidate after spec pipel
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: public
-project tests: 337 passed, 12 skipped
+project tests: 347 passed, 12 skipped
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
 real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
 live Codex runtime: plugin agent-context-substrate, Stop hook installed, watcher fallback available

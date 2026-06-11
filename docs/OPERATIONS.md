@@ -6,14 +6,14 @@
 
 현재 운영 목표는 다음입니다.
 
-> Hermes session을 재현 가능한 packet/recovery/retrieval artifact로 정리하고, Obsidian vault는 사람용 semantic wiki로 유지한다.
+> Hermes session은 재현 가능한 packet/recovery/retrieval artifact로 정리하고, Codex stopped thread는 judge-gated `apply-flexible` 경로로 LLM Wiki를 키운다.
 
 운영자가 보장해야 할 것:
 
 1. 입력 경로가 올바르다. (`HERMES_HOME/state.db`, Codex `~/.codex/state_5.sqlite`, Codex rollout JSONL, `WIKI_PATH`, `--project-root`)
-2. `packet-only` 기본 정책이 유지된다.
-3. artifact가 `data/exports/`와 ledger에 남는다.
-4. 실제 Obsidian active graph는 lint상 깨끗하다.
+2. Hermes/standalone `packet-only` 기본 정책과 Codex `apply-flexible` + write judge 기본 정책이 각각 유지된다.
+3. artifact가 `data/exports/`, `data/wiki_patches/`, `data/wiki_decisions/`, ledger에 남는다.
+4. 실제 Obsidian active graph는 judge-approved patch와 lint 기준을 통과한다.
 5. 언어 설정(`lang: ko|en`)이 active page에 적용된다.
 
 ## 2. 실행 전 체크리스트
@@ -229,6 +229,8 @@ Hermes plugin의 `/new` 또는 `/packet <session_id>` 경로는 기본적으로 
 - `plans/`
 - `architectures/`
 
+Codex plugin Stop hook 경로는 기본적으로 `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`를 사용합니다. 이 경로는 Codex CLI summary, atom, promotion, flexible wiki patch, wiki decision artifact를 만들고, write judge가 승인하고 safety check를 통과한 patch만 LLM Wiki에 적용합니다.
+
 ### 4.4 Legacy full promotion이 필요한 경우
 
 실제 human-facing vault가 아니라 임시 wiki에서 먼저 실행하세요.
@@ -251,7 +253,7 @@ agent-context-substrate run-e2e-pipeline \
 주의:
 
 - `run-e2e-pipeline`은 legacy query/concept/plan/architecture page를 생성합니다.
-- live vault 기본 운영에는 `packet-only`가 더 안전합니다.
+- live Codex vault 운영에는 judge-gated `apply-flexible`이 기본입니다. judge 실패, 낮은 confidence, hash mismatch는 review-required artifact로 남기고 vault write를 건너뜁니다.
 
 ## 5. 언어 설정 운영법
 

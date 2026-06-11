@@ -1279,7 +1279,7 @@ def test_cli_plan_wiki_patches_can_emit_flexible_page_revisions(tmp_path, monkey
     project_root.mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("WIKI_PATH", str(wiki_root))
-    _write(wiki_root / "concepts" / "summarization.md", "# Summarization\n\nExisting prose.\n")
+    _write(wiki_root / "summarization.md", "# Summarization\n\nExisting prose.\n")
     promotion_file = project_root / "data" / "promotions" / "packet-1.json"
     _write(
         promotion_file,
@@ -1324,6 +1324,7 @@ def test_cli_plan_wiki_patches_can_emit_flexible_page_revisions(tmp_path, monkey
     assert str(patch_json_path) in captured.out
     assert proposal["metadata"]["write_mode"] == "flexible"
     assert proposal["metadata"]["judge_verdict"] == "not_requested"
+    assert proposal["operations"][0]["target"] == "summarization.md"
     assert proposal["operations"][0]["operation"] == "replace_page"
     assert proposal["operations"][0]["diff"]["base_sha256"]
     assert "rubric-guided prose" in proposal["operations"][0]["diff"]["after"]

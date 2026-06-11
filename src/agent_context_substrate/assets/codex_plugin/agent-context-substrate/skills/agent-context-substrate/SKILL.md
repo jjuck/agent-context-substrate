@@ -17,6 +17,8 @@ agent-context-substrate codex-status
 
 Codex Stop hooks are the primary finalize trigger when this plugin is installed and trusted. If hooks have not been reviewed with `/hooks`, or if a Stop event is missed, keep using `codex-watch` as the fallback.
 
+New Codex installs default to `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`. Treat the LLM Wiki as a living knowledge graph: eligible stopped threads can become wiki updates when the write judge approves the evidence-backed flexible patch. If the judge path fails or confidence is too low, ACS leaves review-required artifacts under `data/...` instead of writing the vault.
+
 ## Hook Primary
 
 After installing the plugin, check that the hook is present:
@@ -32,7 +34,7 @@ Expected mode includes `hook_support=supported`, `hook_primary=installed`, and `
 Start the watcher for the active workspace:
 
 ```bash
-agent-context-substrate codex-watch --project-root . --wiki-root "$WIKI_PATH"
+agent-context-substrate codex-watch --project-root . --wiki-root "$WIKI_PATH" --summary-mode auto --wiki-auto-mode apply-flexible --wiki-write-judge-mode auto
 ```
 
 The watcher reads `~/.codex/state_5.sqlite` and `~/.codex/sessions/**/rollout-*.jsonl` read-only, waits for idle rollout files, then runs `codex-finalize`.
@@ -42,16 +44,17 @@ The watcher reads `~/.codex/state_5.sqlite` and `~/.codex/sessions/**/rollout-*.
 Finalize a specific thread:
 
 ```bash
-agent-context-substrate codex-finalize --thread-id THREAD_ID --project-root . --wiki-root "$WIKI_PATH"
+agent-context-substrate codex-finalize --thread-id THREAD_ID --project-root . --wiki-root "$WIKI_PATH" --summary-mode auto --wiki-auto-mode apply-flexible --wiki-write-judge-mode auto
 ```
 
-To opt into Codex-backed LLM summaries without ACS reading Codex tokens, use auto summary mode:
+To inspect or change installed defaults:
 
 ```bash
-agent-context-substrate codex-finalize --thread-id THREAD_ID --project-root . --wiki-root "$WIKI_PATH" --summary-mode auto
+agent-context-substrate config-codex show
+agent-context-substrate config-codex set --key wiki_auto_mode --value apply-flexible
 ```
 
-`auto` tries `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks disabled, and inline bounded JSON input, then falls back to heuristic summaries when the CLI is unavailable or output validation fails.
+`auto` tries `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks disabled, and inline bounded JSON input, then falls back to heuristic summaries when the CLI is unavailable or output validation fails. The wiki write judge uses the same signed-in Codex runtime when `wiki_write_judge_mode=auto`.
 
 ## Retrieval
 

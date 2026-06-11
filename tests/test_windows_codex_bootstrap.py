@@ -22,6 +22,14 @@ def test_windows_codex_bootstrap_script_documents_single_command_flow() -> None:
     assert "--dangerously-bypass-hook-trust" not in script
 
 
+def test_windows_codex_bootstrap_does_not_force_default_absolute_wiki_root() -> None:
+    script = Path("scripts/setup-codex-windows.ps1").read_text(encoding="utf-8")
+
+    assert 'Join-Path $env:USERPROFILE "Documents\\LLM Wiki"' not in script
+    assert 'if ($WikiRootExplicit) {' in script
+    assert '$SetupArgs += @("--wiki-root", $WikiRoot)' in script
+
+
 def test_windows_codex_docs_explain_one_shot_and_diagnostic_commands() -> None:
     docs = "\n".join(
         [
@@ -52,6 +60,7 @@ def test_windows_codex_docs_explain_one_shot_and_diagnostic_commands() -> None:
         "search-knowledge",
         "state_5.sqlite",
         "Documents\\LLM Wiki",
+        "default template",
         "data\\...",
     ]:
         assert required in docs

@@ -25,6 +25,12 @@ from .codex_setup import (
     doctor_codex,
     setup_codex,
 )
+from .codex_wiki_root import (
+    DEFAULT_CODEX_WIKI_ROOT_TEMPLATE,
+    CodexWikiRootResolution,
+    default_codex_wiki_root_template,
+    resolve_codex_wiki_root,
+)
 from .distribution import (
     DoctorReport,
     FreshInstallSmokeResult,
@@ -133,6 +139,8 @@ from .wiki_patches import (
     plan_wiki_patch_proposal,
     render_wiki_patch_proposal_markdown,
 )
+from .wiki_config import WikiCategoryRule, WikiConfig, load_wiki_config
+from .wiki_placement import WikiPlacement, resolve_wiki_placement
 from .summarizer_backends import (
     AgentLLMRouter,
     AgentLLMSummarizerBackend,
@@ -173,6 +181,7 @@ __all__ = [
     "CodexDiagnosticReport",
     "CodexDoctorReport",
     "CodexSetupResult",
+    "CodexWikiRootResolution",
     "ConceptAtom",
     "DecisionAtom",
     "EntityAtom",
@@ -192,8 +201,12 @@ __all__ = [
     "PacketBuildResult",
     "PromotionCandidate",
     "WikiPatchApplyResult",
+    "WikiCategoryRule",
+    "WikiConfig",
+    "WikiPlacement",
     "WikiPatchOperation",
     "WikiPatchProposal",
+    "DEFAULT_CODEX_WIKI_ROOT_TEMPLATE",
     "LedgerRecord",
     "SemanticLintIssue",
     "SemanticLintReport",
@@ -217,6 +230,7 @@ __all__ = [
     "analyze_heuristic_messages",
     "compose_recovery_summary",
     "codex_config_paths",
+    "default_codex_wiki_root_template",
     "extract_metadata_signals",
     "extract_recovery_fields",
     "build_context_packet",
@@ -268,6 +282,7 @@ __all__ = [
     "render_context_packet_markdown",
     "get_summarizer_backend",
     "lint_wiki",
+    "load_wiki_config",
     "count_lint_advisories",
     "lint_micro_summary_v2",
     "lint_promotion_substrate",
@@ -301,6 +316,8 @@ __all__ = [
     "apply_wiki_patch_proposal",
     "plan_wiki_patch_proposal",
     "render_wiki_patch_proposal_markdown",
+    "resolve_wiki_placement",
+    "resolve_codex_wiki_root",
     "BrokenWikilink",
     "ContextPacket",
     "ContextPacketInvariantError",

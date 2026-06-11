@@ -36,7 +36,9 @@ def test_codex_commands_are_registered() -> None:
         ["setup-codex", "--project-root", "C:/project", "--user-hook-fallback"]
     ).user_hook_fallback is True
     assert parser.parse_args(["setup-codex-wizard", "--project-root", "C:/project", "--yes"]).command == "setup-codex-wizard"
-    assert parser.parse_args(["doctor-codex", "--project-root", "C:/project"]).command == "doctor-codex"
+    doctor_args = parser.parse_args(["doctor-codex", "--project-root", "C:/project", "--summary-smoke"])
+    assert doctor_args.command == "doctor-codex"
+    assert doctor_args.summary_smoke is True
     assert parser.parse_args(["diagnose-codex", "--project-root", "C:/project", "--fix"]).command == "diagnose-codex"
     assert parser.parse_args(["config-codex", "paths", "--project-root", "C:/project"]).command == "config-codex"
     assert parser.parse_args(["codex-status", "--codex-home", "C:/codex"]).command == "codex-status"
@@ -55,8 +57,25 @@ def test_codex_commands_are_registered() -> None:
             "auto",
             "--codex-cli-command",
             "C:/OpenAI/Codex/bin/codex.exe",
+            "--wiki-auto-mode",
+            "apply-flexible",
         ]
     ).command == "codex-finalize"
+    assert (
+        parser.parse_args(
+            [
+                "codex-watch",
+                "--codex-home",
+                "C:/codex",
+                "--once",
+                "--wiki-auto-mode",
+                "apply-flexible",
+                "--wiki-write-judge-mode",
+                "auto",
+            ]
+        ).wiki_auto_mode
+        == "apply-flexible"
+    )
     assert (
         parser.parse_args(
             [
@@ -95,6 +114,17 @@ def test_codex_commands_are_registered() -> None:
             "C:/wiki",
         ]
     ).command == "install-codex-plugin"
+
+
+@pytest.mark.parametrize("command", ["setup-codex", "setup-codex-wizard"])
+def test_setup_codex_help_renders_userprofile_template(command: str, capsys) -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args([command, "--help"])
+
+    assert exc.value.code == 0
+    assert "%USERPROFILE%\\Documents\\LLM Wiki" in capsys.readouterr().out
 
 
 def test_codex_watch_custom_command_requires_summarizer_command(tmp_path: Path) -> None:
@@ -190,4 +220,83 @@ def test_config_codex_paths_cli_prints_user_facing_paths(tmp_path: Path, capsys)
     assert exit_code == 0
     assert "codex_sqlite=" in captured.out
     assert "llm_wiki_root=" in captured.out
+    assert "wiki_root_source=explicit" in captured.out
+    assert "wiki_root_effective=" in captured.out
     assert "acs_artifacts=" in captured.out
+
+
+def test_config_codex_paths_uses_installed_config_wiki_root(tmp_path: Path, capsys, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    installed_wiki = tmp_path / "installed-wiki"
+    plugin_dir = codex_home / "plugins" / "agent-context-substrate"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(installed_wiki),
+                "wiki_root_source": "explicit",
+                "codex_home": str(codex_home),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", raising=False)
+    monkeypatch.delenv("WIKI_PATH", raising=False)
+
+    exit_code = cli.main(
+        [
+            "config-codex",
+            "paths",
+            "--codex-home",
+            str(codex_home),
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert f"wiki_root={installed_wiki}" in captured.out
+    assert "wiki_root_source=explicit" in captured.out
+    assert f"wiki_root_effective={installed_wiki.resolve(strict=False)}" in captured.out
+
+
+def test_config_codex_show_prints_effective_wiki_root_for_template(tmp_path: Path, capsys, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    env_home = tmp_path / "home"
+    plugin_dir = codex_home / "plugins" / "agent-context-substrate"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": "%USERPROFILE%\\Documents\\LLM Wiki",
+                "wiki_root_source": "default-template",
+                "codex_home": str(codex_home),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("USERPROFILE", str(env_home))
+
+    exit_code = cli.main(
+        [
+            "config-codex",
+            "show",
+            "--codex-home",
+            str(codex_home),
+            "--project-root",
+            str(project_root),
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "wiki_root=%USERPROFILE%\\Documents\\LLM Wiki" in captured.out
+    assert "wiki_root_source=default-template" in captured.out
+    assert f"wiki_root_effective={env_home / 'Documents' / 'LLM Wiki'}" in captured.out

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
+import json
 from pathlib import Path
+import re
 from typing import Any
 
 from .promotions import PromotionCandidate
 from .safe_paths import safe_wiki_target_path
+from .wiki_config import load_wiki_config
+from .wiki_placement import WikiPlacement, safe_resolved_wiki_placement
+from .wiki_pages import collect_durable_wiki_pages
 
 MANAGED_CLAIMS_START = "<!-- acs:auto:claims:start -->"
 MANAGED_CLAIMS_END = "<!-- acs:auto:claims:end -->"
@@ -18,6 +23,7 @@ EXPERIMENTAL_WIKI_PATCH_OPERATIONS = frozenset({"add_link", "mark_stale"})
 FUTURE_WIKI_PATCH_OPERATIONS = frozenset(
     {"replace_section", "add_alias", "mark_deprecated", "merge_pages", "split_page"}
 )
+_TRANSIENT_SMOKE_TEST_PATTERN = re.compile(r"(?i)\bsmoke(?:-|\s*)test\b|\btest\b|테스트")
 
 
 @dataclass(frozen=True)
@@ -49,11 +55,14 @@ class WikiPatchOperation:
     risk: str
     diff: dict[str, str]
     status: str
+    candidate_ids: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "patch_id": self.patch_id,
             "candidate_id": self.candidate_id,
+            "candidate_ids": list(self.candidate_ids or [self.candidate_id]),
             "target": self.target,
             "operation": self.operation,
             "rationale": self.rationale,
@@ -61,13 +70,17 @@ class WikiPatchOperation:
             "risk": self.risk,
             "diff": dict(self.diff),
             "status": self.status,
+            "metadata": dict(self.metadata),
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "WikiPatchOperation":
+        candidate_id = str(payload["candidate_id"])
+        raw_candidate_ids = payload.get("candidate_ids")
+        candidate_ids = [str(item) for item in raw_candidate_ids] if isinstance(raw_candidate_ids, list) else [candidate_id]
         return cls(
             patch_id=str(payload["patch_id"]),
-            candidate_id=str(payload["candidate_id"]),
+            candidate_id=candidate_id,
             target=str(payload["target"]),
             operation=str(payload["operation"]),
             rationale=str(payload["rationale"]),
@@ -75,6 +88,8 @@ class WikiPatchOperation:
             risk=str(payload["risk"]),
             diff={str(key): str(value) for key, value in dict(payload.get("diff", {})).items()},
             status=str(payload["status"]),
+            candidate_ids=candidate_ids,
+            metadata=dict(payload.get("metadata", {})),
         )
 
 
@@ -118,6 +133,24 @@ def plan_wiki_patch_proposal(
     if write_mode not in {"managed", "flexible"}:
         raise ValueError(f"Unsupported wiki write_mode: {write_mode}")
     operations: list[WikiPatchOperation] = []
+    if write_mode == "flexible":
+        operations = _plan_flexible_wiki_patch_operations(
+            packet_id=packet_id,
+            candidates=candidates,
+            wiki_root=wiki_root,
+        )
+        return WikiPatchProposal(
+            proposal_id=f"{packet_id}-wiki-patch-proposal",
+            packet_id=packet_id,
+            operations=operations,
+            status="proposed",
+            metadata=_proposal_metadata(
+                write_mode=write_mode,
+                judge_mode=judge_mode,
+                judge_verdict=judge_verdict,
+            ),
+        )
+
     for candidate in candidates:
         if candidate.status != "pending":
             continue
@@ -130,25 +163,16 @@ def plan_wiki_patch_proposal(
         if target_path is None:
             continue
         existing_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-        if write_mode == "flexible":
-            operation = "replace_page" if target_path.exists() else "create_page"
-            before = existing_text
-            after = _flexible_page_revision_for_candidate(
-                candidate=candidate,
-                target_path=target_path,
-                existing_text=existing_text,
-            )
-            diff = {"before": before, "after": after, "base_sha256": _sha256(existing_text)}
-        else:
-            claim_block = _claim_block_for_candidate(candidate)
-            before = _existing_claim_block(existing_text)
-            operation = "insert_claim_block" if target_path.exists() else "create_page"
-            after = claim_block if operation != "create_page" else _seed_page_for_candidate(candidate=candidate, target_path=target_path)
-            diff = {"before": before, "after": after}
+        claim_block = _claim_block_for_candidate(candidate)
+        before = _existing_claim_block(existing_text)
+        operation = "insert_claim_block" if target_path.exists() else "create_page"
+        after = claim_block if operation != "create_page" else _seed_page_for_candidate(candidate=candidate, target_path=target_path)
+        diff = {"before": before, "after": after}
         operations.append(
             WikiPatchOperation(
                 patch_id=f"{packet_id}-patch-{index}",
                 candidate_id=candidate.candidate_id,
+                candidate_ids=[candidate.candidate_id],
                 target=target,
                 operation=operation,
                 rationale=candidate.reason,
@@ -169,6 +193,76 @@ def plan_wiki_patch_proposal(
             judge_verdict=judge_verdict,
         ),
     )
+
+
+def _plan_flexible_wiki_patch_operations(
+    *,
+    packet_id: str,
+    candidates: list[PromotionCandidate],
+    wiki_root: Path,
+) -> list[WikiPatchOperation]:
+    config = load_wiki_config(wiki_root)
+    grouped: dict[str, tuple[str, Path, WikiPlacement, list[PromotionCandidate]]] = {}
+    for candidate in candidates:
+        if candidate.status != "pending":
+            continue
+        if _is_transient_validation_candidate(candidate):
+            continue
+        resolved = safe_resolved_wiki_placement(candidate=candidate, wiki_root=wiki_root, config=config)
+        if resolved is None:
+            continue
+        placement, target_path = resolved
+        group_key = str(target_path.resolve()).lower()
+        if group_key not in grouped:
+            grouped[group_key] = (placement.target, target_path, placement, [])
+        grouped[group_key][3].append(candidate)
+
+    operations: list[WikiPatchOperation] = []
+    for target, target_path, placement, target_candidates in grouped.values():
+        index = len(operations) + 1
+        existing_text = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
+        operation = "replace_page" if target_path.exists() else "create_page"
+        after = _flexible_page_revision_for_candidates(
+            candidates=target_candidates,
+            placement=placement,
+            target_path=target_path,
+            existing_text=existing_text,
+            wiki_root=wiki_root,
+        )
+        primary_candidate = target_candidates[0]
+        operations.append(
+            WikiPatchOperation(
+                patch_id=f"{packet_id}-patch-{index}",
+                candidate_id=primary_candidate.candidate_id,
+                candidate_ids=[candidate.candidate_id for candidate in target_candidates],
+                target=target,
+                operation=operation,
+                rationale="; ".join(_dedupe([candidate.reason for candidate in target_candidates])),
+                evidence=_candidate_evidence(target_candidates),
+                risk=_risk_for_operation(operation),
+                diff={
+                    "before": existing_text,
+                    "after": after,
+                    "base_sha256": _sha256(existing_text),
+                },
+                status="proposed",
+                metadata={"placement": placement.to_metadata()},
+            )
+        )
+    return operations
+
+
+def _is_transient_validation_candidate(candidate: PromotionCandidate) -> bool:
+    text = " ".join([candidate.reason, candidate.proposed_change, candidate.target_page])
+    return bool(_TRANSIENT_SMOKE_TEST_PATTERN.search(text))
+
+
+def _remove_transient_validation_lines(markdown: str) -> str:
+    lines = [
+        line for line in markdown.splitlines()
+        if not _TRANSIENT_SMOKE_TEST_PATTERN.search(line)
+    ]
+    return "\n".join(lines).rstrip() + ("\n" if markdown.endswith("\n") else "")
 
 
 def render_wiki_patch_proposal_markdown(proposal: WikiPatchProposal) -> str:
@@ -309,44 +403,191 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _flexible_page_revision_for_candidate(
+def _flexible_page_revision_for_candidates(
     *,
-    candidate: PromotionCandidate,
+    candidates: list[PromotionCandidate],
+    placement: WikiPlacement,
     target_path: Path,
     existing_text: str,
+    wiki_root: Path,
 ) -> str:
-    title = _title_for_target(target_path)
-    addition = _flexible_candidate_note(candidate)
+    title = placement.title or _title_for_target(target_path)
+    evidence = _candidate_evidence(candidates)
+    addition = _flexible_candidate_notes(candidates)
     if existing_text.strip():
-        base = existing_text.rstrip()
-        if candidate.proposed_change in existing_text:
+        existing_text = _remove_transient_validation_lines(existing_text)
+        base = _ensure_flexible_page_frontmatter(
+            markdown=existing_text.rstrip(),
+            placement=placement,
+            evidence=evidence,
+        )
+        if all(candidate.proposed_change in existing_text for candidate in candidates):
             return base + "\n"
         return f"{base}\n\n{addition}\n"
+    related_links = _related_wikilinks_for_candidates(candidates=candidates, wiki_root=wiki_root, target_path=target_path)
+    frontmatter = [
+        "---",
+        f"title: {title}",
+        f"lang: {placement.language}",
+        f"type: {placement.page_type}",
+    ]
+    if placement.category:
+        frontmatter.append(f"category: {placement.category}")
+    frontmatter.extend(
+        [
+            f"status: {_status_for_placement(placement)}",
+            "review_needed: true",
+            f"sources: {json.dumps(evidence, ensure_ascii=False)}",
+            "---",
+        ]
+    )
     return "\n".join(
         [
-            "---",
-            f"title: {title}",
-            "status: seed",
-            "review_needed: true",
-            "---",
+            *frontmatter,
             f"# {title}",
             "",
-            candidate.proposed_change,
+            "## Current Understanding",
             "",
-            _evidence_sentence(candidate.evidence),
+            *_claim_lines(candidates),
+            "",
+            *_related_pages_section(related_links),
+            "## Sources and Evidence",
+            *_evidence_lines(evidence),
             "",
         ]
     )
 
 
-def _flexible_candidate_note(candidate: PromotionCandidate) -> str:
-    return "\n".join(
-        [
-            candidate.proposed_change,
-            "",
-            _evidence_sentence(candidate.evidence),
-        ]
-    )
+def _flexible_candidate_notes(candidates: list[PromotionCandidate]) -> str:
+    lines: list[str] = ["## Current Understanding", ""]
+    lines.extend(_claim_lines(candidates))
+    evidence = _candidate_evidence(candidates)
+    lines.extend(["", "## Sources and Evidence", *_evidence_lines(evidence)])
+    return "\n".join(lines)
+
+
+def _ensure_flexible_page_frontmatter(*, markdown: str, placement: WikiPlacement, evidence: list[str]) -> str:
+    required = {
+        "title": placement.title,
+        "lang": placement.language,
+        "type": placement.page_type,
+        "status": _status_for_placement(placement),
+        "review_needed": "true",
+    }
+    if placement.category:
+        required["category"] = placement.category
+    sources = json.dumps(evidence, ensure_ascii=False)
+    if not markdown.startswith("---\n"):
+        frontmatter = [f"{key}: {value}" for key, value in required.items()]
+        frontmatter.append(f"sources: {sources}")
+        return "---\n" + "\n".join(frontmatter) + "\n---\n" + markdown.lstrip()
+
+    lines = markdown.splitlines()
+    end_index = next((index for index in range(1, len(lines)) if lines[index].strip() == "---"), None)
+    if end_index is None:
+        frontmatter = [f"{key}: {value}" for key, value in required.items()]
+        frontmatter.append(f"sources: {sources}")
+        return "---\n" + "\n".join(frontmatter) + "\n---\n" + markdown.lstrip()
+
+    frontmatter_lines = list(lines[1:end_index])
+    body = "\n".join(lines[end_index + 1 :]).lstrip()
+    seen_keys: set[str] = set()
+    updated_frontmatter: list[str] = []
+    for line in frontmatter_lines:
+        key = _frontmatter_key(line)
+        if key:
+            seen_keys.add(key)
+        if key == "sources":
+            updated_frontmatter.append(f"sources: {_merged_sources_json(line, evidence)}")
+        else:
+            updated_frontmatter.append(line)
+    for key, value in required.items():
+        if key not in seen_keys:
+            updated_frontmatter.append(f"{key}: {value}")
+    if "sources" not in seen_keys:
+        updated_frontmatter.append(f"sources: {sources}")
+    return "---\n" + "\n".join(updated_frontmatter) + "\n---\n" + body
+
+
+def _status_for_placement(placement: WikiPlacement) -> str:
+    return "review_needed" if placement.fallback and not placement.registered else "seed"
+
+
+def _frontmatter_key(line: str) -> str:
+    if ":" not in line:
+        return ""
+    key = line.split(":", 1)[0].strip()
+    return key if key.replace("_", "").replace("-", "").isalnum() else ""
+
+
+def _merged_sources_json(line: str, evidence: list[str]) -> str:
+    raw_value = line.split(":", 1)[1].strip() if ":" in line else ""
+    existing: list[str] = []
+    if raw_value.startswith("["):
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            parsed = []
+        if isinstance(parsed, list):
+            existing = [str(item) for item in parsed]
+    return json.dumps(_dedupe([*existing, *evidence]), ensure_ascii=False)
+
+
+def _claim_lines(candidates: list[PromotionCandidate]) -> list[str]:
+    return [f"- {claim}" for claim in _dedupe([candidate.proposed_change for candidate in candidates]) if claim]
+
+
+def _candidate_evidence(candidates: list[PromotionCandidate]) -> list[str]:
+    evidence: list[str] = []
+    for candidate in candidates:
+        evidence.extend(candidate.evidence)
+    return _dedupe(evidence)
+
+
+def _evidence_lines(evidence: list[str]) -> list[str]:
+    if not evidence:
+        return ["- review required before these claims are promoted"]
+    return [f"- `{item}`" for item in evidence]
+
+
+def _related_pages_section(related_links: list[str]) -> list[str]:
+    if not related_links:
+        return []
+    return ["## Related Pages", "", *[f"- [[{link}]]" for link in related_links], ""]
+
+
+def _related_wikilinks_for_candidates(
+    *,
+    candidates: list[PromotionCandidate],
+    wiki_root: Path,
+    target_path: Path,
+) -> list[str]:
+    existing_pages = _existing_wiki_page_stems(wiki_root)
+    target_stem = target_path.stem
+    related: list[str] = []
+    for candidate in candidates:
+        candidate_target = Path(_target_file_for_candidate(candidate)).stem
+        if candidate_target in existing_pages and candidate_target != target_stem:
+            related.append(candidate_target)
+    if not related:
+        related.extend(stem for stem in existing_pages if stem != target_stem)
+    return _dedupe(related)[:3]
+
+
+def _existing_wiki_page_stems(wiki_root: Path) -> set[str]:
+    return {path.stem for path in collect_durable_wiki_pages(wiki_root)}
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
 
 
 def _evidence_sentence(evidence: list[str]) -> str:

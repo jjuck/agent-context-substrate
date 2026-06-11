@@ -26,6 +26,7 @@ from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from .summary_judge import evaluate_summary_with_judge, export_summary_judge_verdict
 from .summary_lint import lint_micro_summary_v2, lint_unit_summary_v2
 from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
+from .wiki_patches import WikiPatchApplyResult
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,10 @@ class IntegrationResult:
     summary_unit_path: Path | None = None
     summary_evidence_path: Path | None = None
     summary_judge_path: Path | None = None
+    wiki_decision_path: Path | None = None
+    wiki_patch_path: Path | None = None
+    wiki_patch_markdown_path: Path | None = None
+    wiki_apply_result: WikiPatchApplyResult | None = None
 
 
 @dataclass(frozen=True)

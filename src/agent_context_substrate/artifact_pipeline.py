@@ -19,7 +19,7 @@ from .promotions import (
     propose_promotion_candidates,
     render_promotion_candidates_markdown,
 )
-from .safe_paths import safe_artifact_stem, safe_child_path
+from .safe_paths import safe_artifact_stem, safe_child_path, safe_wiki_target_path
 from .semantic_lint import lint_promotion_substrate, render_semantic_lint_report
 from .wiki_patches import (
     WikiPatchApplyResult,
@@ -28,6 +28,8 @@ from .wiki_patches import (
     plan_wiki_patch_proposal,
     render_wiki_patch_proposal_markdown,
 )
+from .wiki_registration import register_promoted_page
+from .wiki_config import UNCLASSIFIED_REVIEW_SECTION, load_wiki_config
 
 
 def load_micro_summary_v2(path: Path) -> MicroSummaryV2:
@@ -187,14 +189,21 @@ def apply_wiki_patch_file(
     dry_run: bool = True,
 ) -> WikiPatchApplyResult:
     proposal = load_wiki_patch_proposal(patch_file)
+    effective_wiki_root = wiki_root or paths.wiki_root
     result = apply_wiki_patch_proposal(
         proposal=proposal,
-        wiki_root=wiki_root or paths.wiki_root,
+        wiki_root=effective_wiki_root,
         dry_run=dry_run,
     )
     if not dry_run:
         append_applied_wiki_patch_log(paths=paths, proposal=proposal, result=result)
         mark_applied_promotion_candidates(paths=paths, proposal=proposal, result=result)
+        register_applied_wiki_patch_pages(
+            paths=paths,
+            wiki_root=effective_wiki_root,
+            proposal=proposal,
+            result=result,
+        )
     return result
 
 
@@ -221,6 +230,7 @@ def append_applied_wiki_patch_log(
                         "packet_id": proposal.packet_id,
                         "patch_id": operation.patch_id,
                         "candidate_id": operation.candidate_id,
+                        "candidate_ids": _candidate_ids_for_operation(operation),
                         "target": operation.target,
                         "operation": operation.operation,
                     },
@@ -248,9 +258,10 @@ def mark_applied_promotion_candidates(
         return
     operations_by_id = {operation.patch_id: operation for operation in proposal.operations}
     applied_candidate_ids = {
-        operations_by_id[patch_id].candidate_id
+        candidate_id
         for patch_id in result.applied_patch_ids
         if patch_id in operations_by_id
+        for candidate_id in _candidate_ids_for_operation(operations_by_id[patch_id])
     }
     payload = json.loads(promotion_path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
@@ -259,6 +270,112 @@ def mark_applied_promotion_candidates(
         if isinstance(candidate, dict) and candidate.get("candidate_id") in applied_candidate_ids:
             candidate["status"] = "applied"
     promotion_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def register_applied_wiki_patch_pages(
+    *,
+    paths: HarnessPaths,
+    wiki_root: Path | str,
+    proposal: WikiPatchProposal,
+    result: WikiPatchApplyResult,
+) -> None:
+    if not result.applied_patch_ids:
+        return
+    registration_paths = _paths_with_wiki_root(paths=paths, wiki_root=Path(wiki_root))
+    operations_by_id = {operation.patch_id: operation for operation in proposal.operations}
+    registered_targets: set[str] = set()
+    for patch_id in result.applied_patch_ids:
+        operation = operations_by_id.get(patch_id)
+        if operation is None or operation.target in registered_targets:
+            continue
+        target_path = safe_wiki_target_path(wiki_root=Path(wiki_root), target=operation.target)
+        if target_path is None:
+            continue
+        registered_targets.add(operation.target)
+        section_heading = _index_section_for_applied_target(
+            wiki_root=Path(wiki_root),
+            target_path=target_path,
+            operation=operation,
+        )
+        register_promoted_page(
+            paths=registration_paths,
+            section_heading=section_heading,
+            slug=target_path.stem,
+            summary=_wiki_patch_registration_summary(operation),
+            output_path=target_path,
+            command_name="wiki-patch-apply",
+            extra_lines=[
+                f"- Patch: `{operation.patch_id}`",
+                "- Candidates: " + ", ".join(f"`{candidate_id}`" for candidate_id in _candidate_ids_for_operation(operation)),
+            ],
+        )
+
+
+def _paths_with_wiki_root(*, paths: HarnessPaths, wiki_root: Path) -> HarnessPaths:
+    return HarnessPaths(
+        project_root=paths.project_root,
+        hermes_home=paths.hermes_home,
+        wiki_root=wiki_root,
+        home_dir=paths.home_dir,
+    )
+
+
+def _candidate_ids_for_operation(operation) -> list[str]:
+    candidate_ids = list(getattr(operation, "candidate_ids", []) or [])
+    return candidate_ids or [operation.candidate_id]
+
+
+def _index_section_for_applied_target(*, wiki_root: Path, target_path: Path, operation) -> str:
+    fields = _frontmatter_fields(target_path)
+    category = fields.get("category") or _operation_category(operation)
+    if category:
+        return load_wiki_config(wiki_root).index_section_for_category(category)
+    return UNCLASSIFIED_REVIEW_SECTION
+
+
+def _frontmatter_fields(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---\n"):
+        return {}
+    parts = text.split("\n---\n", 1)
+    if len(parts) != 2:
+        return {}
+    fields: dict[str, str] = {}
+    for line in parts[0][4:].splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        fields[key.strip()] = value.strip().strip("'\"")
+    return fields
+
+
+def _operation_category(operation) -> str:
+    metadata = getattr(operation, "metadata", {}) or {}
+    placement = metadata.get("placement") if isinstance(metadata, dict) else None
+    if isinstance(placement, dict):
+        return str(placement.get("category", "")).strip()
+    return ""
+
+
+def _index_section_for_target(target: str) -> str:
+    directory = target.replace("\\", "/").split("/", 1)[0].lower()
+    return {
+        "entities": "Entities",
+        "concepts": "Concepts",
+        "comparisons": "Comparisons",
+        "queries": "Queries",
+        "architectures": "Architectures",
+        "plans": "Plans",
+    }.get(directory, "Generated Pages")
+
+
+def _wiki_patch_registration_summary(operation) -> str:
+    summary = operation.rationale.strip()
+    if not summary:
+        return "Applied ACS wiki patch"
+    return summary[:117] + "..." if len(summary) > 120 else summary
 
 
 def load_all_promotion_payloads(paths: HarnessPaths) -> list[dict[str, object]]:

@@ -7,22 +7,10 @@ import re
 
 from .models import ContextPacket
 from .paths import HarnessPaths
-from .safe_paths import is_safe_wiki_page_path, safe_child_path
+from .safe_paths import safe_child_path
+from .wiki_config import load_wiki_config, normalize_category
+from .wiki_pages import collect_durable_wiki_pages
 
-_DURABLE_DIRS = (
-    "entities",
-    "concepts",
-    "comparisons",
-    "queries",
-    "architectures",
-    "plans",
-    "01 지식",
-    "02 내 아이디어",
-    "03 인물과 조직",
-    "04 프로젝트",
-    "05 계획",
-    "06 원천 자료",
-)
 _WIKILINK_PATTERN = re.compile(r"\[\[([^\]|#]+)(?:#[^\]]+)?(?:\|[^\]]+)?\]\]")
 _SOURCES_PATTERN = re.compile(r"^sources:\s*\[(.*)\]\s*$", re.MULTILINE)
 _FRONTMATTER_KEY_PATTERN = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$", re.MULTILINE)
@@ -96,6 +84,7 @@ class WikiLintReport:
     thin_content_pages: list[str]
     unexplained_english_terms_pages: list[str]
     insufficient_related_links_pages: list[str]
+    unregistered_category_pages: list[str]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -126,6 +115,7 @@ class WikiLintReport:
             "thin_content_pages": list(self.thin_content_pages),
             "unexplained_english_terms_pages": list(self.unexplained_english_terms_pages),
             "insufficient_related_links_pages": list(self.insufficient_related_links_pages),
+            "unregistered_category_pages": list(self.unregistered_category_pages),
         }
 
 
@@ -177,6 +167,7 @@ def _advisory_issue_groups(report: WikiLintReport) -> list[list[str]]:
         report.thin_content_pages,
         report.unexplained_english_terms_pages,
         report.insufficient_related_links_pages,
+        report.unregistered_category_pages,
     ]
 
 
@@ -198,6 +189,7 @@ def _human_quality_issue_count(report: WikiLintReport) -> int:
             report.thin_content_pages,
             report.unexplained_english_terms_pages,
             report.insufficient_related_links_pages,
+            report.unregistered_category_pages,
         ]
     )
 
@@ -308,15 +300,7 @@ def _extract_wikilinks(text: str) -> list[str]:
 
 
 def _collect_durable_pages(wiki_root: Path) -> list[Path]:
-    pages: list[Path] = []
-    for directory_name in _DURABLE_DIRS:
-        directory = wiki_root / directory_name
-        if not directory.exists():
-            continue
-        pages.extend(
-            path for path in sorted(directory.rglob("*.md")) if is_safe_wiki_page_path(path, wiki_root)
-        )
-    return sorted(pages)
+    return collect_durable_wiki_pages(wiki_root)
 
 
 def _collect_packet_exports(paths: HarnessPaths) -> list[Path]:
@@ -373,6 +357,8 @@ def _lint_internal_artifacts(paths: HarnessPaths) -> dict[str, list[str]]:
 
 def lint_wiki(paths: HarnessPaths) -> WikiLintReport:
     wiki_root = paths.wiki_root
+    wiki_config = load_wiki_config(wiki_root)
+    registered_categories = set(wiki_config.category_registry)
     page_paths = _collect_durable_pages(wiki_root)
     checked_pages = [path.relative_to(wiki_root).as_posix() for path in page_paths]
 
@@ -398,6 +384,7 @@ def lint_wiki(paths: HarnessPaths) -> WikiLintReport:
     thin_content_pages: list[str] = []
     unexplained_english_terms_pages: list[str] = []
     insufficient_related_links_pages: list[str] = []
+    unregistered_category_pages: list[str] = []
 
     for path in page_paths:
         relative_path = path.relative_to(wiki_root).as_posix()
@@ -408,6 +395,13 @@ def lint_wiki(paths: HarnessPaths) -> WikiLintReport:
         lowered = text.lower()
         title = fields.get("title", "")
         lang = fields.get("lang", "")
+        category = normalize_category(fields.get("category"))
+        if (
+            category
+            and wiki_config.should_report_unregistered_categories()
+            and category not in registered_categories
+        ):
+            unregistered_category_pages.append(relative_path)
         if path.stem.isdigit():
             numeric_slug_pages.append(relative_path)
         if _SESSION_ID_SLUG_PATTERN.match(path.stem):
@@ -438,10 +432,15 @@ def lint_wiki(paths: HarnessPaths) -> WikiLintReport:
             thin_content_pages.append(relative_path)
         if lang == "ko" and _unexplained_acronyms(text):
             unexplained_english_terms_pages.append(relative_path)
-        if len(set(_extract_wikilinks(text))) < _MIN_RELATED_WIKILINKS:
+        wikilinks = set(_extract_wikilinks(text))
+        valid_related_links = {
+            target for target in wikilinks if target in page_name_to_path and page_name_to_path[target] != relative_path
+        }
+        required_related_links = min(_MIN_RELATED_WIKILINKS, max(0, len(page_name_to_path) - 1))
+        if len(valid_related_links) < required_related_links:
             insufficient_related_links_pages.append(relative_path)
 
-        for target in _extract_wikilinks(text):
+        for target in wikilinks:
             target_path = page_name_to_path.get(target)
             if target_path is None:
                 broken_link_pairs.add((relative_path, target))
@@ -449,6 +448,10 @@ def lint_wiki(paths: HarnessPaths) -> WikiLintReport:
             inbound_links[target_path].add(relative_path)
 
     index_links = set(_extract_wikilinks(_read_text(wiki_root / "index.md")))
+    for target in index_links:
+        target_path = page_name_to_path.get(target)
+        if target_path is not None:
+            inbound_links[target_path].add("index.md")
     pages_missing_from_index = sorted(
         relative_path
         for path, relative_path in zip(page_paths, checked_pages, strict=False)
@@ -491,6 +494,7 @@ def lint_wiki(paths: HarnessPaths) -> WikiLintReport:
         thin_content_pages=sorted(thin_content_pages),
         unexplained_english_terms_pages=sorted(unexplained_english_terms_pages),
         insufficient_related_links_pages=sorted(insufficient_related_links_pages),
+        unregistered_category_pages=sorted(unregistered_category_pages),
     )
 
 
@@ -551,6 +555,7 @@ def render_lint_report_markdown(report: WikiLintReport) -> str:
         ("Thin content", report.thin_content_pages),
         ("Unexplained English acronyms", report.unexplained_english_terms_pages),
         ("Insufficient related links", report.insufficient_related_links_pages),
+        ("Unregistered categories", report.unregistered_category_pages),
     ]
     lines.extend(["", "## Human-Facing Quality"])
     any_quality_issue = False

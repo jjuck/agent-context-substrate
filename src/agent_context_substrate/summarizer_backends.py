@@ -102,7 +102,7 @@ _WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(
     r"\b[A-Za-z]:[\\/](?:[^\\/\s,;:'\"<>|]+[\\/])*[^\\/\s,;:'\"<>|]+(?: [^\\/\s,;:'\"<>|]+)*"
 )
 _UNIX_ABSOLUTE_PATH_PATTERN = re.compile(
-    r"(?<![A-Za-z0-9+.:/\-])/(?:[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*\/)*[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*"
+    r"(?<![^\s('\"\[<{=])/(?:[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*\/)*[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*"
 )
 _LOCAL_PATH_REDACTION = "<REDACTED_LOCAL_PATH>"
 _TRUNCATION_MARKER = "…<TRUNCATED_FOR_LLM_INPUT>"

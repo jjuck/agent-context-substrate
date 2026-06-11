@@ -14,7 +14,7 @@ from agent_context_substrate.codex_hook import (
 )
 
 
-def _write_plugin_config(plugin_root: Path, *, project_root: Path, wiki_root: Path, codex_home: Path) -> None:
+def _write_plugin_config(plugin_root: Path, *, project_root: Path, wiki_root: Path | str, codex_home: Path) -> None:
     plugin_root.mkdir(parents=True, exist_ok=True)
     (plugin_root / "local_config.json").write_text(
         (
@@ -62,6 +62,83 @@ def test_stop_hook_decision_builds_codex_finalize_command_for_project_thread(tmp
         str(codex_home),
     ]
     assert decision.cwd == project_root
+
+
+def test_stop_hook_prefers_env_wiki_root_over_local_config(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    config_wiki_root = tmp_path / "config-wiki"
+    env_wiki_root = tmp_path / "env-wiki"
+    codex_home = tmp_path / "codex"
+    _write_plugin_config(plugin_root, project_root=project_root, wiki_root=config_wiki_root, codex_home=codex_home)
+    monkeypatch.setenv("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", str(env_wiki_root))
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is True
+    assert decision.command[decision.command.index("--wiki-root") + 1] == str(env_wiki_root.resolve(strict=False))
+
+
+def test_stop_hook_expands_template_wiki_root_from_local_config(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    home = tmp_path / "home"
+    codex_home = tmp_path / "codex"
+    _write_plugin_config(
+        plugin_root,
+        project_root=project_root,
+        wiki_root="%USERPROFILE%\\Documents\\LLM Wiki",
+        codex_home=codex_home,
+    )
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is True
+    assert decision.command[decision.command.index("--wiki-root") + 1] == str((home / "Documents" / "LLM Wiki").resolve(strict=False))
+
+
+def test_stop_hook_skips_when_wiki_root_cannot_be_resolved(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    codex_home = tmp_path / "codex"
+    _write_plugin_config(
+        plugin_root,
+        project_root=project_root,
+        wiki_root="%MISSING_ACS_WIKI_ROOT%\\LLM Wiki",
+        codex_home=codex_home,
+    )
+    monkeypatch.delenv("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", raising=False)
+    monkeypatch.delenv("WIKI_PATH", raising=False)
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is False
+    assert decision.skip_reason == "no wiki root resolved"
 
 
 def test_stop_hook_decision_skips_non_project_cwd(tmp_path: Path) -> None:
@@ -143,6 +220,46 @@ def test_stop_hook_decision_passes_summary_config_to_codex_finalize(tmp_path: Pa
     assert decision.command[decision.command.index("--llm-path-policy") + 1] == "allow"
     assert "False" not in decision.command
     assert "True" not in decision.command
+
+
+def test_stop_hook_decision_passes_wiki_auto_config_to_codex_finalize(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "summary_mode": "auto",
+                "wiki_auto_mode": "apply-flexible",
+                "wiki_write_judge_mode": "auto",
+                "wiki_auto_min_score": 0.87,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is True
+    assert "--wiki-auto-mode" in decision.command
+    assert decision.command[decision.command.index("--wiki-auto-mode") + 1] == "apply-flexible"
+    assert "--wiki-write-judge-mode" in decision.command
+    assert decision.command[decision.command.index("--wiki-write-judge-mode") + 1] == "auto"
+    assert "--wiki-auto-min-score" in decision.command
+    assert decision.command[decision.command.index("--wiki-auto-min-score") + 1] == "0.87"
 
 
 def test_stop_hook_runner_never_blocks_codex_on_finalize_failure(tmp_path: Path) -> None:

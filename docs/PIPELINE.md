@@ -4,11 +4,11 @@
 
 핵심 변화:
 
-> session-finalize의 기본값은 이제 `packet-only`입니다. Obsidian durable page promotion은 명시적으로 요청한 경우에만 수행합니다.
+> Hermes/standalone session-finalize의 기본값은 `packet-only`입니다. Packaged Codex Stop hook 설치는 `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`를 기본으로 사용하며, write judge가 승인한 flexible patch만 LLM Wiki에 반영합니다.
 
 ## 1. 전체 흐름
 
-### 1.1 기본 session finalize (`packet-only`)
+### 1.1 Hermes/standalone 기본 session finalize (`packet-only`)
 
 ```text
 Hermes state.db or Codex rollout JSONL
@@ -23,7 +23,7 @@ Hermes state.db or Codex rollout JSONL
   -> SessionLedger completed record
 ```
 
-기본 실행은 Obsidian에 query/concept/plan/architecture page를 생성하지 않습니다.
+Hermes/standalone 기본 실행은 Obsidian에 query/concept/plan/architecture page를 생성하지 않습니다. Codex 설치 경로는 별도로 v2 summary, atom, promotion, flexible wiki patch, write-judge decision을 자동 생성하고 승인된 patch만 LLM Wiki에 씁니다.
 
 ### 1.2 선택 v2 summary + review-first wiki growth
 
@@ -378,7 +378,7 @@ run_session_finalize_pipeline(
 
 | Mode | 상태 | Obsidian write | 설명 |
 | --- | --- | --- | --- |
-| `packet-only` | 기본값 | 아니오 | raw/packet/lint/recovery/ledger만 생성 |
+| `packet-only` | Hermes/standalone 기본값 | 아니오 | raw/packet/lint/recovery/ledger만 생성 |
 | `full` | legacy explicit | 예 | query/concept/plan/architecture 4종 page 생성 |
 
 `draft`, `curated` 같은 모드는 정책 설계에는 있지만 현재 Python API에서는 아직 허용 mode가 아닙니다.

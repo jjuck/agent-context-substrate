@@ -8,6 +8,12 @@ import json
 import os
 import time
 
+from .artifact_pipeline import (
+    apply_wiki_patch_file,
+    export_atoms,
+    export_promotion_candidates,
+    load_promotion_candidates,
+)
 from .codex_source import (
     CodexThreadRecord,
     build_codex_session_bundle,
@@ -22,15 +28,38 @@ from .lint import export_lint_report, lint_wiki
 from .naming import derive_goal, derive_task_title, derive_unit_title
 from .paths import HarnessPaths
 from .recovery import build_recovery_brief
+from .safe_paths import safe_artifact_stem, safe_child_path
 from .summarizer import build_micro_summary, build_unit_summary
-from .summarizer_backends import LLMInputSafetyOptions
+from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
+from .wiki_patches import (
+    WikiPatchApplyResult,
+    WikiPatchProposal,
+    plan_wiki_patch_proposal,
+    render_wiki_patch_proposal_markdown,
+)
+from .wiki_write_judge import (
+    WikiWriteDecision,
+    evaluate_wiki_write_with_judge,
+    export_wiki_write_decision,
+    normalize_wiki_auto_mode,
+    normalize_wiki_write_judge_mode,
+)
 
 
 @dataclass(frozen=True)
 class CodexWatchResult:
     processed_thread_ids: list[str]
     results: list[IntegrationResult]
+
+
+@dataclass(frozen=True)
+class CodexWikiAutoResult:
+    decision: WikiWriteDecision
+    decision_path: Path
+    patch_json_path: Path | None
+    patch_markdown_path: Path | None
+    apply_result: WikiPatchApplyResult | None
 
 
 class CodexWatcherState:
@@ -112,8 +141,16 @@ def run_codex_thread_finalize_pipeline(
     codex_cli_command: Path | str | None = None,
     codex_timeout_seconds: int | None = None,
     llm_safety: LLMInputSafetyOptions | None = None,
+    wiki_auto_mode: str = "off",
+    wiki_write_judge_mode: str = "off",
+    wiki_auto_min_score: float = 0.85,
+    wiki_write_judge_router: AgentLLMRouter | None = None,
 ) -> IntegrationResult:
     related_pages = list(related_pages or [])
+    wiki_auto_mode = normalize_wiki_auto_mode(wiki_auto_mode)
+    wiki_write_judge_mode = normalize_wiki_write_judge_mode(wiki_write_judge_mode)
+    if wiki_auto_mode != "off" and not summary_mode:
+        summary_mode = "auto"
     codex_home_path = resolve_codex_home(codex_home)
     with _temporary_wiki_root(Path(wiki_root)):
         paths = HarnessPaths(project_root=Path(project_root).resolve())
@@ -180,6 +217,22 @@ def run_codex_thread_finalize_pipeline(
                         llm_safety=llm_safety or LLMInputSafetyOptions(),
                     ),
                 )
+            wiki_auto_result: CodexWikiAutoResult | None = None
+            if wiki_auto_mode != "off" and summary_artifacts is not None:
+                wiki_auto_result = _run_codex_wiki_auto(
+                    packet_id=packet_id,
+                    paths=paths,
+                    wiki_root=Path(wiki_root),
+                    wiki_auto_mode=wiki_auto_mode,
+                    wiki_write_judge_mode=wiki_write_judge_mode,
+                    wiki_auto_min_score=wiki_auto_min_score,
+                    wiki_write_judge_router=wiki_write_judge_router,
+                    summary_model=summary_model,
+                    summary_budget=summary_budget,
+                    codex_cli_command=codex_cli_command,
+                    codex_timeout_seconds=codex_timeout_seconds,
+                    llm_safety=llm_safety,
+                )
             lint_report = lint_wiki(paths)
             lint_json_path, lint_markdown_path = export_lint_report(
                 report=lint_report,
@@ -190,6 +243,8 @@ def run_codex_thread_finalize_pipeline(
                 "promotion_mode": "packet-only",
                 "summary_mode": summary_mode or "",
                 "summary_judge_mode": "off",
+                "wiki_auto_mode": wiki_auto_mode,
+                "wiki_write_judge_mode": wiki_write_judge_mode,
                 "raw_export_path": str(raw_export_path),
                 "packet_json_path": str(packet_json_path),
                 "packet_markdown_path": str(packet_markdown_path),
@@ -197,6 +252,7 @@ def run_codex_thread_finalize_pipeline(
                 "lint_markdown_path": str(lint_markdown_path),
             }
             artifact_paths.update(_summary_artifact_paths(summary_artifacts))
+            artifact_paths.update(_wiki_auto_artifact_paths(wiki_auto_result))
             partial_artifact_paths = dict(artifact_paths)
             lint_issue_count = _lint_issue_count(lint_report)
             ledger.mark_completed(
@@ -232,6 +288,10 @@ def run_codex_thread_finalize_pipeline(
                 summary_micro_path=summary_artifacts.micro_path if summary_artifacts is not None else None,
                 summary_unit_path=summary_artifacts.unit_path if summary_artifacts is not None else None,
                 summary_evidence_path=summary_artifacts.evidence_path if summary_artifacts is not None else None,
+                wiki_decision_path=wiki_auto_result.decision_path if wiki_auto_result is not None else None,
+                wiki_patch_path=wiki_auto_result.patch_json_path if wiki_auto_result is not None else None,
+                wiki_patch_markdown_path=wiki_auto_result.patch_markdown_path if wiki_auto_result is not None else None,
+                wiki_apply_result=wiki_auto_result.apply_result if wiki_auto_result is not None else None,
             )
         except Exception as exc:
             ledger.mark_failed(
@@ -241,6 +301,133 @@ def run_codex_thread_finalize_pipeline(
                 artifact_paths=partial_artifact_paths,
             )
             raise
+
+
+def _run_codex_wiki_auto(
+    *,
+    packet_id: str,
+    paths: HarnessPaths,
+    wiki_root: Path,
+    wiki_auto_mode: str,
+    wiki_write_judge_mode: str,
+    wiki_auto_min_score: float,
+    wiki_write_judge_router: AgentLLMRouter | None,
+    summary_model: str | None,
+    summary_budget: str | None,
+    codex_cli_command: Path | str | None,
+    codex_timeout_seconds: int | None,
+    llm_safety: LLMInputSafetyOptions | None,
+) -> CodexWikiAutoResult:
+    export_atoms(packet_id=packet_id, paths=paths)
+    promotion_json_path, _promotion_markdown_path = export_promotion_candidates(packet_id=packet_id, paths=paths)
+    candidates = load_promotion_candidates(promotion_json_path)
+    write_mode = "managed" if wiki_auto_mode == "apply-managed" else "flexible"
+    proposal = plan_wiki_patch_proposal(
+        packet_id=packet_id,
+        candidates=candidates,
+        wiki_root=wiki_root,
+        write_mode=write_mode,
+        judge_mode=wiki_write_judge_mode,
+    )
+    decision = evaluate_wiki_write_with_judge(
+        packet_id=packet_id,
+        candidates=candidates,
+        proposal=proposal,
+        mode=wiki_write_judge_mode,
+        router=wiki_write_judge_router,
+        routing_hints=_build_codex_wiki_judge_routing_hints(
+            summary_model=summary_model,
+            summary_budget=summary_budget,
+            codex_cli_command=codex_cli_command,
+            codex_project_root=paths.project_root,
+            codex_timeout_seconds=codex_timeout_seconds,
+        ),
+        min_score=wiki_auto_min_score,
+        llm_safety=llm_safety or LLMInputSafetyOptions(),
+    )
+    decision_path = export_wiki_write_decision(packet_id=packet_id, decision=decision, project_root=paths.project_root)
+    if not candidates:
+        return CodexWikiAutoResult(
+            decision=decision,
+            decision_path=decision_path,
+            patch_json_path=None,
+            patch_markdown_path=None,
+            apply_result=None,
+        )
+    should_apply = decision.approved_for_auto_apply(wiki_auto_mode)
+    final_proposal = plan_wiki_patch_proposal(
+        packet_id=packet_id,
+        candidates=candidates,
+        wiki_root=wiki_root,
+        write_mode=write_mode,
+        judge_mode=wiki_write_judge_mode,
+        judge_verdict="approved" if should_apply else decision.decision,
+    )
+    patch_json_path, patch_markdown_path = _export_codex_wiki_patch_proposal(paths=paths, proposal=final_proposal)
+    apply_result = apply_wiki_patch_file(
+        patch_file=patch_json_path,
+        paths=paths,
+        wiki_root=wiki_root,
+        dry_run=not should_apply,
+    )
+    return CodexWikiAutoResult(
+        decision=decision,
+        decision_path=decision_path,
+        patch_json_path=patch_json_path,
+        patch_markdown_path=patch_markdown_path,
+        apply_result=apply_result,
+    )
+
+
+def _export_codex_wiki_patch_proposal(*, paths: HarnessPaths, proposal: WikiPatchProposal) -> tuple[Path, Path]:
+    wiki_patches_dir = paths.project_root / "data" / "wiki_patches"
+    wiki_patches_dir.mkdir(parents=True, exist_ok=True)
+    safe_packet_id = safe_artifact_stem(proposal.packet_id, label="packet id")
+    json_path = safe_child_path(wiki_patches_dir, safe_packet_id, ".json", label="packet id")
+    markdown_path = safe_child_path(wiki_patches_dir, safe_packet_id, ".md", label="packet id")
+    json_path.write_text(json.dumps(proposal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    markdown_path.write_text(render_wiki_patch_proposal_markdown(proposal), encoding="utf-8")
+    return json_path, markdown_path
+
+
+def _wiki_auto_artifact_paths(result: CodexWikiAutoResult | None) -> dict[str, str]:
+    if result is None:
+        return {}
+    artifact_paths = {
+        "wiki_decision_path": str(result.decision_path),
+        "wiki_write_decision": result.decision.decision,
+        "wiki_write_score": str(result.decision.score),
+    }
+    if result.patch_json_path is not None:
+        artifact_paths["wiki_patch_path"] = str(result.patch_json_path)
+    if result.patch_markdown_path is not None:
+        artifact_paths["wiki_patch_markdown_path"] = str(result.patch_markdown_path)
+    if result.apply_result is not None:
+        artifact_paths["wiki_apply_dry_run"] = str(result.apply_result.dry_run)
+        artifact_paths["wiki_apply_planned_count"] = str(len(result.apply_result.planned_patch_ids))
+        artifact_paths["wiki_apply_applied_count"] = str(len(result.apply_result.applied_patch_ids))
+        artifact_paths["wiki_apply_skipped_count"] = str(len(result.apply_result.skipped_patch_ids))
+    return artifact_paths
+
+
+def _build_codex_wiki_judge_routing_hints(
+    *,
+    summary_model: str | None,
+    summary_budget: str | None,
+    codex_cli_command: Path | str | None,
+    codex_project_root: Path,
+    codex_timeout_seconds: int | None,
+) -> dict[str, object]:
+    hints: dict[str, object] = {"codex_project_root": str(codex_project_root)}
+    if summary_model:
+        hints["model"] = summary_model
+    if summary_budget:
+        hints["budget"] = summary_budget
+    if codex_cli_command:
+        hints["codex_cli_command"] = str(codex_cli_command)
+    if codex_timeout_seconds is not None:
+        hints["codex_timeout_seconds"] = codex_timeout_seconds
+    return hints
 
 
 def run_codex_watch_once(
@@ -259,6 +446,10 @@ def run_codex_watch_once(
     codex_cli_command: Path | str | None = None,
     codex_timeout_seconds: int | None = None,
     llm_safety: LLMInputSafetyOptions | None = None,
+    wiki_auto_mode: str = "off",
+    wiki_write_judge_mode: str = "off",
+    wiki_auto_min_score: float = 0.85,
+    wiki_write_judge_router: AgentLLMRouter | None = None,
 ) -> CodexWatchResult:
     state = CodexWatcherState(state_path or default_codex_watcher_state_path(project_root))
     results: list[IntegrationResult] = []
@@ -279,6 +470,10 @@ def run_codex_watch_once(
             codex_cli_command=codex_cli_command,
             codex_timeout_seconds=codex_timeout_seconds,
             llm_safety=llm_safety,
+            wiki_auto_mode=wiki_auto_mode,
+            wiki_write_judge_mode=wiki_write_judge_mode,
+            wiki_auto_min_score=wiki_auto_min_score,
+            wiki_write_judge_router=wiki_write_judge_router,
         )
         if thread.fingerprint == fingerprint:
             state.mark_processed(thread, fingerprint=fingerprint)
@@ -304,6 +499,10 @@ def run_codex_watch_loop(
     codex_cli_command: Path | str | None = None,
     codex_timeout_seconds: int | None = None,
     llm_safety: LLMInputSafetyOptions | None = None,
+    wiki_auto_mode: str = "off",
+    wiki_write_judge_mode: str = "off",
+    wiki_auto_min_score: float = 0.85,
+    wiki_write_judge_router: AgentLLMRouter | None = None,
 ) -> None:
     while True:
         run_codex_watch_once(
@@ -321,6 +520,10 @@ def run_codex_watch_loop(
             codex_cli_command=codex_cli_command,
             codex_timeout_seconds=codex_timeout_seconds,
             llm_safety=llm_safety,
+            wiki_auto_mode=wiki_auto_mode,
+            wiki_write_judge_mode=wiki_write_judge_mode,
+            wiki_auto_min_score=wiki_auto_min_score,
+            wiki_write_judge_router=wiki_write_judge_router,
         )
         time.sleep(interval_seconds)
 

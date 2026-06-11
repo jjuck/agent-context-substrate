@@ -33,6 +33,75 @@ def _candidate() -> PromotionCandidate:
     )
 
 
+def _candidate_2() -> PromotionCandidate:
+    return PromotionCandidate(
+        candidate_id="packet-1-candidate-2",
+        packet_id="packet-1",
+        kind="concept_update",
+        target_page="summarization",
+        reason="Claim atom packet-1-claim-2 may update durable wiki knowledge.",
+        evidence=["claim:packet-1-claim-2", "packet:packet-1#micro-2"],
+        proposed_change="Summary judge output should stay traceable to source evidence.",
+        proposed_action="update_existing",
+        confidence=0.82,
+        status="pending",
+    )
+
+
+def _categorized_candidate() -> PromotionCandidate:
+    return PromotionCandidate(
+        candidate_id="packet-1-candidate-categorized",
+        packet_id="packet-1",
+        kind="wiki_update",
+        target_page="summarization",
+        reason="Claim atom packet-1-claim-category may update durable wiki knowledge.",
+        evidence=["claim:packet-1-claim-category"],
+        proposed_change="Summarization belongs to an LLM-proposed synthesis category.",
+        proposed_action="update_existing",
+        confidence=0.88,
+        status="pending",
+        category="synthesis-practice",
+        page_type="practice",
+    )
+
+
+def _smoke_candidate() -> PromotionCandidate:
+    return PromotionCandidate(
+        candidate_id="packet-1-candidate-smoke",
+        packet_id="packet-1",
+        kind="concept_update",
+        target_page="summarization",
+        reason="Smoke-test result should stay review-only.",
+        evidence=["claim:packet-1-claim-smoke"],
+        proposed_change="ACS smoke-test result was PASS for implemented flow.",
+        proposed_action="update_existing",
+        confidence=0.91,
+        status="pending",
+    )
+
+
+def _unregistered_candidate(
+    *,
+    candidate_id: str = "packet-1-candidate-novel-1",
+    target_page: str = "Hybrid Memory",
+) -> PromotionCandidate:
+    return PromotionCandidate(
+        candidate_id=candidate_id,
+        packet_id="packet-1",
+        kind="wiki_update",
+        target_page=target_page,
+        reason="A novel category should not block automatic wiki expansion.",
+        evidence=[f"claim:{candidate_id}"],
+        proposed_change=f"{target_page} should be captured even when its category is not registered.",
+        proposed_action="update_existing",
+        confidence=0.86,
+        status="pending",
+        category="emergent-taxonomy",
+        page_type="research-axis",
+        placement_reason="The LLM proposed a new abstraction category during Codex finalization.",
+    )
+
+
 def test_plan_wiki_patch_proposal_from_promotion_candidate(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
     target = wiki_root / "concepts" / "summarization.md"
@@ -45,11 +114,12 @@ def test_plan_wiki_patch_proposal_from_promotion_candidate(tmp_path) -> None:
         proposal_id="packet-1-wiki-patch-proposal",
         packet_id="packet-1",
         operations=[
-            WikiPatchOperation(
-                patch_id="packet-1-patch-1",
-                candidate_id="packet-1-candidate-1",
-                target="concepts/summarization.md",
-                operation="insert_claim_block",
+                WikiPatchOperation(
+                    patch_id="packet-1-patch-1",
+                    candidate_id="packet-1-candidate-1",
+                    candidate_ids=["packet-1-candidate-1"],
+                    target="concepts/summarization.md",
+                    operation="insert_claim_block",
                 rationale="Claim atom packet-1-claim-1 may update durable wiki knowledge.",
                 evidence=["claim:packet-1-claim-1", "packet:packet-1#micro-1"],
                 risk="low",
@@ -63,6 +133,73 @@ def test_plan_wiki_patch_proposal_from_promotion_candidate(tmp_path) -> None:
         status="proposed",
     )
     assert WikiPatchProposal.from_dict(proposal.to_dict()) == proposal
+
+
+def test_plan_flexible_wiki_patch_defaults_to_root_page_without_category(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    operation = proposal.operations[0]
+    assert operation.target == "summarization.md"
+    assert operation.metadata["placement"]["category"] == ""
+    assert operation.metadata["placement"]["fallback"] is False
+    after = operation.diff["after"]
+    assert "title: Summarization" in after
+    assert "type: knowledge" in after
+    assert "category: abstraction" not in after
+    assert "\ncategory:" not in after
+    assert 'sources: ["claim:packet-1-claim-1", "packet:packet-1#micro-1"]' in after
+
+
+def test_plan_flexible_wiki_patch_preserves_llm_proposed_category_on_root_page(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_categorized_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    operation = proposal.operations[0]
+    assert operation.target == "summarization.md"
+    after = operation.diff["after"]
+    assert "category: synthesis-practice" in after
+    assert "type: practice" in after
+
+
+def test_plan_flexible_wiki_patch_uses_registry_folders_only_when_opted_in(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    (wiki_root / "_system").mkdir(parents=True)
+    (wiki_root / "_system" / "config.yaml").write_text(
+        """wiki:
+  placement_policy: registry-folder
+  category_registry:
+    synthesis-practice:
+      folder: "Practices"
+      page_type: practice
+      template: practice
+      index_section: Practices
+""",
+        encoding="utf-8",
+    )
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_categorized_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    assert proposal.operations[0].target == "Practices/summarization.md"
 
 
 def test_render_wiki_patch_proposal_markdown(tmp_path) -> None:
@@ -400,7 +537,7 @@ def test_plan_wiki_patch_proposal_never_reads_unsafe_target_page(tmp_path) -> No
 
 def test_plan_flexible_wiki_patch_proposes_full_page_revision_with_policy_metadata(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
-    target = wiki_root / "concepts" / "summarization.md"
+    target = wiki_root / "summarization.md"
     target.parent.mkdir(parents=True)
     original = "# Summarization\n\nExisting human prose.\n"
     target.write_text(original, encoding="utf-8")
@@ -426,9 +563,158 @@ def test_plan_flexible_wiki_patch_proposes_full_page_revision_with_policy_metada
     assert "claim:packet-1-claim-1" in operation.diff["after"]
 
 
+def test_plan_flexible_wiki_patch_adds_lint_metadata_to_existing_page(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "summarization.md"
+    target.parent.mkdir(parents=True)
+    target.write_text("# Summarization\n\nExisting human prose.\n", encoding="utf-8")
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate(), _candidate_2()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    after = proposal.operations[0].diff["after"]
+    assert after.startswith("---\n")
+    assert "title: Summarization" in after
+    assert "lang: ko" in after
+    assert "type: knowledge" in after
+    assert "category:" not in after
+    assert 'sources: ["claim:packet-1-claim-1", "packet:packet-1#micro-1", "claim:packet-1-claim-2", "packet:packet-1#micro-2"]' in after
+    assert "# Summarization\n\nExisting human prose." in after
+    assert "Heuristic summarizer should remain the default for privacy." in after
+    assert "Summary judge output should stay traceable to source evidence." in after
+    assert "## Sources and Evidence" in after
+
+
+def test_plan_flexible_wiki_patch_excludes_transient_smoke_test_candidates(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate(), _smoke_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    operation = proposal.operations[0]
+    assert operation.candidate_ids == ["packet-1-candidate-1"]
+    assert "smoke-test" not in operation.diff["after"].lower()
+    assert "PASS for implemented flow" not in operation.diff["after"]
+
+
+def test_plan_flexible_wiki_patch_removes_existing_transient_smoke_test_lines(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    target = wiki_root / "summarization.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "# Summarization\n\n"
+        "- Existing durable note.\n"
+        "- ACS smoke-test result was PASS for implemented flow.\n",
+        encoding="utf-8",
+    )
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate(), _smoke_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    after = proposal.operations[0].diff["after"]
+    assert "Existing durable note." in after
+    assert "smoke-test" not in after.lower()
+    assert "PASS for implemented flow" not in after
+
+
+def test_plan_flexible_wiki_patch_merges_pending_candidates_for_same_target(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_candidate(), _candidate_2()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    assert len(proposal.operations) == 1
+    operation = proposal.operations[0]
+    assert operation.operation == "create_page"
+    assert operation.target == "summarization.md"
+    assert operation.candidate_id == "packet-1-candidate-1"
+    assert operation.candidate_ids == ["packet-1-candidate-1", "packet-1-candidate-2"]
+    assert operation.evidence == [
+        "claim:packet-1-claim-1",
+        "packet:packet-1#micro-1",
+        "claim:packet-1-claim-2",
+        "packet:packet-1#micro-2",
+    ]
+    after = operation.diff["after"]
+    assert "title: Summarization" in after
+    assert "lang: ko" in after
+    assert "type: knowledge" in after
+    assert "category:" not in after
+    assert 'sources: ["claim:packet-1-claim-1", "packet:packet-1#micro-1", "claim:packet-1-claim-2", "packet:packet-1#micro-2"]' in after
+    assert "Heuristic summarizer should remain the default for privacy." in after
+    assert "Summary judge output should stay traceable to source evidence." in after
+    assert "## Sources and Evidence" in after
+    assert WikiPatchProposal.from_dict(proposal.to_dict()) == proposal
+
+
+def test_plan_flexible_wiki_patch_preserves_unregistered_category_on_root_page(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[_unregistered_candidate()],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    assert len(proposal.operations) == 1
+    operation = proposal.operations[0]
+    assert operation.target == "Hybrid Memory.md"
+    assert operation.metadata["placement"]["registered"] is False
+    assert operation.metadata["placement"]["fallback"] is False
+    after = operation.diff["after"]
+    assert "title: Hybrid Memory" in after
+    assert "lang: ko" in after
+    assert "type: research-axis" in after
+    assert "category: emergent-taxonomy" in after
+    assert "status: seed" in after
+    assert 'sources: ["claim:packet-1-candidate-novel-1"]' in after
+    assert "Hybrid Memory should be captured even when its category is not registered." in after
+
+
+def test_plan_flexible_wiki_patch_groups_only_by_resolved_target_path(tmp_path) -> None:
+    wiki_root = tmp_path / "wiki"
+    wiki_root.mkdir()
+
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[
+            _unregistered_candidate(candidate_id="packet-1-candidate-novel-a", target_page="Novel A"),
+            _unregistered_candidate(candidate_id="packet-1-candidate-novel-b", target_page="Novel B"),
+        ],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+    )
+
+    assert [operation.target for operation in proposal.operations] == ["Novel A.md", "Novel B.md"]
+    assert [operation.candidate_ids for operation in proposal.operations] == [
+        ["packet-1-candidate-novel-a"],
+        ["packet-1-candidate-novel-b"],
+    ]
+
+
 def test_apply_flexible_replace_page_requires_approved_judge_verdict(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
-    target = wiki_root / "concepts" / "summarization.md"
+    target = wiki_root / "summarization.md"
     target.parent.mkdir(parents=True)
     original = "# Summarization\n\nExisting human prose.\n"
     target.write_text(original, encoding="utf-8")
@@ -490,7 +776,7 @@ def test_apply_replace_page_requires_flexible_policy_metadata(tmp_path) -> None:
 
 def test_apply_flexible_replace_page_updates_when_judge_approved_and_hash_matches(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
-    target = wiki_root / "concepts" / "summarization.md"
+    target = wiki_root / "summarization.md"
     target.parent.mkdir(parents=True)
     original = "# Summarization\n\nExisting human prose.\n"
     target.write_text(original, encoding="utf-8")
@@ -513,7 +799,7 @@ def test_apply_flexible_replace_page_updates_when_judge_approved_and_hash_matche
 
 def test_apply_flexible_replace_page_skips_hash_conflict(tmp_path) -> None:
     wiki_root = tmp_path / "wiki"
-    target = wiki_root / "concepts" / "summarization.md"
+    target = wiki_root / "summarization.md"
     target.parent.mkdir(parents=True)
     target.write_text("# Summarization\n\nOriginal prose.\n", encoding="utf-8")
     proposal = plan_wiki_patch_proposal(

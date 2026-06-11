@@ -16,6 +16,7 @@ from ..codex_setup import (
     update_codex_local_config,
     write_codex_local_config,
 )
+from ..codex_wiki_root import resolve_codex_wiki_root
 
 
 def handle_setup_codex_command(*, args: Any) -> int:
@@ -52,7 +53,12 @@ def handle_setup_codex_wizard_command(*, args: Any) -> int:
 
 
 def handle_doctor_codex_command(*, args: Any) -> int:
-    report = doctor_codex(codex_home=args.codex_home, project_root=args.project_root, wiki_root=args.wiki_root)
+    report = doctor_codex(
+        codex_home=args.codex_home,
+        project_root=args.project_root,
+        wiki_root=args.wiki_root,
+        summary_smoke=args.summary_smoke,
+    )
     if args.json:
         print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
     else:
@@ -88,13 +94,18 @@ def handle_diagnose_codex_command(*, args: Any) -> int:
 def handle_config_codex_command(*, args: Any) -> int:
     plugin_dir = codex_plugin_dir(args.codex_home)
     if args.config_action == "paths":
-        paths = codex_config_paths(codex_home=args.codex_home, project_root=args.project_root, wiki_root=args.wiki_root)
+        paths = codex_config_paths(
+            codex_home=args.codex_home,
+            project_root=args.project_root,
+            wiki_root=args.wiki_root,
+            config=_read_config_for_paths(plugin_dir, explicit_wiki_root=args.wiki_root),
+        )
         _print_mapping(paths, as_json=args.json)
         return 0
 
     if args.config_action == "show":
         config = read_codex_local_config(plugin_dir)
-        _print_mapping(config, as_json=args.json)
+        _print_mapping(_with_effective_wiki_root(config), as_json=args.json)
         return 0
 
     if args.config_action == "write":
@@ -114,7 +125,12 @@ def handle_config_codex_command(*, args: Any) -> int:
         return 0
 
     if args.config_action == "export-env":
-        paths = codex_config_paths(codex_home=args.codex_home, project_root=args.project_root, wiki_root=args.wiki_root)
+        paths = codex_config_paths(
+            codex_home=args.codex_home,
+            project_root=args.project_root,
+            wiki_root=args.wiki_root,
+            config=_read_config_for_paths(plugin_dir, explicit_wiki_root=args.wiki_root),
+        )
         print(f"$env:CODEX_HOME='{paths['codex_home']}'")
         print(f"$env:AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT='{paths['acs_project_root']}'")
         print(f"$env:AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT='{paths['llm_wiki_root']}'")
@@ -140,6 +156,24 @@ def _print_mapping(mapping: dict[str, Any], *, as_json: bool) -> None:
         return
     for name, value in mapping.items():
         print(f"{name}={value}")
+
+
+def _with_effective_wiki_root(config: dict[str, Any]) -> dict[str, Any]:
+    resolution = resolve_codex_wiki_root(config)
+    view = dict(config)
+    view.setdefault("wiki_root_source", resolution.source)
+    if resolution.path is not None:
+        view["wiki_root_effective"] = resolution.path
+    return view
+
+
+def _read_config_for_paths(plugin_dir: Path, *, explicit_wiki_root: str | None) -> dict[str, Any] | None:
+    if explicit_wiki_root is not None:
+        return None
+    config_path = plugin_dir / "local_config.json"
+    if not config_path.exists():
+        return None
+    return read_codex_local_config(plugin_dir)
 
 
 def _parse_config_value(value: str) -> Any:

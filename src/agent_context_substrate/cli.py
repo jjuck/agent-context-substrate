@@ -87,6 +87,27 @@ def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_wiki_auto_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--wiki-auto-mode",
+        choices=["off", "propose", "apply-managed", "apply-flexible"],
+        default="off",
+        help="Automatically judge and optionally write LLM Wiki updates after finalize.",
+    )
+    parser.add_argument(
+        "--wiki-write-judge-mode",
+        choices=["off", "hybrid", "auto", "codex-cli"],
+        default="off",
+        help="LLM judge mode for deciding whether generated knowledge should be written into the LLM Wiki.",
+    )
+    parser.add_argument(
+        "--wiki-auto-min-score",
+        type=float,
+        default=0.85,
+        help="Minimum judge score required for automatic Wiki writes.",
+    )
+
+
 def _add_registration_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--register",
@@ -529,7 +550,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="One-shot Windows Codex app setup for ACS plugin, wiki, hooks, and diagnostics",
     )
     setup_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
-    setup_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    setup_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; default uses %%USERPROFILE%%\\Documents\\LLM Wiki template")
     setup_codex.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root, usually the user home")
     setup_codex.add_argument("--yes", action="store_true", help="Accept the displayed defaults for non-interactive setup")
     setup_codex.add_argument("--dry-run", action="store_true", help="Print planned setup actions without writing files")
@@ -553,7 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Interactive Windows Codex app setup wizard",
     )
     setup_codex_wizard.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
-    setup_codex_wizard.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    setup_codex_wizard.add_argument("--wiki-root", default=None, help="LLM Wiki root; default uses %%USERPROFILE%%\\Documents\\LLM Wiki template")
     setup_codex_wizard.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root")
     setup_codex_wizard.add_argument("--yes", action="store_true", help="Run without asking for confirmation")
     setup_codex_wizard.add_argument("--json", action="store_true", help="Print JSON instead of text")
@@ -561,14 +582,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_codex = subparsers.add_parser("doctor-codex", help="Check Windows Codex app ACS setup health")
     doctor_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
-    doctor_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    doctor_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; default uses installed/env/default template")
+    doctor_codex.add_argument(
+        "--summary-smoke",
+        action="store_true",
+        help="Run a brief read-only codex exec smoke when summary_mode=auto/codex-cli is configured.",
+    )
     doctor_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
     doctor_codex.add_argument("--fail-on-issues", action="store_true", help="Return exit code 1 if required checks fail")
     _add_project_root_argument(doctor_codex)
 
     diagnose_codex = subparsers.add_parser("diagnose-codex", help="Explain and optionally repair safe Codex setup issues")
     diagnose_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
-    diagnose_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    diagnose_codex.add_argument("--wiki-root", default=None, help="LLM Wiki root; default uses installed/env/default template")
     diagnose_codex.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root for --fix")
     diagnose_codex.add_argument("--fix", action="store_true", help="Repair safe local ACS files; does not bypass hook trust")
     diagnose_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
@@ -584,14 +610,14 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         action_parser = config_actions.add_parser(action_name, help=help_text)
         action_parser.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
-        action_parser.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+        action_parser.add_argument("--wiki-root", default=None, help="LLM Wiki root; default uses installed/env/default template")
         action_parser.add_argument("--json", action="store_true", help="Print JSON instead of text")
         _add_project_root_argument(action_parser)
     config_set = config_actions.add_parser("set", help="Set one local_config.json key")
     config_set.add_argument("--key", required=True, help="Config key to update")
     config_set.add_argument("--value", required=True, help="Config value; JSON scalars are accepted")
     config_set.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
-    config_set.add_argument("--wiki-root", default=None, help="LLM Wiki root; defaults to Documents/LLM Wiki")
+    config_set.add_argument("--wiki-root", default=None, help="LLM Wiki root; default uses installed/env/default template")
     config_set.add_argument("--json", action="store_true", help="Print JSON instead of text")
     _add_project_root_argument(config_set)
 
@@ -649,6 +675,7 @@ def build_parser() -> argparse.ArgumentParser:
     codex_finalize.add_argument("--llm-max-input-chars", type=int, default=12_000)
     codex_finalize.add_argument("--llm-allow-code-snippets", choices=["on", "off"], default="off")
     codex_finalize.add_argument("--llm-path-policy", choices=["redact", "allow"], default="redact")
+    _add_wiki_auto_arguments(codex_finalize)
     _add_project_root_argument(codex_finalize)
 
     codex_watch = subparsers.add_parser("codex-watch", help="Watch Codex rollout JSONL files and finalize idle threads")
@@ -685,6 +712,7 @@ def build_parser() -> argparse.ArgumentParser:
     codex_watch.add_argument("--llm-max-input-chars", type=int, default=12_000)
     codex_watch.add_argument("--llm-allow-code-snippets", choices=["on", "off"], default="off")
     codex_watch.add_argument("--llm-path-policy", choices=["redact", "allow"], default="redact")
+    _add_wiki_auto_arguments(codex_watch)
     _add_project_root_argument(codex_watch)
 
     search_parser = subparsers.add_parser("search-knowledge", help="Search wiki, packets, recovery, graph, and optional raw messages")

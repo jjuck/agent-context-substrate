@@ -18,9 +18,13 @@ class PromotionCandidate:
     proposed_action: str
     confidence: float
     status: str
+    category: str | None = None
+    language: str | None = None
+    page_type: str | None = None
+    placement_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "candidate_id": self.candidate_id,
             "packet_id": self.packet_id,
             "kind": self.kind,
@@ -32,6 +36,15 @@ class PromotionCandidate:
             "confidence": self.confidence,
             "status": self.status,
         }
+        if self.category is not None:
+            payload["category"] = self.category
+        if self.language is not None:
+            payload["language"] = self.language
+        if self.page_type is not None:
+            payload["page_type"] = self.page_type
+        if self.placement_reason is not None:
+            payload["placement_reason"] = self.placement_reason
+        return payload
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "PromotionCandidate":
@@ -46,6 +59,10 @@ class PromotionCandidate:
             proposed_action=str(payload["proposed_action"]),
             confidence=float(payload["confidence"]),
             status=str(payload["status"]),
+            category=_optional_string(payload.get("category")),
+            language=_optional_string(payload.get("language")),
+            page_type=_optional_string(payload.get("page_type")),
+            placement_reason=_optional_string(payload.get("placement_reason")),
         )
 
 
@@ -58,7 +75,7 @@ def propose_promotion_candidates(*, packet_id: str, claims: list[ClaimAtom]) -> 
             PromotionCandidate(
                 candidate_id=f"{packet_id}-candidate-{index}",
                 packet_id=packet_id,
-                kind="concept_update",
+                kind="wiki_update",
                 target_page=target_page,
                 reason=f"Claim atom {claim.atom_id} may update durable wiki knowledge.",
                 evidence=[f"claim:{claim.atom_id}", *claim.source_refs],
@@ -87,6 +104,8 @@ def render_promotion_candidates_markdown(*, packet_id: str, candidates: list[Pro
                 f"- Proposed action: `{candidate.proposed_action}`",
                 f"- Confidence: `{candidate.confidence}`",
                 f"- Status: `{candidate.status}`",
+                f"- Category: `{candidate.category or '(unspecified)'}`",
+                f"- Page type: `{candidate.page_type or '(unspecified)'}`",
                 f"- Reason: {candidate.reason}",
                 f"- Proposed change: {candidate.proposed_change}",
                 "- Evidence:",
@@ -100,3 +119,10 @@ def render_promotion_candidates_markdown(*, packet_id: str, candidates: list[Pro
 
 def _target_page_for_claim(claim: ClaimAtom) -> str:
     return claim.subjects[0] if claim.subjects else ""
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

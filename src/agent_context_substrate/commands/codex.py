@@ -67,6 +67,9 @@ def handle_codex_finalize_command(*, args: Any) -> int:
         codex_cli_command=args.codex_cli_command,
         codex_timeout_seconds=args.codex_timeout_seconds,
         llm_safety=_llm_safety_from_args(args),
+        wiki_auto_mode=args.wiki_auto_mode,
+        wiki_write_judge_mode=args.wiki_write_judge_mode,
+        wiki_auto_min_score=args.wiki_auto_min_score,
     )
     print(f"raw_export_path={result.raw_export_path}")
     print(f"packet_json_path={result.packet_json_path}")
@@ -78,6 +81,15 @@ def handle_codex_finalize_command(*, args: Any) -> int:
         print(f"summary_unit_path={result.summary_unit_path}")
     if result.summary_evidence_path is not None:
         print(f"summary_evidence_path={result.summary_evidence_path}")
+    if result.wiki_decision_path is not None:
+        print(f"wiki_decision_path={result.wiki_decision_path}")
+    if result.wiki_patch_path is not None:
+        print(f"wiki_patch_path={result.wiki_patch_path}")
+    if result.wiki_patch_markdown_path is not None:
+        print(f"wiki_patch_markdown_path={result.wiki_patch_markdown_path}")
+    if result.wiki_apply_result is not None:
+        print(f"wiki_apply_dry_run={result.wiki_apply_result.dry_run}")
+        print(f"wiki_apply_applied_count={len(result.wiki_apply_result.applied_patch_ids)}")
     print(f"lint_issue_count={result.lint_issue_count}")
     return 0
 
@@ -101,6 +113,9 @@ def handle_codex_watch_command(*, args: Any) -> int:
             codex_cli_command=args.codex_cli_command,
             codex_timeout_seconds=args.codex_timeout_seconds,
             llm_safety=_llm_safety_from_args(args),
+            wiki_auto_mode=args.wiki_auto_mode,
+            wiki_write_judge_mode=args.wiki_write_judge_mode,
+            wiki_auto_min_score=args.wiki_auto_min_score,
         )
         print(f"processed={len(result.processed_thread_ids)}")
         for thread_id in result.processed_thread_ids:
@@ -123,6 +138,9 @@ def handle_codex_watch_command(*, args: Any) -> int:
             codex_cli_command=args.codex_cli_command,
             codex_timeout_seconds=args.codex_timeout_seconds,
             llm_safety=_llm_safety_from_args(args),
+            wiki_auto_mode=args.wiki_auto_mode,
+            wiki_write_judge_mode=args.wiki_write_judge_mode,
+            wiki_auto_min_score=args.wiki_auto_min_score,
         )
     except KeyboardInterrupt:
         print("codex-watch stopped")

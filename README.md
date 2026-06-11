@@ -2,7 +2,7 @@
 
 # Agent Context Substrate
 
-**Turn Hermes and Codex sessions into reusable context packets, recovery briefs, and request-time retrieval — while keeping Obsidian as a human-facing wiki.**
+**Turn Hermes and Codex sessions into reusable context packets, recovery briefs, request-time retrieval, and a judge-guarded LLM Wiki.**
 
 ![Status](https://img.shields.io/badge/status-public%20alpha-orange) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
@@ -17,9 +17,9 @@ The current packaged adapters support **Hermes Agent** and a **non-MCP Codex loc
 
 This project was formerly named `hermes-llm-wiki-harness`. The rename reflects the longer-term goal: support more agents through additional adapters while keeping Hermes Agent as the first working reference integration and Codex as the new primary non-MCP path.
 
-The default session-finalize policy is **`packet-only`**: generated session artifacts stay in `data/exports/` and `data/index/session_ledger.json`; Obsidian is reserved for curated, human-written wiki pages.
+The packaged Windows Codex install treats the LLM Wiki as a living knowledge graph maintained by the LLM, not as a manual-only afterthought. By default it finalizes eligible Codex threads with `summary_mode=auto`, plans flexible wiki integration, asks a write-judge LLM whether the evidence is strong enough, and applies approved `apply-flexible` patches to the user's LLM Wiki. If the judge is unavailable, the confidence is too low, or the patch fails safety checks, ACS records a review-required proposal under `data/...` instead of writing the vault.
 
-The new knowledge-growth path is deliberately review-first:
+The default Codex knowledge-growth path is evidence-first and judge-gated:
 
 ```text
 ContextPacket
@@ -27,11 +27,12 @@ ContextPacket
   -> MicroSummaryV2 / UnitSummaryV2
   -> claim atoms
   -> promotion candidates
-  -> wiki patch proposals
-  -> reviewed Obsidian updates
+  -> flexible wiki patch proposal
+  -> write-judge decision
+  -> approved LLM Wiki update or review-required proposal
 ```
 
-`ContextPacket` files are raw material for future wiki growth. They are not durable wiki pages by themselves.
+`ContextPacket` files remain raw material, not durable wiki pages by themselves. The Codex Stop hook decides per thread whether that material should become LLM Wiki content, so the wiki can grow without the user explicitly asking for each individual write.
 
 ## Why this helps
 
@@ -39,7 +40,7 @@ Long AI-agent sessions often contain decisions, file paths, test results, and ne
 
 - **Resume interrupted work** with a compact recovery brief instead of rereading the whole transcript.
 - **Search prior project knowledge** while Hermes is handling a new request.
-- **Keep Obsidian readable** by separating generated artifacts from human-written wiki pages.
+- **Grow an LLM Wiki deliberately** by writing only evidence-backed, judge-approved updates and keeping all intermediate artifacts auditable.
 - **Audit release readiness** with lint reports for wiki links, provenance, language metadata, and internal packet consistency.
 - **Avoid duplicate processing** through a ledger that records completed, failed, retried, and reused session artifacts.
 
@@ -49,6 +50,7 @@ Hermes state.db or Codex rollout JSONL
   -> context packet JSON / Markdown
   -> optional v2 evidence + structured summaries
   -> optional claim atoms / promotion candidates / wiki patch proposals
+  -> optional write-judge decision and guarded LLM Wiki apply
   -> lint report JSON / Markdown
   -> recovery brief JSON
   -> session ledger
@@ -67,11 +69,12 @@ Hermes state.db or Codex rollout JSONL
 | Codex integration | `codex-finalize`, `codex-watch`, `codex-status`, and non-MCP packaged Codex plugin skill |
 | Planned adapter direction | Additional agents such as Claude Code, OpenCode, or Gemini can be added later; they are not packaged yet. |
 | Default output | `data/exports/`, `data/index/session_ledger.json` |
-| Default promotion mode | `packet-only` |
+| Default Codex install policy | `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, `wiki_auto_min_score=0.85` |
+| Standalone/Hermes promotion mode | `packet-only` unless explicitly configured otherwise |
 | Optional summary modes | `heuristic`, `agent-llm`, `hybrid`, `custom-command`, `codex-cli`, `auto` via `--summary-mode` |
-| Recommended wiki growth | atoms -> promotion candidates -> dry-run wiki patch proposals |
+| Recommended wiki growth | atoms -> promotion candidates -> flexible patch proposal -> write judge -> apply or review |
 | Legacy wiki promotion | Explicit `promotion_mode="full"` or `promote-*` CLI only |
-| Wiki role | Human-facing semantic Obsidian vault |
+| Wiki role | Human-facing semantic Obsidian vault maintained through evidence and judge decisions |
 | Wiki languages | `ko`, `en` via `lang` frontmatter and `_system/config.yaml` |
 | License | MIT |
 
@@ -82,10 +85,11 @@ Hermes state.db or Codex rollout JSONL
 - Build heuristic `MicroSummary`, `UnitSummary`, and `ContextPacket` artifacts.
 - Optionally export evidence bundles plus `MicroSummaryV2` / `UnitSummaryV2` artifacts with separated recovery, knowledge, and retrieval summaries.
 - Use pluggable summary backends: default heuristic, host Agent LLM, hybrid, custom command, or Codex CLI.
-- Extract claim atoms, propose promotion candidates, and plan reviewable wiki patches without touching Obsidian by default.
+- Extract claim atoms, propose promotion candidates, and plan guarded wiki patches.
+- Let the packaged Codex Stop hook apply flexible LLM Wiki updates by default when the write judge approves them.
 - Generate compact recovery briefs for resume workflows.
 - Maintain a ledger for idempotency, stale-artifact rebuilds, retry budgets, and partial-failure diagnostics.
-- Keep live Obsidian clean by using `packet-only` as the default finalize mode.
+- Keep live Obsidian clean by requiring evidence, target safety, judge approval, and page-hash guards before automatic writes.
 - Initialize a human-facing LLM Wiki skeleton with Korean/English templates.
 - Install packaged Hermes user-plugin and context-engine assets into a Hermes Agent environment.
 - Install a packaged non-MCP Codex plugin asset whose Stop hook finalizes Codex threads, with watcher fallback still available.
@@ -122,8 +126,8 @@ Before installing, make these paths explicit to the user:
 | --- | --- | --- |
 | Codex SQLite | `%USERPROFILE%\.codex\state_5.sqlite` | Read-only Codex thread metadata |
 | Codex rollouts | `%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl` | Read-only Codex event streams |
-| LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` | Human-facing Obsidian wiki |
-| ACS project data | `<PROJECT_ROOT>\data\...` | Generated raw exports, packets, recovery, ledger, retrieval artifacts |
+| LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` default template | Human-facing Obsidian wiki updated by judge-approved patches; setup stores this as a portable template unless `--wiki-root` is explicit |
+| ACS project data | `<PROJECT_ROOT>\data\...` | Generated raw exports, packets, recovery, ledger, retrieval, wiki proposals, and judge decisions |
 
 Single-command PowerShell install:
 
@@ -141,7 +145,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 
 The winget package IDs are `Python.Python.3.13`, `Git.Git`, and optional `Obsidian.Obsidian`.
 
-If plain `codex` resolves to an npm shim such as `%APPDATA%\npm\codex.ps1`, use the Windows app CLI direct path under `%LOCALAPPDATA%\OpenAI\Codex\bin` for hook review. `doctor-codex` reports both the PATH command and the recommended app CLI candidate when it can find one.
+If plain `codex` resolves to an npm shim such as `%APPDATA%\npm\codex.ps1`, use the direct `codex.exe` path reported by `setup-codex` or `doctor-codex`. Setup reports PATH candidates, checks known `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin` and `%LOCALAPPDATA%\OpenAI\Codex\bin` locations, and pins a detected direct CLI into `local_config.json` as `codex_cli_command`.
 
 After install:
 
@@ -149,6 +153,10 @@ After install:
 .\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
 .\.venv\Scripts\agent-context-substrate.exe config-codex paths
 ```
+
+Default `setup-codex` writes `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85` into the installed Codex plugin `local_config.json`. That means the Stop hook asks Codex CLI to produce evidence-backed summaries and then asks a write judge whether a flexible LLM Wiki patch should be applied. No OpenAI Platform API key is required; ACS uses the signed-in Codex runtime and falls back to review-required artifacts if the judge path cannot run cleanly.
+
+Run `doctor-codex --summary-smoke` to opt in to a brief signed-in `codex exec` check. If doctor reports `service_tier="default"` in `%USERPROFILE%\.codex\config.toml`, remove that line or use `fast`/`flex`.
 
 For troubleshooting:
 
@@ -163,7 +171,7 @@ For an interactive path review:
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-Codex still requires one human hook review before non-managed command hooks run. Open Codex CLI, enter `/hooks`, or use the startup `Hooks need review` modal. Review the ACS command, then choose `Trust all and continue` or the equivalent trust action. This is separate from Full Access or approval-mode settings. A real smoke test should show `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`, append `status=finalized` to `data\index\codex_hook_events.jsonl`, and produce a `search-knowledge --mode recovery` hit. See the full [Windows Codex app setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md), including a prompt that a fresh Codex thread can follow from the GitHub repo alone.
+Codex still requires one human hook review before non-managed command hooks run. Restart the Codex app, open bottom-left Settings > Hooks, or open Codex CLI and enter `/hooks`. Review the ACS command, then choose `Trust all and continue` or the equivalent trust/enable action. This is separate from Full Access or approval-mode settings. A real smoke test should show `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`, append `status=finalized` to `data\index\codex_hook_events.jsonl`, and produce a `search-knowledge --mode recovery` hit. See the full [Windows Codex app setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md), including a prompt that a fresh Codex thread can follow from the GitHub repo alone.
 
 ## Install into Hermes
 
@@ -227,7 +235,7 @@ If a Telegram gateway is already running, restart it after changing plugin or co
 
 ## Install into Codex
 
-Codex integration is **hook-primary, watcher fallback**. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex `/hooks`, the Stop hook finalizes the current thread. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
+Codex integration is **hook-primary, watcher fallback**. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex `/hooks`, the Stop hook finalizes the current thread, builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
 
 Windows Codex app users should prefer the [Windows Codex app quick install](#windows-codex-app-quick-install) or the detailed [Windows setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md). The commands below are the portable developer form.
 
@@ -258,6 +266,9 @@ Do not install both the plugin hook and `~/.codex/hooks.json` fallback by defaul
   --codex-home ~/.codex \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
+  --summary-mode auto \
+  --wiki-auto-mode apply-flexible \
+  --wiki-write-judge-mode auto \
   --interval-seconds 15 \
   --idle-seconds 90
 ```
@@ -269,12 +280,15 @@ Manual finalize is also available:
   --thread-id '<CODEX_THREAD_ID>' \
   --codex-home ~/.codex \
   --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>'
+  --wiki-root '<WIKI_ROOT>' \
+  --summary-mode auto \
+  --wiki-auto-mode apply-flexible \
+  --wiki-write-judge-mode auto
 ```
 
 ## Fresh install smoke
 
-`fresh-install-smoke` validates the distribution path against temporary or real roots. It initializes a wiki, installs packaged assets, runs packet-only finalize, exports recovery, searches retrieval, expands a hit, and lints the result.
+`fresh-install-smoke` validates the distribution path against temporary or real roots. It initializes a wiki, installs packaged assets, runs a finalize smoke, exports recovery, searches retrieval, expands a hit, and lints the result.
 
 ```bash
 cd '<PROJECT_ROOT>'
@@ -306,7 +320,7 @@ The current public alpha baseline has been verified from the published repositor
 
 | Check | Current result |
 | --- | --- |
-| Project tests | `337 passed, 12 skipped` |
+| Project tests | `347 passed, 12 skipped` |
 | Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
 | Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
 | Live Codex attachment | plugin `agent-context-substrate`, Stop hook installed, watcher fallback available |
@@ -434,10 +448,12 @@ agent-context-substrate build-context-packet \
   --project-root '<PROJECT_ROOT>'
 ```
 
-For Codex Stop-hook installs, enable the same behavior in the installed plugin config:
+Codex Stop-hook installs enable the same behavior by default. Use `config-codex set` only when you are updating an older install or changing policy:
 
 ```powershell
 agent-context-substrate config-codex set --key summary_mode --value auto --project-root "<PROJECT_ROOT>"
+agent-context-substrate config-codex set --key wiki_auto_mode --value apply-flexible --project-root "<PROJECT_ROOT>"
+agent-context-substrate config-codex set --key wiki_write_judge_mode --value auto --project-root "<PROJECT_ROOT>"
 ```
 
 | Option | When to use | Trade-off |
@@ -469,9 +485,9 @@ data/exports/evals/<PACKET_ID>-summary-judge.json   # when --summary-judge-mode 
 data/cache/summaries/<cache_key>.json   # when --summary-cache on
 ```
 
-### Review-first wiki growth
+### Judge-gated wiki growth
 
-This is the recommended path for turning packet evidence into human wiki updates. The first steps are dry-run/proposal oriented and do not write Obsidian.
+The packaged Codex Stop hook runs this path automatically with `wiki_auto_mode=apply-flexible` and `wiki_write_judge_mode=auto`. The LLM Wiki grows when the judge decides the session evidence supports a flexible integration. The same steps are available manually when you want to inspect or replay the pipeline.
 
 ```bash
 agent-context-substrate extract-atoms \
@@ -494,7 +510,8 @@ agent-context-substrate plan-wiki-patches \
   --wiki-root '<WIKI_ROOT>' \
   --project-root '<PROJECT_ROOT>'
 
-# Dry-run is the default. Add --apply only after reviewing the proposal.
+# Manual CLI apply is still dry-run by default. Add --apply only after reviewing the proposal
+# or when the proposal metadata contains an approved write-judge decision.
 agent-context-substrate apply-wiki-patch \
   --patch-file '<PROJECT_ROOT>/data/wiki_patches/<PACKET_ID>.json' \
   --wiki-root '<WIKI_ROOT>' \
@@ -509,6 +526,7 @@ data/promotions/<PACKET_ID>.json
 data/promotions/<PACKET_ID>.md
 data/wiki_patches/<PACKET_ID>.json
 data/wiki_patches/<PACKET_ID>.md
+data/wiki_decisions/<PACKET_ID>.json   # Codex automatic path
 ```
 
 Flexible proposals remain proposal-only unless their metadata carries an approved semantic judge verdict. `apply-wiki-patch --apply` also checks evidence, target safety, and current page hashes before writing.
@@ -534,7 +552,7 @@ checked_pages=... missing_provenance=... orphan_pages=... missing_from_index=...
 
 ### Legacy full promotion
 
-By default, `run_session_finalize_pipeline(...)` is `packet-only` and does not create Obsidian pages. If you need the old four-page flow, run it first against a temporary wiki:
+The legacy Hermes/standalone `run_session_finalize_pipeline(...)` path is `packet-only` unless you explicitly request old full promotion. If you need the old four-page flow, run it first against a temporary wiki:
 
 ```bash
 TMP_WIKI=$(mktemp -d)
@@ -567,7 +585,7 @@ agent-context-substrate run-e2e-pipeline \
 | Variable | Default | Description |
 | --- | --- | --- |
 | `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT` | installed `local_config.py` or `~/.hermes/agent-context-substrate` | Harness project/data root. |
-| `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT` | installed `local_config.py` or `~/LLM Wiki` | Obsidian LLM Wiki root. |
+| `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT` | runtime override before `WIKI_PATH`, installed `local_config.json`, then `%USERPROFILE%\Documents\LLM Wiki` template | Obsidian LLM Wiki root. |
 | `AGENT_CONTEXT_SUBSTRATE_AUTO_FINALIZE` | `true` | Enable session-finalize automation. |
 | `AGENT_CONTEXT_SUBSTRATE_MIN_MESSAGE_COUNT` | `3` | Skip short sessions. |
 | `AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES` | `telegram,cli` | Raw session sources eligible for auto-finalize. |
@@ -597,7 +615,7 @@ LLM Wiki/
 
 Active durable pages should include `lang: ko` or `lang: en`, provenance/sources, and type-appropriate sections. The harness linter checks structural graph quality and human-facing quality issues.
 
-Machine-assisted updates default to managed claim blocks. Use rubric-guided flexible proposals only when a page needs prose-level integration rather than another managed claim block:
+Machine-assisted Codex updates default to rubric-guided flexible integration, guarded by a write judge. Managed claim blocks remain available for explicit/manual workflows:
 
 ```md
 <!-- acs:auto:claims:start -->
@@ -605,7 +623,7 @@ Machine-assisted updates default to managed claim blocks. Use rubric-guided flex
 <!-- acs:auto:claims:end -->
 ```
 
-Canonical pages should receive reviewed patch proposals before any `--apply` run. Flexible `replace_page` writes require evidence, approved judge metadata, and a current-page hash match.
+Canonical pages can be updated automatically only when the patch has evidence, approved judge metadata, target-path safety, and a current-page hash match. Otherwise ACS leaves the proposal and decision artifact for review.
 
 ## Project structure
 
@@ -678,7 +696,7 @@ This project works with sensitive local data. Treat exports as private unless de
 - Obsidian wiki pages may contain personal project notes and provenance links.
 - Never commit API keys, tokens, passwords, `.env` files, private connection strings, or raw private session exports.
 - `.gitignore` excludes generated exports and local caches by default; review `git status --short` before every release.
-- Prefer `packet-only` for live automation; use legacy full promotion only when you intentionally want durable wiki page writes.
+- For Codex live automation, prefer the default judge-gated `apply-flexible` policy. Use legacy full promotion only when you intentionally want the older durable page flow.
 
 ## Documentation
 
@@ -695,6 +713,6 @@ This project works with sensitive local data. Treat exports as private unless de
 - Claim atoms are implemented first; decision/entity/concept/question atom stores are planned extensions.
 - Recovery brief quality is now surfaced in exported recovery JSON through a `quality_gate` score and issue list.
 - Semantic lint currently covers promotion/wiki-patch structural checks, including missing evidence, missing targets, claim sources, patch→candidate integrity, and applied-patch logs; deeper wiki health checks are planned.
-- Wiki patch apply is intentionally guarded: managed blocks are the default write path, and flexible `replace_page` writes require evidence, approved judge metadata, and a current-page hash match.
+- Wiki patch apply is intentionally guarded: Codex defaults to flexible judge-gated writes, and all flexible `replace_page` writes require evidence, approved judge metadata, and a current-page hash match.
 - Legacy full promotion still writes old `queries/`, `concepts/`, `plans/`, and `architectures/` paths.
 - Long-running Hermes gateway processes need restart after plugin/context-engine deployment.

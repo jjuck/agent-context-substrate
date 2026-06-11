@@ -7,6 +7,8 @@ import json
 import subprocess
 import sys
 
+from .codex_wiki_root import resolve_codex_wiki_root
+
 
 DEFAULT_HOOK_TIMEOUT_SECONDS = 110
 
@@ -57,12 +59,14 @@ def build_codex_stop_finalize_decision(
         return CodexStopFinalizeDecision(should_finalize=False, skip_reason="missing or invalid local_config.json")
 
     project_root_value = config.get("project_root")
-    wiki_root_value = config.get("wiki_root")
-    if not project_root_value or not wiki_root_value:
+    wiki_root_resolution = resolve_codex_wiki_root(config)
+    if not project_root_value:
         return CodexStopFinalizeDecision(should_finalize=False, skip_reason="missing project_root or wiki_root")
+    if wiki_root_resolution.path is None:
+        return CodexStopFinalizeDecision(should_finalize=False, skip_reason="no wiki root resolved")
 
     project_root = _resolve_non_strict(Path(str(project_root_value)).expanduser())
-    wiki_root = _resolve_non_strict(Path(str(wiki_root_value)).expanduser())
+    wiki_root = wiki_root_resolution.path
     cwd_value = payload.get("cwd") or project_root
     cwd = _resolve_non_strict(Path(str(cwd_value)).expanduser())
     if not _is_path_relative_to(cwd, project_root):
@@ -87,6 +91,7 @@ def build_codex_stop_finalize_decision(
     if codex_home:
         command.extend(["--codex-home", str(_resolve_non_strict(Path(str(codex_home)).expanduser()))])
     _append_summary_args(command, config)
+    _append_wiki_auto_args(command, config)
 
     return CodexStopFinalizeDecision(
         should_finalize=True,
@@ -175,6 +180,20 @@ def _append_summary_args(command: list[str], config: dict[str, Any]) -> None:
             command.extend([flag, value])
     if _config_bool(config.get("summary_cache")):
         command.extend(["--summary-cache", "on"])
+
+
+def _append_wiki_auto_args(command: list[str], config: dict[str, Any]) -> None:
+    wiki_auto_mode = str(config.get("wiki_auto_mode") or "").strip().lower()
+    if not wiki_auto_mode or wiki_auto_mode in {"off", "none", "disabled"}:
+        return
+    command.extend(["--wiki-auto-mode", wiki_auto_mode])
+    for config_key, flag in [
+        ("wiki_write_judge_mode", "--wiki-write-judge-mode"),
+        ("wiki_auto_min_score", "--wiki-auto-min-score"),
+    ]:
+        value = _summary_cli_value(config_key=config_key, value=config.get(config_key))
+        if value is not None:
+            command.extend([flag, value])
 
 
 def _summary_cli_value(*, config_key: str, value: Any) -> str | None:

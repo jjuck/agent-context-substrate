@@ -4,11 +4,13 @@ import json
 import sqlite3
 from pathlib import Path
 
+import agent_context_substrate.codex_integration as codex_integration
 from agent_context_substrate.codex_integration import (
     CodexWatcherState,
     discover_due_codex_threads,
     run_codex_thread_finalize_pipeline,
 )
+from agent_context_substrate.promotions import PromotionCandidate
 from agent_context_substrate.retrieval import search_knowledge
 
 
@@ -109,6 +111,148 @@ def test_codex_finalize_auto_summary_falls_back_and_records_ledger_metadata(tmp_
     assert record["artifact_paths"]["summary_micro_mode"] == "heuristic"
     assert record["artifact_paths"]["summary_micro_fallback_from"] == "auto"
     assert record["artifact_paths"]["summary_micro_fallback_reason"] == "codex_cli_unavailable"
+
+
+def test_codex_finalize_auto_applies_flexible_wiki_patch_when_judge_approves(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home.mkdir()
+    wiki_root.mkdir()
+    _write_codex_thread(
+        codex_home,
+        thread_id="thread-wiki",
+        rollout_path=codex_home / "sessions" / "rollout-thread-wiki.jsonl",
+    )
+    requests: list[dict[str, object]] = []
+
+    def judge_router(request: dict[str, object]) -> dict[str, object]:
+        requests.append(request)
+        return {
+            "ok": True,
+            "score": 0.93,
+            "decision": "apply_flexible",
+            "candidate_ids": [request["candidates"][0]["candidate_id"]],
+            "issues": [],
+            "rationale": "The thread contains durable implementation knowledge for the LLM Wiki.",
+            "metadata": {"model": "judge-test"},
+        }
+
+    result = run_codex_thread_finalize_pipeline(
+        thread_id="thread-wiki",
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        summary_mode="heuristic",
+        wiki_auto_mode="apply-flexible",
+        wiki_write_judge_mode="hybrid",
+        wiki_write_judge_router=judge_router,
+    )
+
+    assert result.wiki_decision_path is not None
+    assert result.wiki_patch_path is not None
+    assert result.wiki_apply_result is not None
+    assert result.wiki_apply_result.applied_patch_ids
+    assert requests[0]["kind"] == "wiki-write-judge"
+    assert list(wiki_root.rglob("*.md"))
+    ledger_payload = json.loads((project_root / "data" / "index" / "session_ledger.json").read_text(encoding="utf-8"))
+    record = ledger_payload["session_finalize"]["thread-wiki"]
+    assert record["artifact_paths"]["wiki_auto_mode"] == "apply-flexible"
+    assert record["artifact_paths"]["wiki_write_decision"] == "apply_flexible"
+
+
+def test_codex_finalize_auto_merges_same_target_candidates_and_lints_clean(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home.mkdir()
+    wiki_root.mkdir()
+    _write_codex_thread(
+        codex_home,
+        thread_id="thread-wiki-merged",
+        rollout_path=codex_home / "sessions" / "rollout-thread-wiki-merged.jsonl",
+    )
+    candidates = [
+        PromotionCandidate(
+            candidate_id="thread-wiki-merged-candidate-1",
+            packet_id="thread-wiki-merged",
+            kind="wiki_update",
+            target_page="Agent Context Substrate",
+            reason="Watcher behavior is durable.",
+            evidence=["claim:thread-wiki-merged-claim-1"],
+            proposed_change="run_codex_watch_once discovers due Codex threads and finalizes them.",
+            proposed_action="update_existing",
+            confidence=0.91,
+            status="pending",
+            category="codex-runtime-insight",
+            page_type="runtime-note",
+        ),
+        PromotionCandidate(
+            candidate_id="thread-wiki-merged-candidate-2",
+            packet_id="thread-wiki-merged",
+            kind="wiki_update",
+            target_page="Agent Context Substrate",
+            reason="Flexible write behavior is durable.",
+            evidence=["claim:thread-wiki-merged-claim-2"],
+            proposed_change="Approved flexible wiki writes should produce lint-clean durable pages.",
+            proposed_action="update_existing",
+            confidence=0.92,
+            status="pending",
+            category="codex-runtime-insight",
+            page_type="runtime-note",
+        ),
+    ]
+
+    def export_candidates(*, packet_id: str, paths):
+        promotion_dir = paths.project_root / "data" / "promotions"
+        promotion_dir.mkdir(parents=True, exist_ok=True)
+        json_path = promotion_dir / f"{packet_id}.json"
+        markdown_path = promotion_dir / f"{packet_id}.md"
+        json_path.write_text(
+            json.dumps([candidate.to_dict() for candidate in candidates], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        markdown_path.write_text("# Promotion Candidates\n", encoding="utf-8")
+        return json_path, markdown_path
+
+    monkeypatch.setattr(codex_integration, "export_promotion_candidates", export_candidates)
+
+    def judge_router(request: dict[str, object]) -> dict[str, object]:
+        return {
+            "ok": True,
+            "score": 0.94,
+            "decision": "apply_flexible",
+            "candidate_ids": [candidate["candidate_id"] for candidate in request["candidates"]],
+            "issues": [],
+            "rationale": "Both candidates describe durable ACS behavior.",
+            "metadata": {"model": "judge-test"},
+        }
+
+    result = run_codex_thread_finalize_pipeline(
+        thread_id="thread-wiki-merged",
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        summary_mode="heuristic",
+        wiki_auto_mode="apply-flexible",
+        wiki_write_judge_mode="hybrid",
+        wiki_write_judge_router=judge_router,
+    )
+
+    assert result.wiki_apply_result is not None
+    assert result.wiki_apply_result.dry_run is False
+    assert result.wiki_apply_result.applied_patch_ids == ["thread-wiki-merged-patch-1"]
+    assert result.lint_issue_count == 0
+    page_text = (wiki_root / "Agent Context Substrate.md").read_text(encoding="utf-8")
+    assert "run_codex_watch_once discovers due Codex threads and finalizes them." in page_text
+    assert "Approved flexible wiki writes should produce lint-clean durable pages." in page_text
+    assert "category: codex-runtime-insight" in page_text
+    assert "[[Agent Context Substrate]]" in (wiki_root / "index.md").read_text(encoding="utf-8")
+    promotion_payload = json.loads((project_root / "data" / "promotions" / "thread-wiki-merged.json").read_text(encoding="utf-8"))
+    assert [candidate["status"] for candidate in promotion_payload] == ["applied", "applied"]
 
 
 def test_codex_watcher_selects_idle_threads_once(tmp_path: Path) -> None:

@@ -4,12 +4,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 
 
 DEFAULT_TIMEOUT_SECONDS = 110
+DEFAULT_WIKI_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\LLM Wiki"
+WIKI_ROOT_ENV_KEYS = ("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", "WIKI_PATH")
+_PERCENT_ENV_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
+_DOLLAR_ENV_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
 def main() -> int:
@@ -34,13 +39,15 @@ def run(payload: dict[str, object]) -> dict[str, object]:
         return {"continue": True}
 
     project_root_value = config.get("project_root")
-    wiki_root_value = config.get("wiki_root")
-    if not project_root_value or not wiki_root_value:
+    wiki_root, wiki_root_source, _ = _resolve_wiki_root(config)
+    if not project_root_value:
         _append_hook_event(config, payload=payload, status="skipped", detail="missing project_root or wiki_root")
+        return {"continue": True}
+    if wiki_root is None:
+        _append_hook_event(config, payload=payload, status="skipped", detail="no wiki root resolved")
         return {"continue": True}
 
     project_root = _resolve_non_strict(Path(str(project_root_value)).expanduser())
-    wiki_root = _resolve_non_strict(Path(str(wiki_root_value)).expanduser())
     cwd = _resolve_non_strict(Path(str(payload.get("cwd") or project_root)).expanduser())
     if not _is_relative_to(cwd, project_root):
         _append_hook_event(config, payload=payload, status="skipped", detail="cwd outside configured project_root")
@@ -63,6 +70,7 @@ def run(payload: dict[str, object]) -> dict[str, object]:
     if codex_home:
         command.extend(["--codex-home", str(_resolve_non_strict(Path(str(codex_home)).expanduser()))])
     _append_summary_args(command, config)
+    _append_wiki_auto_args(command, config)
 
     try:
         completed = subprocess.run(
@@ -84,7 +92,12 @@ def run(payload: dict[str, object]) -> dict[str, object]:
         _append_hook_event(config, payload=payload, status="failed", detail=message)
         return _failure(message)
     _mark_watcher_state_processed(config, session_id=session_id, project_root=project_root)
-    _append_hook_event(config, payload=payload, status="finalized", detail="codex-finalize completed")
+    _append_hook_event(
+        config,
+        payload=payload,
+        status="finalized",
+        detail=f"codex-finalize completed; wiki_root_source={wiki_root_source}",
+    )
     return {"continue": True}
 
 
@@ -115,6 +128,70 @@ def _read_stdin_json_text() -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace")
+
+
+def _resolve_wiki_root(config: dict[str, object]) -> tuple[Path | None, str, str]:
+    for key in WIKI_ROOT_ENV_KEYS:
+        value = str(os.environ.get(key) or "").strip()
+        if value:
+            return _resolve_wiki_root_value(value, source=f"env:{key}")
+    raw_value = str(config.get("wiki_root") or "").strip()
+    if raw_value:
+        source = str(config.get("wiki_root_source") or "").strip() or "legacy"
+        return _resolve_wiki_root_value(raw_value, source=source)
+    return _resolve_wiki_root_value(DEFAULT_WIKI_ROOT_TEMPLATE, source="default-template")
+
+
+def _resolve_wiki_root_value(value: str, *, source: str) -> tuple[Path | None, str, str]:
+    expanded = _expand_env_templates(value)
+    if expanded is None:
+        return None, source, value
+    expanded = _expand_home(expanded)
+    return _resolve_non_strict(Path(expanded).expanduser()), source, value
+
+
+def _expand_env_templates(value: str) -> str | None:
+    missing = False
+
+    def replace_percent(match: re.Match[str]) -> str:
+        nonlocal missing
+        replacement = _env_value(match.group(1))
+        if replacement is None:
+            missing = True
+            return match.group(0)
+        return replacement
+
+    def replace_dollar(match: re.Match[str]) -> str:
+        nonlocal missing
+        name = match.group(1) or match.group(2)
+        replacement = _env_value(str(name))
+        if replacement is None:
+            missing = True
+            return match.group(0)
+        return replacement
+
+    expanded = _PERCENT_ENV_PATTERN.sub(replace_percent, value)
+    expanded = _DOLLAR_ENV_PATTERN.sub(replace_dollar, expanded)
+    return None if missing else expanded
+
+
+def _env_value(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value:
+        return value
+    if name == "USERPROFILE":
+        return os.environ.get("HOME") or str(Path.home())
+    if name == "HOME":
+        return os.environ.get("USERPROFILE") or str(Path.home())
+    return None
+
+
+def _expand_home(value: str) -> str:
+    if value == "~":
+        return _env_value("HOME") or str(Path.home())
+    if value.startswith("~/") or value.startswith("~\\"):
+        return str(Path(_env_value("HOME") or str(Path.home())) / value[2:])
+    return value
 
 
 def _timeout_seconds(config: dict[str, object]) -> int:
@@ -166,6 +243,10 @@ def _append_hook_event(
             "turn_id": str(payload.get("turn_id") or ""),
             "cwd": str(payload.get("cwd") or ""),
         }
+        wiki_root, wiki_root_source, wiki_root_raw = _resolve_wiki_root(config)
+        record["wiki_root"] = wiki_root_raw
+        record["wiki_root_source"] = wiki_root_source
+        record["wiki_root_effective"] = str(wiki_root) if wiki_root is not None else ""
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
@@ -250,6 +331,20 @@ def _append_summary_args(command: list[str], config: dict[str, object]) -> None:
             command.extend([flag, value])
     if _config_bool(config.get("summary_cache")):
         command.extend(["--summary-cache", "on"])
+
+
+def _append_wiki_auto_args(command: list[str], config: dict[str, object]) -> None:
+    wiki_auto_mode = str(config.get("wiki_auto_mode") or "").strip().lower()
+    if not wiki_auto_mode or wiki_auto_mode in {"off", "none", "disabled"}:
+        return
+    command.extend(["--wiki-auto-mode", wiki_auto_mode])
+    for config_key, flag in [
+        ("wiki_write_judge_mode", "--wiki-write-judge-mode"),
+        ("wiki_auto_min_score", "--wiki-auto-min-score"),
+    ]:
+        value = _summary_cli_value(config_key=config_key, value=config.get(config_key))
+        if value is not None:
+            command.extend([flag, value])
 
 
 def _summary_cli_value(*, config_key: str, value: object) -> str | None:

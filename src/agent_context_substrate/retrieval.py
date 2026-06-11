@@ -33,8 +33,9 @@ from .retrieval_sources import (
     load_jsonl_record,
     read_text_lossy,
 )
-from .safe_paths import is_safe_wiki_page_path
 from .retrieval_types import RetrievalHit, RetrievalHitDetail
+from .safe_paths import is_safe_wiki_page_path
+from .wiki_pages import collect_durable_wiki_pages
 
 
 def search_knowledge(
@@ -256,9 +257,7 @@ def _search_wiki(terms: list[str], wiki_root: Path) -> list[RetrievalHit]:
     hits: list[RetrievalHit] = []
     if not wiki_root.exists():
         return hits
-    for path in sorted(wiki_root.rglob("*.md")):
-        if not is_safe_wiki_page_path(path, wiki_root):
-            continue
+    for path in collect_durable_wiki_pages(wiki_root):
         content = read_text_lossy(path)
         score = _score_text(content, terms)
         if score <= 0:

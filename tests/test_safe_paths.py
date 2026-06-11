@@ -138,6 +138,7 @@ def test_export_lint_report_rejects_unsafe_report_id(tmp_path: Path) -> None:
         thin_content_pages=[],
         unexplained_english_terms_pages=[],
         insufficient_related_links_pages=[],
+        unregistered_category_pages=[],
     )
     with pytest.raises(ValueError):
         export_lint_report(report, paths, report_id="../escape")

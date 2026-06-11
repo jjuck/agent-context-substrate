@@ -49,13 +49,159 @@ def test_count_lint_issues_separates_blocking_issues_from_advisories() -> None:
         thin_content_pages=[],
         unexplained_english_terms_pages=[],
         insufficient_related_links_pages=["isolated.md"],
+        unregistered_category_pages=["novel.md"],
     )
 
     payload = report.to_dict()
 
     assert count_lint_issues(report) == 4
     assert payload["blocking_issue_count"] == 4
-    assert payload["advisory_count"] == 3
+    assert payload["advisory_count"] == 4
+    assert payload["unregistered_category_pages"] == ["novel.md"]
+
+
+def test_lint_wiki_treats_index_links_as_discoverable_inbound_links(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    paths = HarnessPaths(project_root=project_root, wiki_root=wiki_root, home_dir=tmp_path)
+    _write(
+        wiki_root / "index.md",
+        """# Wiki Index
+
+## Concepts
+- [[Agent Context Substrate]] - Codex integration knowledge
+""",
+    )
+    _write(wiki_root / "log.md", "# Wiki Log\n")
+    _write(
+        wiki_root / "01 지식" / "Agent Context Substrate.md",
+        """---
+title: Agent Context Substrate
+lang: en
+type: concept
+category: concept
+status: seed
+review_needed: true
+sources: ["claim:packet-1-claim-1"]
+---
+# Agent Context Substrate
+
+run_codex_watch_once discovers due Codex threads and finalizes them through the Codex pipeline.
+
+## Sources and Evidence
+- `claim:packet-1-claim-1`
+""",
+    )
+
+    report = lint_wiki(paths)
+
+    assert report.missing_provenance_pages == []
+    assert report.missing_lang_pages == []
+    assert report.pages_missing_from_index == []
+    assert report.orphan_pages == []
+    assert report.insufficient_related_links_pages == []
+
+
+def test_lint_wiki_scans_root_level_pages_and_excludes_system_pages(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    paths = HarnessPaths(project_root=project_root, wiki_root=wiki_root, home_dir=tmp_path)
+    _write(
+        wiki_root / "index.md",
+        """---
+title: Wiki Index
+lang: ko
+type: index
+category: system
+---
+# Wiki Index
+
+## Practices
+- [[Hybrid Memory]] - Generated note
+""",
+    )
+    _write(wiki_root / "log.md", "# Wiki Log\n")
+    _write(
+        wiki_root / "Hybrid Memory.md",
+        """---
+title: Hybrid Memory
+lang: ko
+type: research-axis
+category: emergent-taxonomy
+status: seed
+review_needed: true
+sources: ["claim:packet-1-candidate-novel-1"]
+---
+# Hybrid Memory
+
+## Current Understanding
+
+Hybrid Memory should be captured as a root-level page while metadata and links carry the meaning.
+
+## Sources and Evidence
+- `claim:packet-1-candidate-novel-1`
+""",
+    )
+
+    report = lint_wiki(paths)
+
+    assert report.checked_pages == ["Hybrid Memory.md"]
+    assert report.missing_provenance_pages == []
+    assert report.pages_missing_from_index == []
+    assert report.orphan_pages == []
+    assert report.unregistered_category_pages == []
+
+
+def test_lint_wiki_reports_unregistered_category_as_advisory_only(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    paths = HarnessPaths(project_root=project_root, wiki_root=wiki_root, home_dir=tmp_path)
+    _write(
+        wiki_root / "_system" / "config.yaml",
+        """wiki:
+  placement_policy: registry-folder
+""",
+    )
+    _write(
+        wiki_root / "index.md",
+        """# Wiki Index
+
+## Unsorted / Review Needed
+- [[Hybrid Memory]] - Generated note
+""",
+    )
+    _write(wiki_root / "log.md", "# Wiki Log\n")
+    _write(
+        wiki_root / "01 지식" / "Hybrid Memory.md",
+        """---
+title: Hybrid Memory
+lang: ko
+type: research-axis
+category: emergent-taxonomy
+status: review_needed
+review_needed: true
+sources: ["claim:packet-1-candidate-novel-1"]
+---
+# Hybrid Memory
+
+## Current Understanding
+
+Hybrid Memory should be captured even when its category is not registered, preserving the LLM-proposed metadata for later human review.
+
+## Sources and Evidence
+- `claim:packet-1-candidate-novel-1`
+""",
+    )
+
+    report = lint_wiki(paths)
+    payload = report.to_dict()
+
+    assert report.missing_provenance_pages == []
+    assert report.pages_missing_from_index == []
+    assert report.orphan_pages == []
+    assert report.unregistered_category_pages == ["01 지식/Hybrid Memory.md"]
+    assert payload["blocking_issue_count"] == 0
+    assert payload["advisory_count"] >= 1
 
 
 def test_lint_wiki_detects_missing_provenance_orphans_broken_links_and_index_gaps(tmp_path, monkeypatch) -> None:

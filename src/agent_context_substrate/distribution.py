@@ -11,21 +11,70 @@ import re
 import shutil
 import sys
 
+from .wiki_config import default_category_registry
+
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"/mnt/[a-z]/Users/[^/\s'\"]+"),
     re.compile(r"[A-Za-z]:\\\\Users\\\\[^\\\s'\"]+"),
 )
 HUMAN_WIKI_FOLDERS = (
-    "01 지식",
-    "02 내 아이디어",
-    "03 인물과 조직",
-    "04 프로젝트",
-    "05 계획",
-    "06 원천 자료",
-    "90 보관",
+    "_system/guides",
     "_system/templates/ko",
     "_system/templates/en",
     "_system/styles",
+)
+
+MINIMAL_WIKI_CONFIG = "\n".join(
+    [
+        "wiki:",
+        "  default_language: ko",
+        "  supported_languages: [ko, en]",
+        "  filename_language: ko",
+        "  template_language: ko",
+        "  source_language_preserve: true",
+        "  placement_policy: emergent-root",
+        "  guide_files:",
+        "    principles: \"_system/guides/wiki-principles.md\"",
+        "    ontology_seeds: \"_system/guides/ontology-seeds.md\"",
+        "",
+    ]
+)
+
+WIKI_PRINCIPLES_GUIDE = "\n".join(
+    [
+        "# LLM Wiki Principles",
+        "",
+        "This vault is a living Markdown knowledge base. Folder paths are storage hints; frontmatter, links, sources, and MOC sections carry meaning.",
+        "",
+        "## Operating Principles",
+        "",
+        "- Prefer durable pages: a page should name a concept, entity, practice, decision, source, project, or question that can keep growing.",
+        "- Keep provenance close to claims. New auto-written pages should include `sources` frontmatter and a Sources and Evidence section.",
+        "- Use wikilinks to connect knowledge when a real durable page already exists. Avoid inventing fake links only to satisfy structure.",
+        "- Let categories emerge. A `category` value is useful metadata, not a permission gate or fixed folder taxonomy.",
+        "- Treat `index.md` as a map of content that helps humans scan the graph; the graph itself lives in the pages.",
+        "- When a page feels uncertain, mark it as `review_needed` instead of blocking the write.",
+        "",
+    ]
+)
+
+ONTOLOGY_SEEDS_GUIDE = "\n".join(
+    [
+        "# Ontology Seeds",
+        "",
+        "These are broad examples for LLM authors. They are not enums, schemas, or allowed-value lists.",
+        "",
+        "- `entity`: a person, organization, system, library, file, product, or place.",
+        "- `concept`: a reusable idea, abstraction, model, pattern, or vocabulary item.",
+        "- `practice`: a repeatable way of working, debugging, reviewing, designing, or operating.",
+        "- `decision`: a settled choice with context, rationale, and consequences.",
+        "- `source`: a paper, article, transcript, repository, issue, dataset, or conversation used as evidence.",
+        "- `project`: a bounded effort with goals, status, constraints, and artifacts.",
+        "- `question`: an unresolved inquiry that should gather evidence over time.",
+        "",
+        "Use these seeds when helpful, but keep the wiki open to new types and categories as the work demands.",
+        "",
+    ]
 )
 
 
@@ -137,21 +186,18 @@ def init_wiki(wiki_root: Path | str) -> InstallResult:
         (wiki_root / relative_path).mkdir(parents=True, exist_ok=True)
 
     config_path = wiki_root / "_system" / "config.yaml"
-    if not config_path.exists():
-        config_path.write_text(
-            "\n".join(
-                [
-                    "wiki:",
-                    "  default_language: ko",
-                    "  supported_languages: [ko, en]",
-                    "  filename_language: ko",
-                    "  template_language: ko",
-                    "  source_language_preserve: true",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
+    backup_path: Path | None = None
+    if config_path.exists():
+        existing_config = config_path.read_text(encoding="utf-8")
+        if _is_acs_generated_legacy_wiki_config(existing_config):
+            backup_path = config_path.with_name(f"{config_path.name}.bak-{_timestamp()}")
+            shutil.copy2(config_path, backup_path)
+            config_path.write_text(MINIMAL_WIKI_CONFIG, encoding="utf-8")
+    else:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(MINIMAL_WIKI_CONFIG, encoding="utf-8")
+
+    guide_paths = _ensure_wiki_guides(wiki_root)
 
     index_path = wiki_root / "index.md"
     if not index_path.exists():
@@ -177,10 +223,74 @@ def init_wiki(wiki_root: Path | str) -> InstallResult:
     if not log_path.exists():
         log_path.write_text("# Wiki Log\n", encoding="utf-8")
 
+    paths = {"wiki_root": wiki_root, "config_path": config_path, "index_path": index_path, "log_path": log_path}
+    paths.update(guide_paths)
+    if backup_path is not None:
+        paths["config_backup_path"] = backup_path
+
     return InstallResult(
         status="initialized",
-        paths={"wiki_root": wiki_root, "config_path": config_path, "index_path": index_path, "log_path": log_path},
+        paths=paths,
         messages=["wiki skeleton initialized"],
+    )
+
+
+def _ensure_wiki_guides(wiki_root: Path) -> dict[str, Path]:
+    guides_dir = wiki_root / "_system" / "guides"
+    guides_dir.mkdir(parents=True, exist_ok=True)
+    guide_paths = {
+        "wiki_principles_path": guides_dir / "wiki-principles.md",
+        "ontology_seeds_path": guides_dir / "ontology-seeds.md",
+    }
+    if not guide_paths["wiki_principles_path"].exists():
+        guide_paths["wiki_principles_path"].write_text(WIKI_PRINCIPLES_GUIDE, encoding="utf-8")
+    if not guide_paths["ontology_seeds_path"].exists():
+        guide_paths["ontology_seeds_path"].write_text(ONTOLOGY_SEEDS_GUIDE, encoding="utf-8")
+    return guide_paths
+
+
+def _is_acs_generated_legacy_wiki_config(text: str) -> bool:
+    if "category_registry:" not in text or "placement_policy:" in text:
+        return False
+    required_lines: set[str] = {
+        f"{category}|{rule.folder}|{rule.page_type}|{rule.template}|{rule.index_section}"
+        for category, rule in default_category_registry().items()
+    }
+    found_lines: set[str] = set()
+    current_category = ""
+    current: dict[str, str] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.endswith(":") and not line.startswith(("folder:", "page_type:", "template:", "index_section:")):
+            if current_category:
+                _add_legacy_config_rule(found_lines, current_category, current)
+            current_category = line[:-1].strip()
+            current = {}
+            continue
+        if ":" not in line or not current_category:
+            continue
+        key, value = line.split(":", 1)
+        current[key.strip()] = value.strip().strip("'\"")
+    if current_category:
+        _add_legacy_config_rule(found_lines, current_category, current)
+    return found_lines == required_lines
+
+
+def _add_legacy_config_rule(found: set[str], category: str, values: dict[str, str]) -> None:
+    if not {"folder", "page_type", "template", "index_section"}.issubset(values):
+        return
+    found.add(
+        "|".join(
+            [
+                category,
+                values["folder"],
+                values["page_type"],
+                values["template"],
+                values["index_section"],
+            ]
+        )
     )
 
 
@@ -201,13 +311,22 @@ def _write_local_config(destination: Path, *, project_root: Path, wiki_root: Pat
     return local_config_path
 
 
-def _write_codex_local_config(destination: Path, *, project_root: Path, wiki_root: Path, codex_home: Path) -> Path:
+def _write_codex_local_config(
+    destination: Path,
+    *,
+    project_root: Path,
+    wiki_root: Path,
+    codex_home: Path,
+    wiki_root_config_value: str | None = None,
+    wiki_root_source: str = "explicit",
+) -> Path:
     local_config_path = destination / "local_config.json"
     local_config_path.write_text(
         json.dumps(
             {
                 "project_root": str(project_root),
-                "wiki_root": str(wiki_root),
+                "wiki_root": wiki_root_config_value or str(wiki_root),
+                "wiki_root_source": wiki_root_source,
                 "codex_home": str(codex_home),
                 "python_executable": sys.executable,
                 "python_path_entries": [str(project_root / "src")],
@@ -215,7 +334,7 @@ def _write_codex_local_config(destination: Path, *, project_root: Path, wiki_roo
                 "trigger_strategy": "hook-primary",
                 "watcher_fallback": True,
                 "hook_timeout_seconds": 110,
-                "summary_mode": "",
+                "summary_mode": "auto",
                 "summary_cache": False,
                 "summary_model": None,
                 "summary_budget": None,
@@ -226,6 +345,9 @@ def _write_codex_local_config(destination: Path, *, project_root: Path, wiki_roo
                 "llm_max_input_chars": 12_000,
                 "llm_allow_code_snippets": "off",
                 "llm_path_policy": "redact",
+                "wiki_auto_mode": "apply-flexible",
+                "wiki_write_judge_mode": "auto",
+                "wiki_auto_min_score": 0.85,
                 "commands": {
                     "status": "agent-context-substrate codex-status",
                     "watch": "agent-context-substrate codex-watch",
@@ -402,6 +524,8 @@ def install_codex_plugin(
     codex_home: Path | str,
     project_root: Path | str,
     wiki_root: Path | str,
+    wiki_root_config_value: str | None = None,
+    wiki_root_source: str = "explicit",
     personal_marketplace_root: Path | str | None = None,
     install_user_hook: bool = False,
     overwrite: bool = False,
@@ -426,6 +550,8 @@ def install_codex_plugin(
         project_root=project_root,
         wiki_root=wiki_root,
         codex_home=codex_home,
+        wiki_root_config_value=wiki_root_config_value,
+        wiki_root_source=wiki_root_source,
     )
 
     paths = {"plugin_dir": plugin_dir, "local_config_path": local_config_path}

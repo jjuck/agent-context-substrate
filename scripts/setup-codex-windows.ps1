@@ -16,6 +16,8 @@ param(
 # Normal installs never use hook trust bypass flags. Review hooks with /hooks.
 
 $ErrorActionPreference = "Stop"
+$WikiRootExplicit = $PSBoundParameters.ContainsKey("WikiRoot")
+$DefaultWikiRootTemplate = "%USERPROFILE%\Documents\LLM Wiki"
 
 function Write-Step {
   param([string]$Message)
@@ -36,6 +38,8 @@ function Find-Command {
 function Find-CodexAppCli {
   $Candidates = @()
   if ($env:LOCALAPPDATA) {
+    $StandaloneBin = Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin"
+    $Candidates += Join-Path $StandaloneBin "codex.exe"
     $CodexBin = Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin"
     $Candidates += Join-Path $CodexBin "codex.exe"
     if (Test-Path -LiteralPath $CodexBin) {
@@ -109,9 +113,6 @@ function Require-Tool {
 if (-not $ProjectRoot) {
   $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 }
-if (-not $WikiRoot) {
-  $WikiRoot = Join-Path $env:USERPROFILE "Documents\LLM Wiki"
-}
 if (-not $CodexHome) {
   $CodexHome = Join-Path $env:USERPROFILE ".codex"
 }
@@ -119,7 +120,11 @@ if (-not $CodexHome) {
 Write-Step "Project root: $ProjectRoot"
 Write-Step "Codex SQLite: $CodexHome\state_5.sqlite"
 Write-Step "Codex rollouts: $CodexHome\sessions\...\rollout-*.jsonl"
-Write-Step "LLM Wiki root: $WikiRoot"
+if ($WikiRootExplicit) {
+  Write-Step "LLM Wiki root: $WikiRoot"
+} else {
+  Write-Step "LLM Wiki root default template: $DefaultWikiRootTemplate"
+}
 Write-Step "ACS artifacts: $ProjectRoot\data\..."
 
 $Python = Require-Tool -Commands @("py", "python") -PackageId "Python.Python.3.13" -DisplayName "Python 3.13"
@@ -136,9 +141,9 @@ if ($Codex) {
   Write-Step "Codex CLI was not found on PATH. The Codex app can still use installed files, but /hooks review needs Codex CLI or an equivalent Codex hook review surface."
 }
 if ($CodexAppCli) {
-  Write-Step "Codex app CLI candidate: $CodexAppCli"
+  Write-Step "Codex direct CLI candidate: $CodexAppCli"
 } else {
-  Write-Step "Codex app CLI candidate not found under %LOCALAPPDATA%\OpenAI\Codex\bin."
+  Write-Step "Codex direct CLI candidate not found under %LOCALAPPDATA%\Programs\OpenAI\Codex\bin or %LOCALAPPDATA%\OpenAI\Codex\bin."
 }
 
 if ($CheckOnly) {
@@ -171,10 +176,12 @@ try {
     "setup-codex",
     "--codex-home", $CodexHome,
     "--project-root", $ProjectRoot,
-    "--wiki-root", $WikiRoot,
     "--personal-marketplace-root", $env:USERPROFILE,
     "--yes"
   )
+  if ($WikiRootExplicit) {
+    $SetupArgs += @("--wiki-root", $WikiRoot)
+  }
   if ($NonInteractive) {
     $SetupArgs += "--json"
   }
@@ -182,11 +189,17 @@ try {
   Write-Step "Running ACS Codex setup"
   & $Cli @SetupArgs
 
+  Write-Step "setup-codex pins a detected direct codex.exe path into local_config.json as codex_cli_command when available."
+  Write-Step "Default local_config enables summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85."
   Write-Step "Run the Codex app CLI, then '/hooks', and trust the agent-context-substrate Stop hook. If a 'Hooks need review' modal appears, review the ACS hook command before choosing Trust all and continue."
   Write-Step "Default setup installs the plugin Stop hook only. Use the documented user hook fallback only if plugin hooks are unavailable, to avoid duplicate Stop hooks."
   Write-Step "Do not use hook trust bypass flags for normal installs."
   if ($Obsidian) {
-    Write-Step "Open Obsidian and choose this vault folder: $WikiRoot"
+    if ($WikiRootExplicit) {
+      Write-Step "Open Obsidian and choose this vault folder: $WikiRoot"
+    } else {
+      Write-Step "Open Obsidian and choose the effective vault folder resolved from: $DefaultWikiRootTemplate"
+    }
   }
 } finally {
   Pop-Location

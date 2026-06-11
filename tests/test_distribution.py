@@ -27,24 +27,101 @@ def test_init_wiki_creates_human_facing_vault_skeleton(tmp_path: Path) -> None:
     result = init_wiki(wiki_root)
 
     assert result.status == "initialized"
-    for relative_path in [
-        "01 지식",
-        "02 내 아이디어",
-        "03 인물과 조직",
-        "04 프로젝트",
-        "05 계획",
-        "06 원천 자료",
-        "90 보관",
-        "_system/templates/ko",
-        "_system/templates/en",
-        "_system/styles",
-    ]:
+    for relative_path in ["_system/guides", "_system/templates/ko", "_system/templates/en", "_system/styles"]:
         assert (wiki_root / relative_path).exists()
+    for legacy_folder in ["01 지식", "02 내 아이디어", "03 인물과 조직", "04 프로젝트", "05 계획", "06 원천 자료"]:
+        assert not (wiki_root / legacy_folder).exists()
     config_text = (wiki_root / "_system/config.yaml").read_text(encoding="utf-8")
     assert "default_language: ko" in config_text
     assert "supported_languages" in config_text
+    assert "placement_policy: emergent-root" in config_text
+    assert "category_registry:" not in config_text
+    assert (wiki_root / "_system/guides/wiki-principles.md").is_file()
+    assert (wiki_root / "_system/guides/ontology-seeds.md").is_file()
     assert (wiki_root / "index.md").is_file()
     assert (wiki_root / "log.md").is_file()
+
+
+def test_init_wiki_migrates_acs_generated_legacy_category_registry_config(tmp_path: Path) -> None:
+    wiki_root = tmp_path / "wiki"
+    system_dir = wiki_root / "_system"
+    system_dir.mkdir(parents=True)
+    (system_dir / "config.yaml").write_text(
+        "\n".join(
+            [
+                "wiki:",
+                "  default_language: ko",
+                "  supported_languages: [ko, en]",
+                "  filename_language: ko",
+                "  template_language: ko",
+                "  source_language_preserve: true",
+                "  category_registry:",
+                "    abstraction:",
+                "      folder: \"01 지식\"",
+                "      page_type: knowledge",
+                "      template: knowledge",
+                "      index_section: Abstractions",
+                "    knowledge:",
+                "      folder: \"01 지식\"",
+                "      page_type: knowledge",
+                "      template: knowledge",
+                "      index_section: Knowledge",
+                "    project:",
+                "      folder: \"04 프로젝트\"",
+                "      page_type: project",
+                "      template: project",
+                "      index_section: Projects",
+                "    source:",
+                "      folder: \"06 원천 자료\"",
+                "      page_type: source",
+                "      template: source",
+                "      index_section: Sources",
+                "    plan:",
+                "      folder: \"05 계획\"",
+                "      page_type: plan",
+                "      template: plan",
+                "      index_section: Plans",
+                "    decision:",
+                "      folder: \"01 지식\"",
+                "      page_type: decision",
+                "      template: decision",
+                "      index_section: Decisions",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = init_wiki(wiki_root)
+
+    config_text = (system_dir / "config.yaml").read_text(encoding="utf-8")
+    assert result.status == "initialized"
+    assert "placement_policy: emergent-root" in config_text
+    assert "category_registry:" not in config_text
+    assert list(system_dir.glob("config.yaml.bak-*"))
+
+
+def test_init_wiki_preserves_custom_category_registry_config(tmp_path: Path) -> None:
+    wiki_root = tmp_path / "wiki"
+    system_dir = wiki_root / "_system"
+    system_dir.mkdir(parents=True)
+    custom_config = """wiki:
+  default_language: en
+  placement_policy: registry-folder
+  category_registry:
+    research:
+      folder: "Research"
+      page_type: research-note
+      template: research-note
+      index_section: Research
+"""
+    (system_dir / "config.yaml").write_text(custom_config, encoding="utf-8")
+
+    init_wiki(wiki_root)
+
+    assert (system_dir / "config.yaml").read_text(encoding="utf-8") == custom_config
+    assert (wiki_root / "_system/guides/wiki-principles.md").is_file()
+    assert not list(system_dir.glob("config.yaml.bak-*"))
 
 
 def test_install_user_plugin_copies_assets_and_writes_local_config(tmp_path: Path) -> None:
