@@ -296,11 +296,17 @@ def _find_rollout_path(config: dict[str, object], *, session_id: str) -> Path | 
                 path = Path(str(row[0])).expanduser()
                 if not path.is_absolute():
                     path = codex_home / path
-                return path
+                if path.exists():
+                    return path
         except sqlite3.Error:
             pass
-    matches = list((codex_home / "sessions").rglob(f"rollout-{session_id}.jsonl"))
-    return matches[0] if matches else None
+    session_root = codex_home / "sessions"
+    if not session_root.exists():
+        return None
+    matches = list(session_root.rglob(f"rollout-*{session_id}.jsonl"))
+    if not matches:
+        return None
+    return max(matches, key=lambda path: path.stat().st_mtime)
 
 
 def _failure(message: str) -> dict[str, object]:

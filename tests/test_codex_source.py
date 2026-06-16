@@ -27,6 +27,7 @@ def _write_state(
     rollout_path: Path,
     cwd: Path | None = None,
     title: str = "Codex rollout review",
+    archived: int = 0,
 ) -> Path:
     state_path = codex_home / "state_5.sqlite"
     with sqlite3.connect(state_path) as connection:
@@ -46,7 +47,7 @@ def _write_state(
         connection.execute(
             """
             INSERT INTO threads (id, rollout_path, created_at, updated_at, cwd, title, archived)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 thread_id,
@@ -55,6 +56,7 @@ def _write_state(
                 "2026-06-01T00:05:00Z",
                 str(cwd or codex_home / "project"),
                 title,
+                archived,
             ),
         )
     return state_path
@@ -72,6 +74,64 @@ def test_discover_codex_threads_reads_state_db_rollout_paths(tmp_path: Path) -> 
     assert [thread.thread_id for thread in threads] == ["thread-1"]
     assert threads[0].rollout_path == rollout_path
     assert threads[0].title == "Codex rollout review"
+
+
+def test_discover_codex_threads_merges_state_db_and_rollout_only_threads(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    db_rollout_path = codex_home / "sessions" / "2026" / "06" / "01" / "rollout-thread-1.jsonl"
+    rollout_only_thread_id = "019ec59d-f820-7cc3-989f-37501a096c4d"
+    rollout_only_path = (
+        codex_home
+        / "sessions"
+        / "2026"
+        / "06"
+        / "14"
+        / f"rollout-2026-06-14T201500Z-{rollout_only_thread_id}.jsonl"
+    )
+    _write_rollout(db_rollout_path, [{"type": "user_message", "message": "Known DB thread"}])
+    _write_rollout(rollout_only_path, [{"type": "user_message", "message": "Recent rollout-only thread"}])
+    _write_state(codex_home, thread_id="thread-1", rollout_path=db_rollout_path)
+
+    threads = discover_codex_threads(codex_home=codex_home)
+
+    assert {thread.thread_id for thread in threads} == {"thread-1", rollout_only_thread_id}
+    assert {thread.rollout_path for thread in threads} == {db_rollout_path, rollout_only_path}
+
+
+def test_build_codex_session_bundle_resolves_timestamp_rollout_suffix_without_state_row(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    thread_id = "019ec59d-f820-7cc3-989f-37501a096c4d"
+    rollout_path = codex_home / "sessions" / "rollout-2026-06-14T201500Z-019ec59d-f820-7cc3-989f-37501a096c4d.jsonl"
+    _write_rollout(
+        rollout_path,
+        [
+            {"type": "user_message", "message": "Please finalize this latest Codex thread"},
+            {"type": "agent_message", "message": "Finalized."},
+        ],
+    )
+
+    bundle = build_codex_session_bundle(thread_id=thread_id, codex_home=codex_home)
+
+    assert bundle.session_id == thread_id
+    assert bundle.metadata["rollout_path"] == str(rollout_path)
+    assert [message.role for message in bundle.messages] == ["user", "assistant"]
+    assert "latest Codex thread" in bundle.messages[0].content
+
+
+def test_discover_codex_threads_does_not_reintroduce_archived_state_threads_from_rollout_glob(
+    tmp_path: Path,
+) -> None:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    rollout_path = codex_home / "sessions" / "rollout-thread-1.jsonl"
+    _write_rollout(rollout_path, [{"type": "user_message", "message": "Archived thread"}])
+    _write_state(codex_home, thread_id="thread-1", rollout_path=rollout_path, archived=1)
+
+    assert discover_codex_threads(codex_home=codex_home) == []
+    assert [thread.thread_id for thread in discover_codex_threads(codex_home=codex_home, include_archived=True)] == [
+        "thread-1"
+    ]
 
 
 def test_discover_codex_threads_excludes_internal_summary_threads_from_state_db(tmp_path: Path) -> None:

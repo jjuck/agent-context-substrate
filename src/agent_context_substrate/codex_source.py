@@ -15,6 +15,9 @@ from .session_bundle import SessionBundle, SessionMessage
 DEFAULT_MAX_TOOL_OUTPUT_CHARS = 12_000
 _SENSITIVE_KEY_RE = re.compile(r"(?i)(api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*([^\s,\"]+)")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_UUID_THREAD_ID_SUFFIX_RE = re.compile(
+    r"(?i)([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+)
 _INTERNAL_CODEX_SUMMARY_PROMPT_PREFIXES = (
     "Use this Agent Context Substrate summary input JSON:",
     "Read the Agent Context Substrate summary input JSON at ",
@@ -54,10 +57,21 @@ def resolve_codex_home(codex_home: Path | str | None = None) -> Path:
 
 def discover_codex_threads(*, codex_home: Path | str | None = None, include_archived: bool = False) -> list[CodexThreadRecord]:
     root = resolve_codex_home(codex_home)
-    records = _discover_threads_from_state_db(root, include_archived=include_archived)
-    if records:
-        return sorted(records, key=lambda record: record.rollout_path.stat().st_mtime, reverse=True)
-    return _discover_threads_from_rollout_glob(root)
+    state_records = _discover_threads_from_state_db(root, include_archived=True)
+    if include_archived:
+        visible_state_records = state_records
+        archived_thread_ids: set[str] = set()
+    else:
+        archived_thread_ids = {record.thread_id for record in state_records if record.archived}
+        visible_state_records = [record for record in state_records if not record.archived]
+    rollout_records = [
+        record for record in _discover_threads_from_rollout_glob(root) if record.thread_id not in archived_thread_ids
+    ]
+    records = _merge_thread_records(
+        rollout_records,
+        visible_state_records,
+    )
+    return sorted(records, key=lambda record: record.rollout_path.stat().st_mtime, reverse=True)
 
 
 def build_codex_session_bundle(
@@ -147,6 +161,9 @@ def _resolve_thread_record(
     for record in discover_codex_threads(codex_home=codex_home, include_archived=True):
         if record.thread_id == thread_id:
             return record
+    fallback = _find_rollout_path_by_thread_id(resolve_codex_home(codex_home), thread_id=thread_id)
+    if fallback is not None:
+        return CodexThreadRecord(thread_id=thread_id, rollout_path=fallback, title=fallback.stem)
     raise KeyError(f"Codex thread not found: {thread_id}")
 
 
@@ -212,7 +229,7 @@ def _discover_threads_from_rollout_glob(root: Path) -> list[CodexThreadRecord]:
         return records
     for path in sorted(session_root.rglob("rollout-*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True):
         record = CodexThreadRecord(
-            thread_id=path.stem.removeprefix("rollout-"),
+            thread_id=_thread_id_from_rollout_path(path),
             rollout_path=path,
             updated_at=None,
             title=path.stem,
@@ -220,6 +237,37 @@ def _discover_threads_from_rollout_glob(root: Path) -> list[CodexThreadRecord]:
         if not _is_internal_summary_thread(record):
             records.append(record)
     return records
+
+
+def _merge_thread_records(*groups: list[CodexThreadRecord]) -> list[CodexThreadRecord]:
+    merged: dict[str, CodexThreadRecord] = {}
+    for group in groups:
+        for record in group:
+            merged[record.thread_id] = record
+    return list(merged.values())
+
+
+def _find_rollout_path_by_thread_id(root: Path, *, thread_id: str) -> Path | None:
+    session_root = root / "sessions"
+    if not session_root.exists():
+        return None
+    matches = [
+        path
+        for path in session_root.rglob(f"rollout-*{thread_id}.jsonl")
+        if _thread_id_from_rollout_path(path) == thread_id
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda path: path.stat().st_mtime)
+
+
+def _thread_id_from_rollout_path(path: Path) -> str:
+    stem = path.stem
+    suffix = stem.removeprefix("rollout-")
+    match = _UUID_THREAD_ID_SUFFIX_RE.search(suffix)
+    if match is not None:
+        return match.group(1)
+    return suffix
 
 
 def _optional_row_str(row: sqlite3.Row, key: str) -> str | None:

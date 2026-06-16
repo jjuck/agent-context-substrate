@@ -320,6 +320,37 @@ def test_stop_hook_success_marks_watcher_state_processed(tmp_path: Path) -> None
     assert state["thread-1"]["rollout_path"] == str(rollout_path)
 
 
+def test_stop_hook_success_marks_timestamp_rollout_suffix_as_processed(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    thread_id = "019ec59d-f820-7cc3-989f-37501a096c4d"
+    rollout_path = codex_home / "sessions" / "2026" / "06" / "14" / f"rollout-2026-06-14T201500Z-{thread_id}.jsonl"
+    rollout_path.parent.mkdir(parents=True)
+    rollout_path.write_text('{"payload":{"type":"user_message","message":"hello"}}\n', encoding="utf-8")
+    _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
+
+    def runner(command: list[str], *, cwd: Path, timeout_seconds: int) -> CodexHookCommandRunnerResult:
+        return CodexHookCommandRunnerResult(returncode=0, stdout="", stderr="")
+
+    output = run_codex_stop_finalize_hook(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": thread_id,
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+        runner=runner,
+    )
+
+    state_path = project_root / "data" / "index" / "codex_watcher_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert output["continue"] is True
+    assert state[thread_id]["rollout_path"] == str(rollout_path)
+
+
 def test_packaged_stop_hook_script_accepts_utf8_stdin_on_windows_paths(tmp_path: Path) -> None:
     plugin_root = tmp_path / "plugin"
     project_root = tmp_path / "project-\uac00"
@@ -397,3 +428,84 @@ def test_packaged_stop_hook_script_accepts_utf8_stdin_on_windows_paths(tmp_path:
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary_payload["metadata"]["fallback_from"] == "auto"
     assert summary_payload["metadata"]["fallback_reason"] == "codex_cli_unavailable"
+
+
+def test_packaged_stop_hook_script_marks_timestamp_rollout_suffix_processed(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    thread_id = "019ec59d-f820-7cc3-989f-37501a096c4d"
+    rollout_path = codex_home / "sessions" / "2026" / "06" / "14" / f"rollout-2026-06-14T201500Z-{thread_id}.jsonl"
+    rollout_path.parent.mkdir(parents=True)
+    project_root.mkdir()
+    wiki_root.mkdir()
+    plugin_root.mkdir()
+    rollout_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-14T20:15:00Z",
+                        "payload": {"type": "user_message", "message": "hello from latest Codex"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-06-14T20:16:00Z",
+                        "payload": {"type": "agent_message", "message": "done"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "python_executable": sys.executable,
+                "python_path_entries": [str(Path(__file__).resolve().parents[1] / "src")],
+                "hook_timeout_seconds": 60,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    script_path = (
+        files("agent_context_substrate")
+        / "assets"
+        / "codex_plugin"
+        / "agent-context-substrate"
+        / "hooks"
+        / "codex_stop_finalize.py"
+    )
+    payload = json.dumps(
+        {
+            "hook_event_name": "Stop",
+            "session_id": thread_id,
+            "cwd": str(project_root),
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    env = {
+        **{key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        "PLUGIN_ROOT": str(plugin_root),
+    }
+
+    completed = subprocess.run(
+        [sys.executable, str(script_path)],
+        input=payload,
+        capture_output=True,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+
+    state = json.loads((project_root / "data" / "index" / "codex_watcher_state.json").read_text(encoding="utf-8"))
+    assert completed.returncode == 0
+    assert json.loads(completed.stdout.decode("utf-8")) == {"continue": True}
+    assert state[thread_id]["rollout_path"] == str(rollout_path)
