@@ -31,7 +31,7 @@ ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 a
 | Git | `Git.Git` | `-InstallMissingTools`를 줄 때 |
 | Obsidian | `Obsidian.Obsidian` | `-InstallObsidian`을 줄 때 |
 | Codex 앱/CLI | 별도 설치 | 자동 설치하지 않음 |
-| Hook trust | `/hooks`에서 직접 review/trust | 자동 우회하지 않음 |
+| Hook trust | Codex 앱 -> 설정 -> 훅 -> 신뢰. CLI `/hooks`는 대체 경로 | 자동 우회하지 않음 |
 
 일부 Windows 환경에서는 plain `codex`가 Windows Codex 앱 CLI가 아니라 `%APPDATA%\npm\codex.ps1` 또는 `codex.cmd` 같은 npm shim을 먼저 잡을 수 있습니다. setup script와 `doctor-codex`는 PATH의 모든 `codex` 후보와 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, `%LOCALAPPDATA%\OpenAI\Codex\bin` 아래 direct 후보를 함께 보여줍니다. direct `codex.exe`가 발견되면 `setup-codex`는 이를 `local_config.json`의 `codex_cli_command`로 저장해서 `summary_mode=auto`가 전역 PATH 순서에 덜 흔들리게 합니다.
 
@@ -142,11 +142,18 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 
 ## 5. Hook 승인
 
-설치 명령은 hook 파일을 배치하지만, Codex 보안 정책상 non-managed command hook은 사용자가 한 번 review/trust 해야 실행됩니다. 이 단계는 `기본 권한`, `자동검토`, `전체권한` 같은 approval/sandbox 설정과 다릅니다.
+설치 명령은 hook 파일을 배치하지만, Codex 보안 정책상 non-managed command hook은 사용자가 한 번 review/trust 해야 실행됩니다. 이 단계는 `기본 권한`, `자동검토`, `전체권한` 같은 approval/sandbox 설정과 다르며, ACS installer는 이 trust 단계를 몰래 우회하지 않습니다.
 
-설치 후 먼저 Codex 앱을 재시작하세요. GUI에서는 왼쪽 아래 설정 영역을 열고 hook 설정으로 들어간 뒤 `agent-context-substrate` plugin Stop hook 또는 user configuration Stop hook을 찾아 approve/trust 및 enable합니다.
+먼저 Codex 앱 UI 경로를 사용하세요.
 
-PowerShell에서 Codex CLI를 열고:
+1. 설치 후 Codex 앱을 재시작합니다.
+2. Codex 앱의 설정을 엽니다.
+3. Hooks/훅 설정으로 들어갑니다.
+4. `agent-context-substrate` Stop hook을 찾습니다.
+5. hook command/path가 설치된 ACS hook을 가리키는지 확인합니다.
+6. Trust, Allow, Enable, `Trust all and continue` 또는 해당 신뢰/활성화 동작을 선택합니다.
+
+Codex CLI/TUI review도 대체 경로로 사용할 수 있습니다. PowerShell에서 Codex CLI를 열고:
 
 ```powershell
 codex
@@ -178,7 +185,7 @@ Hooks need review
 3. Continue without trusting
 ```
 
-먼저 hook command가 설치된 `agent-context-substrate` Stop hook을 가리키는지 review한 뒤 `Trust all and continue` 또는 해당 hook trust 동작을 선택하세요. 설치를 맡은 agent는 이 단계 전에 사용자에게 “Codex CLI의 agent-context-substrate Stop hook을 review/trust로 허용해도 될까요?”라고 물어야 합니다.
+먼저 hook command가 설치된 `agent-context-substrate` Stop hook을 가리키는지 review한 뒤 `Trust all and continue` 또는 해당 hook trust 동작을 선택하세요. 설치를 맡은 agent는 이 단계 전에 사용자에게 “Codex의 agent-context-substrate Stop hook을 review/trust로 허용해도 될까요?”라고 물어야 합니다.
 
 Hook 파일이나 명령이 바뀌면 Codex가 다시 review 대상으로 표시할 수 있습니다. installer는 이 trust를 자동 승인하지 않습니다.
 
@@ -250,10 +257,10 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - scripts/setup-codex-windows.ps1를 기본 설치 경로로 사용해.
 - 새 설치 기본값은 summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, wiki_auto_min_score=0.85라고 설명해.
 - LLM Wiki 내용은 사용자가 매번 wiki write를 요청할 때만 쌓이는 것이 아니라, write judge가 evidence-backed flexible patch를 승인할 때 반영된다고 설명해.
-- plain codex가 npm shim이면 /hooks review에는 setup-codex 또는 doctor-codex가 표시한 direct codex.exe 경로를 우선 사용해.
+- plain codex가 npm shim이면 CLI/TUI hook review에는 setup-codex 또는 doctor-codex가 표시한 direct codex.exe 경로를 우선 사용해.
 - 누락 도구가 있으면 Python.Python.3.13, Git.Git, Obsidian.Obsidian winget ID를 알려주고, 설치 전 사용자에게 확인해.
 - 설치 후 doctor-codex, config-codex paths, diagnose-codex 명령을 안내해.
-- non-managed hook trust는 자동 우회하지 말고, 사용자에게 승인 질문을 한 뒤 /hooks 또는 Hooks need review modal에서 agent-context-substrate Stop hook을 review/trust 해.
+- non-managed hook trust는 자동 우회하지 말고, 사용자에게 승인 질문을 한 뒤 Codex 앱 -> 설정 -> 훅에서 agent-context-substrate Stop hook을 먼저 review/trust 해. CLI /hooks 또는 Hooks need review modal은 대체 review 경로로만 사용해.
 - 기본 설치에서는 ~/.codex/hooks.json fallback을 만들지 마. plugin hook을 쓸 수 없을 때만 --user-hook-fallback을 설명해.
 - 마지막에는 실제 interactive Stop hook smoke test로 Running Stop hook: Finalizing Codex thread into Agent Context Substrate, codex_hook_events.jsonl status=finalized, data\... artifact 생성, summary metadata, wiki decision artifact, search-knowledge recovery hit까지 확인해.
 ```

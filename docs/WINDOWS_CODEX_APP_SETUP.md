@@ -31,7 +31,7 @@ Required tools are the Windows Codex app, Python 3.11+, Git, and PowerShell. Obs
 | Git | `Git.Git` | With `-InstallMissingTools` |
 | Obsidian | `Obsidian.Obsidian` | With `-InstallObsidian` |
 | Codex app/CLI | Separate install | Not installed automatically |
-| Hook trust | Review/trust in `/hooks` | Never bypassed automatically |
+| Hook trust | Codex app Settings > Hooks > Trust; CLI `/hooks` is an alternate path | Never bypassed automatically |
 
 On some Windows machines, plain `codex` on PATH resolves to an npm shim such as
 `%APPDATA%\npm\codex.ps1` or `codex.cmd` instead of the Windows Codex app CLI.
@@ -162,13 +162,18 @@ Interactive path review:
 
 ## 5. Trust the hook once
 
-The installer places the hook files, but Codex requires a user review before non-managed command hooks run. This is separate from Full Access or approval-mode settings.
+The installer places the hook files, but Codex requires a user review before non-managed command hooks run. This is separate from Full Access, approval mode, or sandbox settings, and ACS never silently bypasses it.
 
-First restart the Codex app after installation. In the GUI, open the bottom-left
-settings area, open hook settings, find the `agent-context-substrate` plugin Stop
-hook or user configuration Stop hook, then approve/trust and enable it.
+Use the Codex app UI first:
 
-CLI review is also supported. Open Codex CLI:
+1. Restart the Codex app after installation.
+2. Open Settings from the app UI.
+3. Open Hooks.
+4. Find the `agent-context-substrate` Stop hook.
+5. Review the command/path and confirm it points to the installed ACS hook.
+6. Choose Trust, Allow, Enable, `Trust all and continue`, or the equivalent trust action.
+
+CLI/TUI review is also supported as an alternate path. Open Codex CLI:
 
 ```powershell
 codex
@@ -204,7 +209,7 @@ Hooks need review
 review the hook command first. After confirming it points to the installed
 `agent-context-substrate` Stop hook, choose `Trust all and continue` or the
 equivalent trust action for that reviewed hook. An installing agent should ask
-the user before doing this: "May I review and trust the Codex CLI
+the user before doing this: "May I review and trust the Codex
 agent-context-substrate Stop hook now?"
 
 Codex may require review again if the hook file or command changes. The installer does not auto-approve this trust step.
@@ -282,10 +287,10 @@ Requirements:
 - Use scripts/setup-codex-windows.ps1 as the default install path.
 - Explain that new installs default to summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85.
 - Explain that LLM Wiki content is added when the write judge approves evidence-backed flexible patches, not only when the user explicitly asks for each wiki write.
-- If plain codex resolves to an npm shim, prefer the direct codex.exe path reported by setup-codex or doctor-codex for /hooks review.
+- If plain codex resolves to an npm shim, prefer the direct codex.exe path reported by setup-codex or doctor-codex for CLI/TUI hook review.
 - If tools are missing, mention Python.Python.3.13, Git.Git, and Obsidian.Obsidian winget package IDs, then ask before installing them.
 - After install, explain doctor-codex, config-codex paths, and diagnose-codex.
-- Do not bypass non-managed hook trust. Ask me before reviewing/trusting the hook, then use /hooks or the Hooks need review modal to review the agent-context-substrate Stop hook.
+- Do not bypass non-managed hook trust. Ask me before reviewing/trusting the hook, then prefer Codex app Settings > Hooks to review and trust the agent-context-substrate Stop hook. Use CLI /hooks or the Hooks need review modal only as alternate review paths.
 - Do not install ~/.codex/hooks.json by default. Mention --user-hook-fallback only if plugin hooks are unavailable.
 - For final validation, run a real interactive Stop hook smoke test and confirm Running Stop hook: Finalizing Codex thread into Agent Context Substrate, codex_hook_events.jsonl status=finalized, generated data\... artifacts, summary metadata, wiki decision artifact, and a search-knowledge recovery hit.
 ```

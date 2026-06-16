@@ -171,7 +171,7 @@ For an interactive path review:
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-Codex still requires one human hook review before non-managed command hooks run. Restart the Codex app, open bottom-left Settings > Hooks, or open Codex CLI and enter `/hooks`. Review the ACS command, then choose `Trust all and continue` or the equivalent trust/enable action. This is separate from Full Access or approval-mode settings. A real smoke test should show `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`, append `status=finalized` to `data\index\codex_hook_events.jsonl`, and produce a `search-knowledge --mode recovery` hit. See the full [Windows Codex app setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md), including a prompt that a fresh Codex thread can follow from the GitHub repo alone.
+Codex still requires one human hook review before non-managed command hooks run. Restart the Codex app, open Settings > Hooks, find the `agent-context-substrate` Stop hook, review the ACS command/path, then choose `Trust all and continue` or the equivalent trust/enable action. If you are using Codex CLI/TUI instead of the app UI, enter `/hooks` and trust the same Stop hook there. Hook trust is separate from Full Access or approval-mode settings, and the installer does not silently bypass it. A real smoke test should show `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`, append `status=finalized` to `data\index\codex_hook_events.jsonl`, and produce a `search-knowledge --mode recovery` hit. See the full [Windows Codex app setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md), including a prompt that a fresh Codex thread can follow from the GitHub repo alone.
 
 ## Install into Hermes
 
@@ -235,7 +235,7 @@ If a Telegram gateway is already running, restart it after changing plugin or co
 
 ## Install into Codex
 
-Codex integration is **hook-primary, watcher fallback**. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex `/hooks`, the Stop hook finalizes the current thread, builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
+Codex integration is **hook-primary, watcher fallback**. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex app Settings > Hooks, the Stop hook finalizes the current thread, builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. CLI/TUI users can use `/hooks` as the alternate trust path. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
 
 Windows Codex app users should prefer the [Windows Codex app quick install](#windows-codex-app-quick-install) or the detailed [Windows setup guide](./docs/WINDOWS_CODEX_APP_SETUP.md). The commands below are the portable developer form.
 
@@ -257,7 +257,7 @@ cd '<PROJECT_ROOT>'
 # watcher_fallback=available
 ```
 
-Codex still requires one hook review before non-managed command hooks run. Open Codex CLI, enter `/hooks`, and trust the `agent-context-substrate` Stop hook. If hook review is not available yet, run watcher fallback explicitly:
+Codex still requires one hook review before non-managed command hooks run. In the Codex app, open Settings > Hooks, find the `agent-context-substrate` Stop hook, review the command/path, and trust or enable it. Alternatively, if you are using Codex CLI/TUI, enter `/hooks` and trust the same Stop hook there. If hook review is not available yet, run watcher fallback explicitly:
 
 Do not install both the plugin hook and `~/.codex/hooks.json` fallback by default. If a specific Codex runtime cannot load plugin-bundled hooks, opt in to the user hook fallback with `setup-codex --user-hook-fallback` or lower-level `install-codex-plugin --install-user-hook`.
 

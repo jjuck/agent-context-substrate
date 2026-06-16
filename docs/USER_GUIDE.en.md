@@ -311,7 +311,7 @@ hermes gateway restart
 
 ## 8. Install and enable Codex integration
 
-Codex integration is hook-primary with watcher fallback. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex `/hooks`, the Stop hook finalizes the current thread, builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
+Codex integration is hook-primary with watcher fallback. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through Codex app Settings > Hooks, the Stop hook finalizes the current thread, builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. CLI/TUI users can use `/hooks` as the alternate trust path. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
 
 Windows Codex app users should start with the [Windows setup guide](./WINDOWS_CODEX_APP_SETUP.md). The distribution PowerShell path is the one-shot bootstrap script:
 
@@ -337,7 +337,7 @@ After install, inspect health and paths:
 
 Use `setup-codex-wizard` for an interactive path review. `diagnose-codex --fix` repairs only safe ACS local files such as the wiki skeleton, Codex plugin Stop hook, and local config. The `~/.codex/hooks.json` user hook fallback is opt-in to avoid duplicate Stop hooks. `doctor-codex` reports PATH `codex` candidates and setup pins a detected direct `codex.exe` as `codex_cli_command`.
 
-Codex still requires hook review/trust before non-managed hooks run. Restart the Codex app, open Settings > Hooks or `/hooks`, then trust/enable the ACS Stop hook.
+Codex still requires hook review/trust before non-managed hooks run. Restart the Codex app, open Settings > Hooks, review the ACS Stop hook command/path, then trust or enable it. If you are using Codex CLI/TUI, use `/hooks` as the alternate review path.
 
 After hook review, you can run the watcher fallback with the same wiki automation policy:
 
