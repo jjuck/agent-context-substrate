@@ -13,7 +13,7 @@ param(
 #   powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
 #   powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 #
-# Normal installs never use hook trust bypass flags. Review hooks with /hooks.
+# Normal installs never use hook trust bypass flags. Review hooks in Codex app -> Settings -> Hooks; CLI /hooks is an alternate path.
 
 $ErrorActionPreference = "Stop"
 $WikiRootExplicit = $PSBoundParameters.ContainsKey("WikiRoot")
@@ -135,10 +135,10 @@ $CodexAppCli = Find-CodexAppCli
 if ($Codex) {
   Write-Step "Codex CLI found: $($Codex.Source)"
   if (Test-CodexNpmShim $Codex) {
-    Write-Step "WARNING: PATH codex appears to be an npm shim. Prefer the Windows Codex app CLI direct path for /hooks review."
+    Write-Step "WARNING: PATH codex appears to be an npm shim. Prefer the Windows Codex app CLI direct path for plugin registration and hook review."
   }
 } else {
-  Write-Step "Codex CLI was not found on PATH. The Codex app can still use installed files, but /hooks review needs Codex CLI or an equivalent Codex hook review surface."
+  Write-Step "Codex CLI was not found on PATH. The Codex app can still use copied files, but registry registration needs Codex CLI and hook trust needs Codex app -> Settings -> Hooks or an equivalent review surface."
 }
 if ($CodexAppCli) {
   Write-Step "Codex direct CLI candidate: $CodexAppCli"
@@ -190,8 +190,10 @@ try {
   & $Cli @SetupArgs
 
   Write-Step "setup-codex pins a detected direct codex.exe path into local_config.json as codex_cli_command when available."
+  Write-Step "setup-codex registers agent-context-substrate@personal with Codex via 'codex plugin add' when Codex CLI is available; doctor-codex reports codex_plugin_registered."
+  Write-Step "Default allowed_workspace_roots includes %USERPROFILE%\Documents\Codex so ordinary Codex workspaces can finalize while ACS artifacts stay under ProjectRoot\data."
   Write-Step "Default local_config enables summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85."
-  Write-Step "Run the Codex app CLI, then '/hooks', and trust the agent-context-substrate Stop hook. If a 'Hooks need review' modal appears, review the ACS hook command before choosing Trust all and continue."
+  Write-Step "Restart Codex, open Codex app -> Settings -> Hooks, and trust the agent-context-substrate Stop hook. CLI /hooks is the alternate path. If a 'Hooks need review' modal appears, review the ACS hook command before choosing Trust all and continue."
   Write-Step "Default setup installs the plugin Stop hook only. Use the documented user hook fallback only if plugin hooks are unavailable, to avoid duplicate Stop hooks."
   Write-Step "Do not use hook trust bypass flags for normal installs."
   if ($Obsidian) {

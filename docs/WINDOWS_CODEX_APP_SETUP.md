@@ -17,6 +17,8 @@ ACS reads Codex session files **read-only**, writes audit artifacts under the cl
 | ACS artifacts | `<PROJECT_ROOT>\data\...` | Raw exports, packets, recovery, ledger, retrieval index, wiki proposals, judge decisions |
 | LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` default template | Human-facing Obsidian wiki updated by judge-approved patches; setup stores the template unless `--wiki-root` is explicit |
 | Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | Installed ACS Codex plugin asset |
+| Codex plugin registry | `agent-context-substrate@personal` in `codex plugin list` | Codex app registration; may appear under `Personal` or `Created by you` |
+| Codex workspace root | `%USERPROFILE%\Documents\Codex` default template | Default `allowed_workspace_roots`; ordinary Codex workspaces can finalize even when ACS artifacts live elsewhere |
 | Codex user hook | `%USERPROFILE%\.codex\hooks.json` | Optional Stop hook fallback; not installed by default |
 
 ## 2. Prerequisites and automatic install scope
@@ -31,7 +33,7 @@ Required tools are the Windows Codex app, Python 3.11+, Git, and PowerShell. Obs
 | Git | `Git.Git` | With `-InstallMissingTools` |
 | Obsidian | `Obsidian.Obsidian` | With `-InstallObsidian` |
 | Codex app/CLI | Separate install | Not installed automatically |
-| Hook trust | Codex app Settings > Hooks > Trust; CLI `/hooks` is an alternate path | Never bypassed automatically |
+| Hook trust | `Codex app -> Settings -> Hooks -> Trust`; CLI `/hooks` is an alternate path | Never bypassed automatically |
 
 On some Windows machines, plain `codex` on PATH resolves to an npm shim such as
 `%APPDATA%\npm\codex.ps1` or `codex.cmd` instead of the Windows Codex app CLI.
@@ -69,6 +71,21 @@ The script creates `.venv`, runs `pip install -e .`, then runs:
 .\.venv\Scripts\agent-context-substrate.exe setup-codex --yes
 ```
 
+`setup-codex` does three separate Codex integration steps:
+
+1. Copies the plugin asset, personal marketplace entry, and plugin cache files.
+2. Registers the personal plugin with Codex when a usable Codex CLI is available:
+
+   ```powershell
+   codex plugin add agent-context-substrate@personal --json
+   ```
+
+3. Leaves Stop hook trust for the user to review in `Codex app -> Settings -> Hooks`.
+
+If `doctor-codex` reports `codex_plugin_registered=missing`, run the same `codex plugin add` command manually. The plugin browser may show the plugin under `Personal` or `Created by you`.
+
+`project_root` is the ACS artifact root, not the active Codex workspace allowlist. New installs set `allowed_workspace_roots` to `%USERPROFILE%\Documents\Codex` so ordinary Codex workspaces finalize on Stop while generated ACS artifacts remain under `<PROJECT_ROOT>\data\...`.
+
 Default Windows setup installs the plugin-bundled Stop hook only. It does not
 also register `%USERPROFILE%\.codex\hooks.json`, because Codex loads matching
 hooks from multiple sources and would run duplicate Stop hooks. If plugin hooks
@@ -85,6 +102,10 @@ Health check:
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
 ```
+
+The doctor output includes `codex_plugin_registered`. A missing registry entry means the plugin files can exist while Codex still considers `agent-context-substrate@personal` not installed.
+
+The doctor output also includes `codex_hook_recent_workspace_skips`. A warning there means recent Stop hooks skipped with a workspace guard detail such as `cwd outside configured project_root` or `cwd outside configured allowed_workspace_roots`; review `allowed_workspace_roots` in the installed plugin `local_config.json`.
 
 User-facing paths:
 
@@ -104,6 +125,7 @@ Codex LLM summaries and judge-gated wiki writes are on by default in new install
 
 ```json
 {
+  "allowed_workspace_roots": ["%USERPROFILE%\\Documents\\Codex"],
   "summary_mode": "auto",
   "wiki_auto_mode": "apply-flexible",
   "wiki_write_judge_mode": "auto",
@@ -111,7 +133,8 @@ Codex LLM summaries and judge-gated wiki writes are on by default in new install
 }
 ```
 
-With that config, the Stop hook tries `codex exec` first and falls back to
+With that config, the Stop hook accepts ordinary Codex workspaces under
+`%USERPROFILE%\Documents\Codex`, tries `codex exec` first, and falls back to
 heuristic summaries on CLI, timeout, JSON, or lint failure. For wiki writes, it
 plans a flexible patch and asks the write judge whether the LLM Wiki should be
 updated. If the judge path is unavailable or below the minimum score, ACS leaves
@@ -167,8 +190,8 @@ The installer places the hook files, but Codex requires a user review before non
 Use the Codex app UI first:
 
 1. Restart the Codex app after installation.
-2. Open Settings from the app UI.
-3. Open Hooks.
+2. Open `Codex app -> Settings -> Hooks`.
+3. Select the Hooks entry if the Settings view has a left navigation.
 4. Find the `agent-context-substrate` Stop hook.
 5. Review the command/path and confirm it points to the installed ACS hook.
 6. Choose Trust, Allow, Enable, `Trust all and continue`, or the equivalent trust action.
@@ -284,13 +307,14 @@ Requirements:
 - Tell me that Codex source data lives under %USERPROFILE%\.codex: state_5.sqlite plus sessions\...\rollout-*.jsonl.
 - Treat %USERPROFILE%\Documents\LLM Wiki as the portable default LLM Wiki template, explain the effective path, and confirm before installing.
 - Tell me that ACS artifacts are written under the cloned agent-context-substrate project data\... directory.
+- Explain that project_root is the ACS artifact root, while allowed_workspace_roots defaults to %USERPROFILE%\Documents\Codex so ordinary Codex workspaces can finalize on Stop.
 - Use scripts/setup-codex-windows.ps1 as the default install path.
 - Explain that new installs default to summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85.
 - Explain that LLM Wiki content is added when the write judge approves evidence-backed flexible patches, not only when the user explicitly asks for each wiki write.
 - If plain codex resolves to an npm shim, prefer the direct codex.exe path reported by setup-codex or doctor-codex for CLI/TUI hook review.
 - If tools are missing, mention Python.Python.3.13, Git.Git, and Obsidian.Obsidian winget package IDs, then ask before installing them.
 - After install, explain doctor-codex, config-codex paths, and diagnose-codex.
-- Do not bypass non-managed hook trust. Ask me before reviewing/trusting the hook, then prefer Codex app Settings > Hooks to review and trust the agent-context-substrate Stop hook. Use CLI /hooks or the Hooks need review modal only as alternate review paths.
+- Do not bypass non-managed hook trust. Ask me before reviewing/trusting the hook, then prefer `Codex app -> Settings -> Hooks` to review and trust the agent-context-substrate Stop hook. Use CLI /hooks or the Hooks need review modal only as alternate review paths.
 - Do not install ~/.codex/hooks.json by default. Mention --user-hook-fallback only if plugin hooks are unavailable.
 - For final validation, run a real interactive Stop hook smoke test and confirm Running Stop hook: Finalizing Codex thread into Agent Context Substrate, codex_hook_events.jsonl status=finalized, generated data\... artifacts, summary metadata, wiki decision artifact, and a search-knowledge recovery hit.
 ```
@@ -300,6 +324,7 @@ Requirements:
 - Full Access, approval mode, and sandbox settings are not the same as hook trust.
 - ACS does not modify Codex SQLite or rollout JSONL files.
 - New Codex installs default to judge-gated `apply-flexible`; failed or low-confidence judge runs leave review-required artifacts instead of writing the LLM Wiki.
+- `project_root` is the ACS artifact root. It should not be treated as the only allowed Codex workspace root; use `allowed_workspace_roots` when workspaces live outside `%USERPROFILE%\Documents\Codex`.
 - `doctor-codex` checks setup health; `diagnose-codex --fix` repairs only safe ACS local files.
 - `--user-hook-fallback` is optional and should not be used together with a working plugin hook unless you are intentionally testing duplicate-hook behavior.
 - Obsidian is optional. ACS creates the LLM Wiki folder, but the user must open it as a vault in Obsidian.

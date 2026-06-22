@@ -25,6 +25,8 @@ from .paths import HarnessPaths
 
 
 CODEX_PLUGIN_NAME = "agent-context-substrate"
+CODEX_PERSONAL_PLUGIN_ID = f"{CODEX_PLUGIN_NAME}@personal"
+DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
 STATUS_OK = "ok"
 STATUS_WARN = "warn"
 STATUS_MISSING = "missing"
@@ -73,6 +75,18 @@ class CodexCliDetection:
             "npm_precedes_openai_cli": self.npm_precedes_openai_cli,
             "messages": list(self.messages),
         }
+
+
+@dataclass(frozen=True)
+class CodexPluginRegistryCheck:
+    status: str
+    messages: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class CodexHookWorkspaceSkipCheck:
+    status: str
+    messages: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -343,7 +357,8 @@ def setup_codex(
         ),
         f"codex-status --codex-home {codex_home_path}",
         f"doctor-codex --codex-home {codex_home_path} --project-root {project_root_path} --wiki-root {wiki_root_path}",
-        "Open Codex CLI and review /hooks for agent-context-substrate Stop hook trust.",
+        f"codex plugin add {CODEX_PERSONAL_PLUGIN_ID}",
+        "Open Codex app -> Settings -> Hooks, then review/trust the agent-context-substrate Stop hook.",
     ]
     if install_user_hook:
         actions.append("install-codex-plugin --install-user-hook fallback was explicitly requested")
@@ -378,6 +393,11 @@ def setup_codex(
             install_result.paths["plugin_dir"],
             {"codex_cli_command": str(codex_cli.recommended_path)},
         )
+    registry_messages = _register_codex_personal_plugin(
+        codex_cli=codex_cli.recommended_path,
+        project_root=project_root_path,
+        enabled=install_marketplace,
+    )
     doctor_report = doctor_codex(codex_home=codex_home_path, project_root=project_root_path, wiki_root=wiki_root_path)
     return CodexSetupResult(
         ok=doctor_report.ok,
@@ -396,7 +416,10 @@ def setup_codex(
                 if codex_cli.recommended_path is not None
                 else "Codex summary CLI was not pinned; doctor-codex will report CLI candidates when available."
             ),
-            "Review /hooks in Codex CLI; this is separate from Full Access or approval mode.",
+            *registry_messages,
+            "Hook trust: primary path is Codex app -> Settings -> Hooks -> agent-context-substrate Stop hook -> Trust.",
+            "CLI/TUI fallback: run codex, enter /hooks, and trust the same Stop hook.",
+            "Hook trust is separate from Full Access, approval mode, and sandbox settings.",
             "Default Windows setup installs the plugin Stop hook only; user hooks.json fallback is opt-in to avoid duplicate Stop hooks.",
         ],
         actions=actions,
@@ -491,12 +514,16 @@ def doctor_codex(
     checks["watcher_fallback_available"] = STATUS_OK
     checks["data_dir_writable"] = _data_dir_writable_status(project_root_path)
     checks["git_available"] = STATUS_OK if shutil.which("git") else STATUS_WARN
+    summary_mode = str(local_config.get("summary_mode") or "").strip().lower()
     codex_cli = detect_codex_cli()
     checks["codex_cli_available"] = codex_cli.status
-    summary_mode = str(local_config.get("summary_mode") or "").strip().lower()
     configured_codex_cli = str(local_config.get("codex_cli_command") or "").strip()
     selected_codex_cli = configured_codex_cli or (str(codex_cli.recommended_path) if codex_cli.recommended_path is not None else "")
     selected_codex_cli_kind = _selected_codex_cli_kind(selected_codex_cli)
+    plugin_registry = _inspect_codex_plugin_registry(selected_codex_cli=selected_codex_cli)
+    checks["codex_plugin_registered"] = plugin_registry.status
+    workspace_skips = _inspect_recent_workspace_guard_skips(project_root=project_root_path)
+    checks["codex_hook_recent_workspace_skips"] = workspace_skips.status
     checks["codex_summary_cli_config"] = _summary_cli_config_status(
         summary_mode=summary_mode,
         selected_codex_cli=selected_codex_cli,
@@ -515,6 +542,8 @@ def doctor_codex(
     checks["obsidian_available"] = STATUS_OK if shutil.which("obsidian") or shutil.which("Obsidian") else STATUS_WARN
 
     ok = all(checks.get(name) == STATUS_OK for name in REQUIRED_CODEX_CHECKS)
+    if checks.get("codex_plugin_registered") == STATUS_MISSING:
+        ok = False
     report_paths = dict(paths)
     report_paths["wiki_root_effective"] = wiki_root_path
     if codex_cli.path_codex is not None:
@@ -532,6 +561,8 @@ def doctor_codex(
         messages=(
             _doctor_messages(checks=checks, paths=paths)
             + _wiki_root_messages(resolution=wiki_root_resolution)
+            + plugin_registry.messages
+            + workspace_skips.messages
             + _summary_messages(
                 summary_mode=summary_mode,
                 selected_codex_cli=selected_codex_cli,
@@ -578,7 +609,10 @@ def diagnose_codex(
             if status in {STATUS_MISSING, STATUS_WARN}
         ]
         actions = _diagnostic_actions(report)
-        actions.append("review /hooks in Codex CLI; hook trust cannot be safely auto-approved")
+        actions.append(
+            "restart Codex, open Codex app -> Settings -> Hooks, and trust/enable the ACS Stop hook; "
+            "CLI /hooks is the alternate review path and hook trust cannot be safely auto-approved"
+        )
     return CodexDiagnosticReport(ok=report.ok, issues=issues, actions=actions, doctor_report=report)
 
 
@@ -615,6 +649,7 @@ def default_codex_local_config(*, codex_home: Path | str | None, project_root: P
         "python_executable": sys.executable,
         "python_path_entries": [str(project_root_path / "src")],
         "hook_event_log_path": str(project_root_path / "data" / "index" / "codex_hook_events.jsonl"),
+        "allowed_workspace_roots": [DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE],
         "trigger_strategy": "hook-primary",
         "watcher_fallback": True,
         "hook_timeout_seconds": 110,
@@ -751,6 +786,183 @@ def _codex_summary_smoke_status(
     except (OSError, subprocess.SubprocessError):
         return STATUS_WARN
     return STATUS_OK if result.returncode == 0 and "ACS_CODEX_SUMMARY_SMOKE_OK" in result.stdout else STATUS_WARN
+
+
+def _register_codex_personal_plugin(
+    *,
+    codex_cli: Path | None,
+    project_root: Path,
+    enabled: bool,
+) -> list[str]:
+    if not enabled:
+        return ["Codex plugin registry registration skipped because personal marketplace install is disabled."]
+    if codex_cli is None:
+        return [
+            (
+                "Codex plugin registry registration skipped because no Codex CLI was detected; "
+                f"run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` after Codex is available."
+            )
+        ]
+    try:
+        result = subprocess.run(
+            [str(codex_cli), "plugin", "add", CODEX_PERSONAL_PLUGIN_ID, "--json"],
+            cwd=str(project_root),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=45,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [
+            (
+                f"Codex plugin registry registration failed with {codex_cli}: {exc}. "
+                f"Run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` manually."
+            )
+        ]
+    if result.returncode == 0:
+        return [f"Codex plugin registered with Codex: {CODEX_PERSONAL_PLUGIN_ID}"]
+    detail = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
+    return [
+        (
+            f"Codex plugin registry registration failed for {CODEX_PERSONAL_PLUGIN_ID}: {detail}. "
+            f"Run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` manually."
+        )
+    ]
+
+
+def _inspect_codex_plugin_registry(*, selected_codex_cli: str) -> CodexPluginRegistryCheck:
+    if not selected_codex_cli:
+        return CodexPluginRegistryCheck(
+            status=STATUS_SKIPPED,
+            messages=[
+                (
+                    "Codex plugin registry: skipped because no Codex CLI is configured or detected; "
+                    f"run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` after Codex is available."
+                )
+            ],
+        )
+    if not _command_exists(selected_codex_cli):
+        return CodexPluginRegistryCheck(
+            status=STATUS_WARN,
+            messages=[
+                (
+                    f"Codex plugin registry: unable to inspect because {selected_codex_cli} does not exist; "
+                    f"run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` after fixing the Codex CLI path."
+                )
+            ],
+        )
+    try:
+        result = subprocess.run(
+            [selected_codex_cli, "plugin", "list"],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=30,
+            check=False,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return CodexPluginRegistryCheck(
+            status=STATUS_WARN,
+            messages=[
+                (
+                    f"Codex plugin registry: unable to inspect plugin list with {selected_codex_cli}: {exc}. "
+                    f"Run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` if the plugin browser shows it as not installed."
+                )
+            ],
+        )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or f"exit code {result.returncode}").strip()
+        return CodexPluginRegistryCheck(
+            status=STATUS_WARN,
+            messages=[
+                (
+                    f"Codex plugin registry: `codex plugin list` failed: {detail}. "
+                    f"Run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}` if the plugin browser shows it as not installed."
+                )
+            ],
+        )
+    line = _codex_personal_plugin_line(result.stdout)
+    if line is None:
+        return CodexPluginRegistryCheck(
+            status=STATUS_MISSING,
+            messages=[
+                (
+                    f"Codex plugin registry: {CODEX_PERSONAL_PLUGIN_ID} was not found in `codex plugin list`; "
+                    f"run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}`."
+                )
+            ],
+        )
+    normalized = line.lower()
+    if "not installed" in normalized:
+        return CodexPluginRegistryCheck(
+            status=STATUS_MISSING,
+            messages=[
+                (
+                    f"Codex plugin registry: {CODEX_PERSONAL_PLUGIN_ID} is listed as not installed; "
+                    f"run `codex plugin add {CODEX_PERSONAL_PLUGIN_ID}`."
+                )
+            ],
+        )
+    if "installed" in normalized:
+        return CodexPluginRegistryCheck(
+            status=STATUS_OK,
+            messages=[f"Codex plugin registry: {CODEX_PERSONAL_PLUGIN_ID} is installed/enabled."],
+        )
+    return CodexPluginRegistryCheck(
+        status=STATUS_WARN,
+        messages=[f"Codex plugin registry: {CODEX_PERSONAL_PLUGIN_ID} has an unrecognized status line: {line}"],
+    )
+
+
+def _codex_personal_plugin_line(output: str) -> str | None:
+    for line in output.splitlines():
+        if CODEX_PERSONAL_PLUGIN_ID in line:
+            return line.strip()
+    return None
+
+
+def _inspect_recent_workspace_guard_skips(*, project_root: Path) -> CodexHookWorkspaceSkipCheck:
+    event_log_path = project_root / "data" / "index" / "codex_hook_events.jsonl"
+    if not event_log_path.exists():
+        return CodexHookWorkspaceSkipCheck(status=STATUS_OK)
+    try:
+        lines = event_log_path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError as exc:
+        return CodexHookWorkspaceSkipCheck(
+            status=STATUS_WARN,
+            messages=[f"Codex hook event log could not be inspected: {exc}"],
+        )
+    matching_records: list[dict[str, Any]] = []
+    for line in lines[-50:]:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        detail = str(record.get("detail") or "")
+        if str(record.get("status") or "") == "skipped" and "cwd outside configured" in detail:
+            matching_records.append(record)
+    if not matching_records:
+        return CodexHookWorkspaceSkipCheck(status=STATUS_OK)
+    latest = matching_records[-1]
+    return CodexHookWorkspaceSkipCheck(
+        status=STATUS_WARN,
+        messages=[
+            (
+                f"Codex hook workspace guard: {len(matching_records)} recent Stop hook skip(s) found; "
+                f"latest detail={latest.get('detail')}, cwd={latest.get('cwd')}. "
+                f"Review allowed_workspace_roots in local_config.json; default is {DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE}."
+            )
+        ],
+    )
 
 
 def _command_exists(command: str) -> bool:
@@ -952,7 +1164,7 @@ def _doctor_messages(*, checks: dict[str, str], paths: dict[str, Any]) -> list[s
         f"Codex rollout JSONL root: {paths['codex_rollouts']}",
         f"LLM Wiki root: {paths['llm_wiki_root']}",
         f"ACS artifacts: {paths['acs_artifacts']}",
-        "Hook trust: restart Codex, open Settings > Hooks or run /hooks, review the ACS Stop hook, then trust/enable it.",
+        "Hook trust: restart Codex, open Codex app -> Settings -> Hooks, review the ACS Stop hook, then trust/enable it; CLI /hooks is the alternate path.",
         "Hook trust is separate from Full Access, approval mode, and sandbox permissions.",
         "Stop hook strategy: plugin hook is primary; ~/.codex/hooks.json fallback is opt-in to avoid duplicate Stop hooks.",
     ]
@@ -1007,6 +1219,13 @@ def _diagnostic_actions(report: CodexDoctorReport) -> list[str]:
         actions.append("run setup-codex to reinstall the Codex plugin and local_config.json")
     if checks.get("hook_primary_installed") == STATUS_MISSING:
         actions.append("run setup-codex to install the plugin Stop hook before considering user hook fallback")
+    if checks.get("codex_plugin_registered") == STATUS_MISSING:
+        actions.append(f"run codex plugin add {CODEX_PERSONAL_PLUGIN_ID} to register the personal ACS plugin")
+    if checks.get("codex_hook_recent_workspace_skips") == STATUS_WARN:
+        actions.append(
+            "review allowed_workspace_roots in the installed plugin local_config.json; "
+            f"default Codex workspaces should be covered by {DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE}"
+        )
     if checks.get("codex_cli_available") == STATUS_WARN:
         actions.append("install or locate the Windows Codex app CLI; if PATH codex is an npm shim, use the direct app CLI path")
     if checks.get("codex_summary_cli_config") == STATUS_WARN:
@@ -1023,5 +1242,8 @@ def _diagnostic_actions(report: CodexDoctorReport) -> list[str]:
         actions.append("run at least one Codex thread so sessions\\...\\rollout-*.jsonl exists")
     if checks.get("obsidian_available") == STATUS_WARN:
         actions.append("optional: install Obsidian and open the LLM Wiki root as a vault")
-    actions.append("restart Codex, open Settings > Hooks or /hooks, and trust/enable the ACS Stop hook; hook trust cannot be safely auto-approved")
+    actions.append(
+        "restart Codex, open Codex app -> Settings -> Hooks, and trust/enable the ACS Stop hook; "
+        "CLI /hooks is the alternate review path and hook trust cannot be safely auto-approved"
+    )
     return actions

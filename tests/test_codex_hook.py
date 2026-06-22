@@ -64,6 +64,69 @@ def test_stop_hook_decision_builds_codex_finalize_command_for_project_thread(tmp
     assert decision.cwd == project_root
 
 
+def test_stop_hook_decision_allows_default_codex_workspace_outside_artifact_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "acs-install"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    home = tmp_path / "home"
+    workspace = home / "Documents" / "Codex" / "2026-06-21" / "ordinary-workspace"
+    _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(workspace),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is True
+    assert decision.command[decision.command.index("--project-root") + 1] == str(project_root.resolve(strict=False))
+    assert decision.cwd == project_root.resolve(strict=False)
+
+
+def test_stop_hook_decision_respects_configured_allowed_workspace_roots(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "acs-install"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    workspace_root = tmp_path / "team-workspaces"
+    workspace = workspace_root / "feature-a"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "allowed_workspace_roots": [str(workspace_root)],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    decision = build_codex_stop_finalize_decision(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-1",
+            "cwd": str(workspace),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert decision.should_finalize is True
+    assert decision.command[decision.command.index("--project-root") + 1] == str(project_root.resolve(strict=False))
+
+
 def test_stop_hook_prefers_env_wiki_root_over_local_config(tmp_path: Path, monkeypatch) -> None:
     plugin_root = tmp_path / "plugin"
     project_root = tmp_path / "project"
@@ -141,7 +204,7 @@ def test_stop_hook_skips_when_wiki_root_cannot_be_resolved(tmp_path: Path, monke
     assert decision.skip_reason == "no wiki root resolved"
 
 
-def test_stop_hook_decision_skips_non_project_cwd(tmp_path: Path) -> None:
+def test_stop_hook_decision_skips_cwd_outside_allowed_workspace_roots(tmp_path: Path) -> None:
     plugin_root = tmp_path / "plugin"
     project_root = tmp_path / "project"
     wiki_root = tmp_path / "wiki"
@@ -159,7 +222,7 @@ def test_stop_hook_decision_skips_non_project_cwd(tmp_path: Path) -> None:
     )
 
     assert decision.should_finalize is False
-    assert decision.skip_reason == "cwd outside configured project_root"
+    assert decision.skip_reason == "cwd outside configured allowed_workspace_roots"
 
 
 def test_stop_hook_decision_passes_summary_config_to_codex_finalize(tmp_path: Path) -> None:
@@ -428,6 +491,85 @@ def test_packaged_stop_hook_script_accepts_utf8_stdin_on_windows_paths(tmp_path:
     summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary_payload["metadata"]["fallback_from"] == "auto"
     assert summary_payload["metadata"]["fallback_reason"] == "codex_cli_unavailable"
+
+
+def test_packaged_stop_hook_script_allows_default_codex_workspace_outside_artifact_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "acs-install"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    home = tmp_path / "home"
+    workspace = home / "Documents" / "Codex" / "2026-06-21" / "ordinary-workspace"
+    rollout_path = codex_home / "sessions" / "rollout-thread-workspace.jsonl"
+    rollout_path.parent.mkdir(parents=True)
+    project_root.mkdir()
+    wiki_root.mkdir()
+    plugin_root.mkdir()
+    workspace.mkdir(parents=True)
+    rollout_path.write_text('{"payload":{"type":"user_message","message":"hello from workspace"}}\n', encoding="utf-8")
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "python_executable": sys.executable,
+                "python_path_entries": [str(Path(__file__).resolve().parents[1] / "src")],
+                "hook_timeout_seconds": 60,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    script_path = (
+        files("agent_context_substrate")
+        / "assets"
+        / "codex_plugin"
+        / "agent-context-substrate"
+        / "hooks"
+        / "codex_stop_finalize.py"
+    )
+    payload = json.dumps(
+        {
+            "hook_event_name": "Stop",
+            "session_id": "thread-workspace",
+            "cwd": str(workspace),
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    env = {
+        **{key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+        "PLUGIN_ROOT": str(plugin_root),
+        "USERPROFILE": str(home),
+        "HOME": str(home),
+    }
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
+
+    completed = subprocess.run(
+        [sys.executable, str(script_path)],
+        input=payload,
+        capture_output=True,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+
+    state = json.loads((project_root / "data" / "index" / "codex_watcher_state.json").read_text(encoding="utf-8"))
+    events = [
+        json.loads(line)
+        for line in (project_root / "data" / "index" / "codex_hook_events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert completed.returncode == 0
+    assert json.loads(completed.stdout.decode("utf-8")) == {"continue": True}
+    assert state["thread-workspace"]["rollout_path"] == str(rollout_path)
+    assert events[-1]["status"] == "finalized"
+    assert events[-1]["cwd"] == str(workspace)
 
 
 def test_packaged_stop_hook_script_marks_timestamp_rollout_suffix_processed(tmp_path: Path) -> None:

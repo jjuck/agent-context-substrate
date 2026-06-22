@@ -12,6 +12,7 @@ import sys
 
 DEFAULT_TIMEOUT_SECONDS = 110
 DEFAULT_WIKI_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\LLM Wiki"
+DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
 WIKI_ROOT_ENV_KEYS = ("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", "WIKI_PATH")
 _PERCENT_ENV_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
 _DOLLAR_ENV_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -49,8 +50,14 @@ def run(payload: dict[str, object]) -> dict[str, object]:
 
     project_root = _resolve_non_strict(Path(str(project_root_value)).expanduser())
     cwd = _resolve_non_strict(Path(str(payload.get("cwd") or project_root)).expanduser())
-    if not _is_relative_to(cwd, project_root):
-        _append_hook_event(config, payload=payload, status="skipped", detail="cwd outside configured project_root")
+    allowed_workspace_roots = _allowed_workspace_roots(config, project_root=project_root)
+    if not any(_is_relative_to(cwd, root) for root in allowed_workspace_roots):
+        _append_hook_event(
+            config,
+            payload=payload,
+            status="skipped",
+            detail="cwd outside configured allowed_workspace_roots",
+        )
         return {"continue": True}
 
     python_executable = str(config.get("python_executable") or sys.executable)
@@ -200,6 +207,32 @@ def _timeout_seconds(config: dict[str, object]) -> int:
     except (TypeError, ValueError):
         return DEFAULT_TIMEOUT_SECONDS
     return max(1, value)
+
+
+def _allowed_workspace_roots(config: dict[str, object], *, project_root: Path) -> list[Path]:
+    configured = config.get("allowed_workspace_roots")
+    values: list[str] = []
+    if isinstance(configured, list):
+        values.extend(str(value).strip() for value in configured if str(value).strip())
+    elif isinstance(configured, str) and configured.strip():
+        values.append(configured.strip())
+    else:
+        values.append(DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE)
+
+    roots = [project_root]
+    for value in values:
+        resolved = _resolve_template_path(value)
+        if resolved is not None:
+            roots.append(resolved)
+    return _dedupe_paths(roots)
+
+
+def _resolve_template_path(value: str) -> Path | None:
+    expanded = _expand_env_templates(value)
+    if expanded is None:
+        return None
+    expanded = _expand_home(expanded)
+    return _resolve_non_strict(Path(expanded).expanduser())
 
 
 def _subprocess_env(config: dict[str, object], *, project_root: Path) -> dict[str, str]:
@@ -391,6 +424,18 @@ def _is_relative_to(path: Path, base: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 if __name__ == "__main__":

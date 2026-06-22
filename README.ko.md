@@ -176,6 +176,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 
 plain `codex`가 `%APPDATA%\npm\codex.ps1` 같은 npm shim을 가리키면 Windows Codex 앱 CLI가 아닐 수 있습니다. `setup-codex`와 `doctor-codex`는 PATH 후보와 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, `%LOCALAPPDATA%\OpenAI\Codex\bin` 아래 direct 후보를 보여주고, 발견한 direct CLI를 `local_config.json`의 `codex_cli_command`로 저장합니다.
 
+`setup-codex`는 personal marketplace/cache 파일을 배치한 뒤, 사용 가능한 Codex CLI가 있으면 아래 registry 등록도 실행합니다.
+
+```powershell
+codex plugin add agent-context-substrate@personal --json
+```
+
+이 단계가 Codex 앱에서 plugin을 installed/enabled 상태로 보이게 만드는 Codex registry 등록입니다. `doctor-codex`가 `codex_plugin_registered=missing`을 보고하면 같은 명령을 수동으로 실행하세요. 앱 UI에서는 plugin이 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
+
+`project_root`는 ACS artifact root이지 active workspace allowlist가 아닙니다. 새 설치는 `allowed_workspace_roots=["%USERPROFILE%\\Documents\\Codex"]`를 저장해서 ordinary Codex workspaces가 Stop 때 finalize되도록 하고, 생성된 ACS data는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다. `doctor-codex`는 최근 `codex_hook_events.jsonl`에 workspace guard skip이 남아 있으면 경고합니다.
+
 설치 후 확인:
 
 ```powershell
@@ -200,7 +210,7 @@ plain `codex`가 `%APPDATA%\npm\codex.ps1` 같은 npm shim을 가리키면 Windo
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-마지막으로 Codex 앱을 재시작한 뒤 Codex 앱 -> 설정 -> 훅에서 `agent-context-substrate` Stop hook을 찾고, hook command/path를 확인한 뒤 `Trust all and continue` 또는 해당 신뢰/활성화 동작을 선택해야 자동 finalize가 실행됩니다. Codex CLI/TUI를 쓰는 경우에만 대체 경로로 `/hooks`를 열어 같은 Stop hook을 신뢰하세요. 이 단계는 `전체권한` 설정과 별개이며, installer가 몰래 우회하지 않습니다. 기본 설치는 plugin Stop hook 하나만 활성화하고, `~\.codex\hooks.json` fallback은 중복 Stop hook을 피하기 위해 기본으로 설치하지 않습니다. plugin hook을 쓸 수 없는 런타임에서만 `--user-hook-fallback`을 명시하세요.
+마지막으로 Codex 앱을 재시작한 뒤 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 `agent-context-substrate` Stop hook을 찾고, hook command/path를 확인한 뒤 `Trust all and continue` 또는 해당 신뢰/활성화 동작을 선택해야 자동 finalize가 실행됩니다. Codex CLI/TUI를 쓰는 경우에만 대체 경로로 `/hooks`를 열어 같은 Stop hook을 신뢰하세요. 이 단계는 `전체권한` 설정과 별개이며, installer가 몰래 우회하지 않습니다. 기본 설치는 plugin Stop hook 하나만 활성화하고, `~\.codex\hooks.json` fallback은 중복 Stop hook을 피하기 위해 기본으로 설치하지 않습니다. plugin hook을 쓸 수 없는 런타임에서만 `--user-hook-fallback`을 명시하세요.
 
 실제 smoke에서는 짧은 Codex thread 종료 후 `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`가 보이고, `data\index\codex_hook_events.jsonl`에 `status=finalized`가 남으며, `search-knowledge --mode recovery`로 방금 만든 recovery artifact가 검색되어야 합니다.
 
@@ -274,9 +284,13 @@ Telegram gateway가 이미 실행 중이었다면 설정 반영을 위해 재시
 
 ## Codex에 설치
 
-Codex 연동은 hook-primary, watcher fallback 전략입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. Codex 앱 -> 설정 -> 훅에서 hook을 trust하면 Stop hook이 thread를 finalize하고, Codex CLI summary를 만들고, flexible wiki patch를 계획한 뒤 write judge에게 적용 여부를 맡깁니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다.
+Codex 연동은 hook-primary, watcher fallback 전략입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 hook을 trust하면 Stop hook이 thread를 finalize하고, Codex CLI summary를 만들고, flexible wiki patch를 계획한 뒤 write judge에게 적용 여부를 맡깁니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다.
 
 Windows Codex 앱 사용자는 [Windows Codex 앱 빠른 설치](#windows-codex-앱-빠른-설치) 또는 [Windows 상세 가이드](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)를 먼저 보는 것이 좋습니다. 아래 명령은 portable 개발자용 형태입니다.
+
+`setup-codex`는 plugin asset/marketplace/cache 파일을 복사한 뒤, 사용 가능한 Codex CLI가 있으면 `codex plugin add`로 `agent-context-substrate@personal`을 등록합니다. lower-level `install-codex-plugin`은 파일 배치만 수행합니다. `doctor-codex`가 `codex_plugin_registered=missing`을 보고하면 `codex plugin add agent-context-substrate@personal --json`을 실행하세요. Codex 앱에서는 plugin이 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
+
+설치된 `project_root`는 ACS artifact 저장소이며, thread가 반드시 ACS checkout 안에서 실행되어야 한다는 뜻이 아닙니다. `allowed_workspace_roots` 기본값은 `%USERPROFILE%\Documents\Codex`라서 ordinary Codex workspaces를 포괄합니다. Codex 작업 폴더가 다른 위치라면 이 목록에 root를 추가하세요.
 
 ```bash
 cd '<PROJECT_ROOT>'
@@ -296,7 +310,7 @@ cd '<PROJECT_ROOT>'
 # watcher_fallback=available
 ```
 
-Codex의 non-managed hook은 한 번 review/trust 해야 실행됩니다. Codex 앱 -> 설정 -> 훅을 열고 `agent-context-substrate` Stop hook의 command/path를 확인한 뒤 신뢰 또는 활성화하세요. Codex CLI/TUI를 쓰는 경우에는 대체 경로로 `/hooks`를 열어 같은 Stop hook을 trust할 수 있습니다. Hook 승인이 안 되었거나 Stop event를 놓친 환경에서는 watcher fallback을 명시적으로 실행할 수 있습니다.
+Codex의 non-managed hook은 한 번 review/trust 해야 실행됩니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)을 열고 `agent-context-substrate` Stop hook의 command/path를 확인한 뒤 신뢰 또는 활성화하세요. Codex CLI/TUI를 쓰는 경우에는 대체 경로로 `/hooks`를 열어 같은 Stop hook을 trust할 수 있습니다. Hook 승인이 안 되었거나 Stop event를 놓친 환경에서는 watcher fallback을 명시적으로 실행할 수 있습니다.
 
 기본으로 plugin hook과 `~/.codex/hooks.json` fallback을 함께 설치하지 마세요. 특정 Codex 런타임에서 plugin-bundled hook을 읽지 못할 때만 `setup-codex --user-hook-fallback` 또는 lower-level `install-codex-plugin --install-user-hook`을 사용하세요.
 

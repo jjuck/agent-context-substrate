@@ -48,10 +48,15 @@ def test_setup_codex_installs_default_windows_codex_integration(tmp_path: Path) 
     assert local_config["wiki_auto_mode"] == "apply-flexible"
     assert local_config["wiki_write_judge_mode"] == "auto"
     assert local_config["wiki_auto_min_score"] == 0.85
+    assert local_config["allowed_workspace_roots"] == ["%USERPROFILE%\\Documents\\Codex"]
     assert result.doctor_report is not None
     assert result.doctor_report.checks["codex_plugin_installed"] == "ok"
     assert result.doctor_report.checks["codex_user_hook_installed"] == "warn"
     assert result.doctor_report.checks["hook_primary_installed"] == "ok"
+    setup_text = "\n".join([*result.messages, *result.actions])
+    assert "Codex app -> Settings -> Hooks" in setup_text
+    assert "CLI/TUI fallback" in setup_text or "CLI /hooks is the alternate" in setup_text
+    assert "Hook trust is separate from Full Access" in setup_text
 
 
 def test_setup_codex_default_wiki_root_is_portable_template(tmp_path: Path, monkeypatch) -> None:
@@ -139,6 +144,7 @@ def test_default_codex_local_config_does_not_persist_env_wiki_root(tmp_path: Pat
 
     assert config["wiki_root"] == "%USERPROFILE%\\Documents\\LLM Wiki"
     assert config["wiki_root_source"] == "default-template"
+    assert config["allowed_workspace_roots"] == ["%USERPROFILE%\\Documents\\Codex"]
 
 
 def test_setup_codex_user_hook_fallback_is_explicit_opt_in(tmp_path: Path) -> None:
@@ -196,7 +202,47 @@ def test_doctor_codex_reports_required_and_optional_checks(tmp_path: Path) -> No
     assert report.checks["codex_plugin_installed"] == "ok"
     assert report.checks["codex_state_sqlite_exists"] == "warn"
     assert report.checks["watcher_fallback_available"] == "ok"
-    assert "Codex source SQLite" in "\n".join(report.messages)
+    doctor_text = "\n".join(report.messages)
+    assert "Codex source SQLite" in doctor_text
+    assert "Codex app -> Settings -> Hooks" in doctor_text
+    assert "CLI /hooks is the alternate" in doctor_text
+    assert "Full Access" in doctor_text
+
+
+def test_doctor_codex_warns_about_recent_workspace_guard_skips(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=tmp_path / "marketplace",
+        overwrite=True,
+    )
+    event_log = project_root / "data" / "index" / "codex_hook_events.jsonl"
+    event_log.parent.mkdir(parents=True, exist_ok=True)
+    event_log.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-06-21T12:00:00+00:00",
+                "status": "skipped",
+                "detail": "cwd outside configured project_root",
+                "hook_event_name": "Stop",
+                "session_id": "thread-1",
+                "cwd": str(tmp_path / "Documents" / "Codex" / "ordinary-workspace"),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = doctor_codex(codex_home=codex_home, project_root=project_root, wiki_root=wiki_root)
+
+    assert report.checks["codex_hook_recent_workspace_skips"] == "warn"
+    assert "cwd outside configured project_root" in "\n".join(report.messages)
+    assert "allowed_workspace_roots" in "\n".join(report.messages)
 
 
 def test_diagnose_codex_fix_recreates_safe_missing_codex_files(tmp_path: Path) -> None:
@@ -217,7 +263,9 @@ def test_diagnose_codex_fix_recreates_safe_missing_codex_files(tmp_path: Path) -
     assert (wiki_root / "_system" / "config.yaml").is_file()
     assert (codex_home / "plugins" / "agent-context-substrate" / "local_config.json").is_file()
     assert not (codex_home / "hooks.json").exists()
-    assert "review /hooks" in "\n".join(report.actions)
+    actions = "\n".join(report.actions)
+    assert "Codex app -> Settings -> Hooks" in actions
+    assert "CLI /hooks" in actions
     assert "--dangerously-bypass-hook-trust" not in "\n".join(report.actions)
 
 
@@ -337,6 +385,100 @@ def test_setup_codex_pins_detected_direct_codex_cli(tmp_path: Path, monkeypatch)
     assert "Codex summary CLI pinned" in "\n".join(result.messages)
 
 
+def test_setup_codex_registers_personal_plugin_with_detected_codex_cli(tmp_path: Path, monkeypatch) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    codex_cli = local_app_data / "OpenAI" / "Codex" / "bin" / "codex.exe"
+    codex_cli.parent.mkdir(parents=True)
+    codex_cli.write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("PATH", "")
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    marketplace_root = tmp_path / "marketplace"
+    (project_root / "src" / "agent_context_substrate").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append([str(part) for part in command])
+        if command[1:3] == ["plugin", "add"]:
+            assert command[3:] == ["agent-context-substrate@personal", "--json"]
+            return subprocess.CompletedProcess(args=command, returncode=0, stdout='{"ok":true}\n', stderr="")
+        if command[1:3] == ["plugin", "list"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=(
+                    "Marketplace `personal`\n"
+                    "PLUGIN                            STATUS              VERSION  PATH\n"
+                    "agent-context-substrate@personal  installed, enabled  0.2.0   C:\\Users\\USER\\plugins\\agent-context-substrate\n"
+                ),
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr("agent_context_substrate.codex_setup.subprocess.run", fake_run)
+
+    result = setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=marketplace_root,
+        install_marketplace=True,
+        overwrite=True,
+    )
+
+    assert result.ok is True
+    assert [call[1:4] for call in calls].count(["plugin", "add", "agent-context-substrate@personal"]) == 1
+    assert any(call[1:3] == ["plugin", "list"] for call in calls)
+    assert result.doctor_report is not None
+    assert result.doctor_report.checks["codex_plugin_registered"] == "ok"
+    assert "Codex plugin registered with Codex" in "\n".join(result.messages)
+
+
+def test_doctor_codex_flags_personal_plugin_not_installed_in_registry(tmp_path: Path, monkeypatch) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    codex_cli = local_app_data / "OpenAI" / "Codex" / "bin" / "codex.exe"
+    codex_cli.parent.mkdir(parents=True)
+    codex_cli.write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=tmp_path / "marketplace",
+        overwrite=True,
+    )
+    update_codex_local_config(
+        codex_home / "plugins" / "agent-context-substrate",
+        {"codex_cli_command": str(codex_cli)},
+    )
+
+    def fake_run(command, **kwargs):
+        assert command[1:3] == ["plugin", "list"]
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=(
+                "Marketplace `personal`\n"
+                "PLUGIN                            STATUS         VERSION  PATH\n"
+                "agent-context-substrate@personal  not installed           C:\\Users\\USER\\plugins\\agent-context-substrate\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_context_substrate.codex_setup.subprocess.run", fake_run)
+
+    report = doctor_codex(codex_home=codex_home, project_root=project_root, wiki_root=wiki_root)
+
+    assert report.ok is False
+    assert report.checks["codex_plugin_registered"] == "missing"
+    assert "codex plugin add agent-context-substrate@personal" in "\n".join(report.messages)
+
+
 def test_doctor_codex_reports_summary_cli_and_service_tier_default(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex-home"
     project_root = tmp_path / "project"
@@ -413,6 +555,13 @@ def test_doctor_codex_summary_smoke_is_opt_in(tmp_path: Path, monkeypatch) -> No
 
     def fake_run(command, **kwargs):
         assert command[0] == str(fake_codex)
+        if command[1:3] == ["plugin", "list"]:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="agent-context-substrate@personal  installed, enabled  0.2.0\n",
+                stderr="",
+            )
         assert "service_tier=fast" in command
         return subprocess.CompletedProcess(args=command, returncode=0, stdout="ACS_CODEX_SUMMARY_SMOKE_OK\n", stderr="")
 

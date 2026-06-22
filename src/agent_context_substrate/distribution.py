@@ -13,6 +13,7 @@ import sys
 
 from .wiki_config import default_category_registry
 
+DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"/mnt/[a-z]/Users/[^/\s'\"]+"),
     re.compile(r"[A-Za-z]:\\\\Users\\\\[^\\\s'\"]+"),
@@ -331,6 +332,7 @@ def _write_codex_local_config(
                 "python_executable": sys.executable,
                 "python_path_entries": [str(project_root / "src")],
                 "hook_event_log_path": str(project_root / "data" / "index" / "codex_hook_events.jsonl"),
+                "allowed_workspace_roots": [DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE],
                 "trigger_strategy": "hook-primary",
                 "watcher_fallback": True,
                 "hook_timeout_seconds": 110,

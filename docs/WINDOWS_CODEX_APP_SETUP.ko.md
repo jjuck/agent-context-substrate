@@ -17,6 +17,8 @@ ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 a
 | ACS artifacts | `<PROJECT_ROOT>\data\...` | raw export, packet, recovery, ledger, retrieval index, wiki proposal, judge decision |
 | LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` default template | judge-approved patch가 반영되는 Obsidian LLM Wiki. `--wiki-root`를 명시하지 않으면 사용자별 절대 경로 대신 이 portable template을 저장합니다. |
 | Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | ACS Codex plugin asset |
+| Codex plugin registry | `codex plugin list`의 `agent-context-substrate@personal` | Codex 앱 등록 상태. UI에서는 `Personal` 또는 `Created by you` 아래에 보일 수 있음 |
+| Codex workspace root | `%USERPROFILE%\Documents\Codex` default template | 기본 `allowed_workspace_roots`. ordinary Codex workspaces는 ACS artifact 저장소 밖에 있어도 finalize 가능 |
 | Codex user hook | `%USERPROFILE%\.codex\hooks.json` | 선택 Stop hook fallback. 기본 설치에서는 만들지 않음 |
 
 ## 2. 준비물과 자동 설치 범위
@@ -31,7 +33,7 @@ ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 a
 | Git | `Git.Git` | `-InstallMissingTools`를 줄 때 |
 | Obsidian | `Obsidian.Obsidian` | `-InstallObsidian`을 줄 때 |
 | Codex 앱/CLI | 별도 설치 | 자동 설치하지 않음 |
-| Hook trust | Codex 앱 -> 설정 -> 훅 -> 신뢰. CLI `/hooks`는 대체 경로 | 자동 우회하지 않음 |
+| Hook trust | `Codex app -> Settings -> Hooks -> Trust`(Codex 앱 -> 설정 -> 훅 -> 신뢰). CLI `/hooks`는 대체 경로 | 자동 우회하지 않음 |
 
 일부 Windows 환경에서는 plain `codex`가 Windows Codex 앱 CLI가 아니라 `%APPDATA%\npm\codex.ps1` 또는 `codex.cmd` 같은 npm shim을 먼저 잡을 수 있습니다. setup script와 `doctor-codex`는 PATH의 모든 `codex` 후보와 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, `%LOCALAPPDATA%\OpenAI\Codex\bin` 아래 direct 후보를 함께 보여줍니다. direct `codex.exe`가 발견되면 `setup-codex`는 이를 `local_config.json`의 `codex_cli_command`로 저장해서 `summary_mode=auto`가 전역 PATH 순서에 덜 흔들리게 합니다.
 
@@ -63,6 +65,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Chec
 .\.venv\Scripts\agent-context-substrate.exe setup-codex --yes
 ```
 
+`setup-codex`가 처리하는 Codex 연동 단계는 서로 다릅니다.
+
+1. plugin asset, personal marketplace entry, plugin cache 파일을 복사합니다.
+2. 사용 가능한 Codex CLI가 있으면 personal plugin을 Codex registry에 등록합니다.
+
+   ```powershell
+   codex plugin add agent-context-substrate@personal --json
+   ```
+
+3. Stop hook trust는 사용자가 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 review하도록 남겨둡니다.
+
+`doctor-codex`가 `codex_plugin_registered=missing`을 보고하면 같은 `codex plugin add` 명령을 수동으로 실행하세요. plugin browser에서는 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
+
+`project_root`는 ACS artifact root이지 active Codex workspace allowlist가 아닙니다. 새 설치는 `allowed_workspace_roots`를 `%USERPROFILE%\Documents\Codex`로 설정해서 ordinary Codex workspaces가 Stop 때 finalize되도록 하고, 생성된 ACS artifact는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다.
+
 기본 Windows setup은 plugin에 포함된 Stop hook 하나만 설치합니다. Codex는 여러 hook source의 matching hook을 모두 실행하므로, 기본 설치에서 `%USERPROFILE%\.codex\hooks.json` fallback까지 같이 만들면 Stop hook이 중복 실행될 수 있습니다. plugin hook을 쓸 수 없는 런타임에서만 명시적으로 fallback을 켭니다.
 
 ```powershell
@@ -76,6 +93,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Chec
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
 ```
+
+doctor 출력에는 `codex_plugin_registered`가 포함됩니다. 이 값이 missing이면 plugin 파일은 존재하지만 Codex registry에서는 아직 `agent-context-substrate@personal`이 installed 상태가 아니라는 뜻입니다.
+
+doctor 출력에는 `codex_hook_recent_workspace_skips`도 포함됩니다. 여기에 warning이 뜨면 최근 Stop hook이 `cwd outside configured project_root` 또는 `cwd outside configured allowed_workspace_roots` 같은 workspace guard 이유로 skip되었다는 뜻입니다. 설치된 plugin `local_config.json`의 `allowed_workspace_roots`를 확인하세요.
 
 사용자-facing 경로 확인:
 
@@ -93,6 +114,7 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 
 ```json
 {
+  "allowed_workspace_roots": ["%USERPROFILE%\\Documents\\Codex"],
   "summary_mode": "auto",
   "wiki_auto_mode": "apply-flexible",
   "wiki_write_judge_mode": "auto",
@@ -100,7 +122,7 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 }
 ```
 
-이 설정에서 Stop hook은 먼저 `codex exec`를 시도하고 CLI/timeout/JSON/lint 실패 시 heuristic summary로 fallback합니다. wiki write는 flexible patch를 계획한 뒤 write judge에게 LLM Wiki 반영 여부를 맡깁니다. judge 경로를 사용할 수 없거나 점수가 낮으면 Obsidian을 쓰지 않고 review-required proposal과 decision artifact를 남깁니다.
+이 설정에서 Stop hook은 `%USERPROFILE%\Documents\Codex` 아래 ordinary Codex workspaces를 허용하고, 먼저 `codex exec`를 시도하며, CLI/timeout/JSON/lint 실패 시 heuristic summary로 fallback합니다. wiki write는 flexible patch를 계획한 뒤 write judge에게 LLM Wiki 반영 여부를 맡깁니다. judge 경로를 사용할 수 없거나 점수가 낮으면 Obsidian을 쓰지 않고 review-required proposal과 decision artifact를 남깁니다.
 
 `auto` 경로는 `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks-disabled, inline bounded JSON input으로 실행한 뒤 반환된 strict JSON을 검증합니다.
 
@@ -147,8 +169,8 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 먼저 Codex 앱 UI 경로를 사용하세요.
 
 1. 설치 후 Codex 앱을 재시작합니다.
-2. Codex 앱의 설정을 엽니다.
-3. Hooks/훅 설정으로 들어갑니다.
+2. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)를 엽니다.
+3. 설정 화면에 왼쪽 navigation이 있으면 Hooks/훅 항목을 선택합니다.
 4. `agent-context-substrate` Stop hook을 찾습니다.
 5. hook command/path가 설치된 ACS hook을 가리키는지 확인합니다.
 6. Trust, Allow, Enable, `Trust all and continue` 또는 해당 신뢰/활성화 동작을 선택합니다.
@@ -254,13 +276,14 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - Codex 원본 저장소는 %USERPROFILE%\.codex 아래의 state_5.sqlite와 sessions\...\rollout-*.jsonl임을 사용자에게 알려줘.
 - LLM Wiki 기본값은 %USERPROFILE%\Documents\LLM Wiki portable template으로 설명하고, 런타임 effective path를 설치 전에 사용자에게 확인해.
 - ACS artifact는 clone한 agent-context-substrate 프로젝트의 data\... 아래에 저장된다고 알려줘.
+- project_root는 ACS artifact root이고, allowed_workspace_roots 기본값은 %USERPROFILE%\Documents\Codex라서 ordinary Codex workspaces가 Stop 때 finalize될 수 있다고 설명해.
 - scripts/setup-codex-windows.ps1를 기본 설치 경로로 사용해.
 - 새 설치 기본값은 summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, wiki_auto_min_score=0.85라고 설명해.
 - LLM Wiki 내용은 사용자가 매번 wiki write를 요청할 때만 쌓이는 것이 아니라, write judge가 evidence-backed flexible patch를 승인할 때 반영된다고 설명해.
 - plain codex가 npm shim이면 CLI/TUI hook review에는 setup-codex 또는 doctor-codex가 표시한 direct codex.exe 경로를 우선 사용해.
 - 누락 도구가 있으면 Python.Python.3.13, Git.Git, Obsidian.Obsidian winget ID를 알려주고, 설치 전 사용자에게 확인해.
 - 설치 후 doctor-codex, config-codex paths, diagnose-codex 명령을 안내해.
-- non-managed hook trust는 자동 우회하지 말고, 사용자에게 승인 질문을 한 뒤 Codex 앱 -> 설정 -> 훅에서 agent-context-substrate Stop hook을 먼저 review/trust 해. CLI /hooks 또는 Hooks need review modal은 대체 review 경로로만 사용해.
+- non-managed hook trust는 자동 우회하지 말고, 사용자에게 승인 질문을 한 뒤 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 agent-context-substrate Stop hook을 먼저 review/trust 해. CLI /hooks 또는 Hooks need review modal은 대체 review 경로로만 사용해.
 - 기본 설치에서는 ~/.codex/hooks.json fallback을 만들지 마. plugin hook을 쓸 수 없을 때만 --user-hook-fallback을 설명해.
 - 마지막에는 실제 interactive Stop hook smoke test로 Running Stop hook: Finalizing Codex thread into Agent Context Substrate, codex_hook_events.jsonl status=finalized, data\... artifact 생성, summary metadata, wiki decision artifact, search-knowledge recovery hit까지 확인해.
 ```
@@ -270,6 +293,7 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - `기본 권한`, `자동검토`, `전체권한`은 Codex agent의 작업 승인/샌드박스 설정입니다. Hook trust와는 별개입니다.
 - ACS는 Codex SQLite와 rollout JSONL을 수정하지 않습니다.
 - 새 Codex 설치의 기본값은 judge-gated `apply-flexible`입니다. judge 실패나 낮은 confidence는 LLM Wiki를 쓰지 않고 review-required artifact로 남깁니다.
+- `project_root`는 ACS artifact root입니다. 유일한 Codex workspace root로 취급하지 말고, `%USERPROFILE%\Documents\Codex` 밖의 작업 폴더는 `allowed_workspace_roots`에 추가하세요.
 - `doctor-codex`는 설치 상태를 점검하고, `diagnose-codex --fix`는 안전한 ACS 로컬 파일만 복구합니다.
 - `--user-hook-fallback`은 선택 경로입니다. plugin hook이 정상 동작하는 환경에서는 같이 켜지 않는 것이 중복 Stop hook을 피하는 기본값입니다.
 - Obsidian은 선택 의존성입니다. ACS는 LLM Wiki 폴더를 만들지만 Obsidian 앱/vault 등록은 사용자가 직접 확인해야 합니다.

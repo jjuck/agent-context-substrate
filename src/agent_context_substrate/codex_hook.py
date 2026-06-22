@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 import json
+import os
+import re
 import subprocess
 import sys
 
@@ -11,6 +13,9 @@ from .codex_wiki_root import resolve_codex_wiki_root
 
 
 DEFAULT_HOOK_TIMEOUT_SECONDS = 110
+DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
+_PERCENT_ENV_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
+_DOLLAR_ENV_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
 
 @dataclass(frozen=True)
@@ -69,10 +74,11 @@ def build_codex_stop_finalize_decision(
     wiki_root = wiki_root_resolution.path
     cwd_value = payload.get("cwd") or project_root
     cwd = _resolve_non_strict(Path(str(cwd_value)).expanduser())
-    if not _is_path_relative_to(cwd, project_root):
+    allowed_workspace_roots = _allowed_workspace_roots(config, project_root=project_root)
+    if not any(_is_path_relative_to(cwd, root) for root in allowed_workspace_roots):
         return CodexStopFinalizeDecision(
             should_finalize=False,
-            skip_reason="cwd outside configured project_root",
+            skip_reason="cwd outside configured allowed_workspace_roots",
         )
 
     command = [
@@ -230,6 +236,88 @@ def _hook_timeout_seconds(config: dict[str, Any]) -> int:
     except (TypeError, ValueError):
         return DEFAULT_HOOK_TIMEOUT_SECONDS
     return max(1, value)
+
+
+def _allowed_workspace_roots(config: dict[str, Any], *, project_root: Path) -> list[Path]:
+    configured = config.get("allowed_workspace_roots")
+    values: list[str] = []
+    if isinstance(configured, list):
+        values.extend(str(value).strip() for value in configured if str(value).strip())
+    elif isinstance(configured, str) and configured.strip():
+        values.append(configured.strip())
+    else:
+        values.append(DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE)
+
+    roots = [project_root]
+    for value in values:
+        resolved = _resolve_template_path(value)
+        if resolved is not None:
+            roots.append(resolved)
+    return _dedupe_paths(roots)
+
+
+def _resolve_template_path(value: str) -> Path | None:
+    expanded = _expand_env_templates(value)
+    if expanded is None:
+        return None
+    expanded = _expand_home(expanded)
+    return _resolve_non_strict(Path(expanded).expanduser())
+
+
+def _expand_env_templates(value: str) -> str | None:
+    missing = False
+
+    def replace_percent(match: re.Match[str]) -> str:
+        nonlocal missing
+        replacement = _env_value(match.group(1))
+        if replacement is None:
+            missing = True
+            return match.group(0)
+        return replacement
+
+    def replace_dollar(match: re.Match[str]) -> str:
+        nonlocal missing
+        name = match.group(1) or match.group(2)
+        replacement = _env_value(str(name))
+        if replacement is None:
+            missing = True
+            return match.group(0)
+        return replacement
+
+    expanded = _PERCENT_ENV_PATTERN.sub(replace_percent, value)
+    expanded = _DOLLAR_ENV_PATTERN.sub(replace_dollar, expanded)
+    return None if missing else expanded
+
+
+def _env_value(name: str) -> str | None:
+    value = os.environ.get(name)
+    if value:
+        return value
+    if name == "USERPROFILE":
+        return os.environ.get("HOME") or str(Path.home())
+    if name == "HOME":
+        return os.environ.get("USERPROFILE") or str(Path.home())
+    return None
+
+
+def _expand_home(value: str) -> str:
+    if value == "~":
+        return _env_value("HOME") or str(Path.home())
+    if value.startswith("~/") or value.startswith("~\\"):
+        return str(Path(_env_value("HOME") or str(Path.home())) / value[2:])
+    return value
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
 
 
 def _mark_watcher_state_processed(decision: CodexStopFinalizeDecision) -> None:

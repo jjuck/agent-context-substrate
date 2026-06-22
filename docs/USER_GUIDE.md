@@ -309,9 +309,13 @@ Telegram gateway가 이미 실행 중이면 plugin/config 변경을 바로 반�
 
 ## 7. Codex 연동 설치와 활성화
 
-Codex 연동의 기본 전략은 hook-primary, watcher fallback입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. Codex 앱 -> 설정 -> 훅에서 hook을 trust하면 Stop hook이 thread를 finalize하고, Codex CLI summary를 만들고, flexible wiki patch를 계획한 뒤 write judge에게 적용 여부를 맡깁니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다. 두 경로 모두 Codex 원본 파일을 read-only로 읽습니다.
+Codex 연동의 기본 전략은 hook-primary, watcher fallback입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 hook을 trust하면 Stop hook이 thread를 finalize하고, Codex CLI summary를 만들고, flexible wiki patch를 계획한 뒤 write judge에게 적용 여부를 맡깁니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다. 두 경로 모두 Codex 원본 파일을 read-only로 읽습니다.
 
 Windows Codex 앱 사용자는 [Windows 상세 가이드](./WINDOWS_CODEX_APP_SETUP.ko.md)를 우선 보세요. 배포용 PowerShell 설치 흐름은 단일 bootstrap script를 기준으로 합니다.
+
+`setup-codex`는 plugin asset, personal marketplace entry, Codex plugin cache를 복사한 뒤, 사용 가능한 Codex CLI가 있으면 `codex plugin add`로 `agent-context-substrate@personal`을 등록합니다. 파일 배치와 Codex registry 등록은 별개입니다. `doctor-codex`는 `codex_plugin_registered`를 보고하고, 앱에서 plugin이 not installed로 보이면 `codex plugin add agent-context-substrate@personal --json`을 실행하라고 안내합니다. plugin은 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
+
+설치된 `project_root`는 ACS artifact root이며, 모든 Codex thread가 ACS checkout 안에서 실행되어야 한다는 뜻이 아닙니다. 새 설치는 `allowed_workspace_roots`를 `%USERPROFILE%\Documents\Codex`로 설정해서 ordinary Codex workspaces가 Stop 때 finalize되도록 하고, artifact는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다. `doctor-codex`는 최근 hook event에서 이 guard가 workspace를 skip한 흔적이 있으면 `codex_hook_recent_workspace_skips`로 보고합니다.
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
@@ -335,7 +339,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 
 경로를 확인하며 설치하려면 `setup-codex-wizard`를 사용합니다. `diagnose-codex --fix`는 wiki skeleton, Codex plugin Stop hook, local config처럼 안전한 ACS 로컬 파일만 복구합니다. `~/.codex/hooks.json` user hook fallback은 중복 Stop hook을 피하기 위해 명시적으로 요청한 경우에만 사용합니다. `doctor-codex`는 PATH의 `codex` 후보를 보고하고, setup은 발견한 direct `codex.exe`를 `codex_cli_command`로 저장합니다.
 
-Codex의 non-managed hook 정책상 실제 실행 전 hook review/trust는 여전히 필요합니다. Codex 앱을 재시작한 뒤 Codex 앱 -> 설정 -> 훅에서 ACS Stop hook command/path를 확인하고 trust/enable하세요. Codex CLI/TUI를 쓰는 경우에는 `/hooks`를 대체 review 경로로 사용하세요.
+Codex의 non-managed hook 정책상 실제 실행 전 hook review/trust는 여전히 필요합니다. Codex 앱을 재시작한 뒤 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 ACS Stop hook command/path를 확인하고 trust/enable하세요. Codex CLI/TUI를 쓰는 경우에는 `/hooks`를 대체 review 경로로 사용하세요. Hook trust는 `전체권한`, approval mode, sandbox settings, auto-review, plugin 설치/enabled 상태와 별개입니다.
 
 Hook 승인 확인 뒤 같은 wiki automation 정책으로 watcher fallback도 실행할 수 있습니다.
 
