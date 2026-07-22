@@ -2,22 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any
 import json
-import subprocess
 
-from .promotions import PromotionCandidate
-from .safe_paths import safe_artifact_stem, safe_child_path
-from .summarizer_backends import (
+from .codex_exec import CodexExecRuntime
+from .llm_runtime import (
     AgentLLMRouter,
     LLMInputSafetyOptions,
-    _call_router_with_json_repair,
-    _codex_exec_env,
-    _detect_codex_cli_command,
-    _parse_json_text_object,
-    _prepare_llm_request,
+    call_router_with_json_repair,
+    prepare_llm_request,
 )
+from .promotions import PromotionCandidate
+from .safe_paths import safe_artifact_stem, safe_child_path
 from .wiki_patches import WikiPatchProposal
 
 
@@ -162,53 +158,20 @@ class CodexCliWikiWriteJudgeRouter:
         self.llm_safety = llm_safety or LLMInputSafetyOptions()
 
     def __call__(self, request: dict[str, object]) -> dict[str, object]:
-        codex_command = self.codex_command or _detect_codex_cli_command()
-        if not codex_command:
-            raise RuntimeError("codex-cli wiki write judge unavailable: codex command was not found")
-        prepared_request = _prepare_llm_request(request, safety=self.llm_safety)
+        prepared_request = prepare_llm_request(request, safety=self.llm_safety)
         request_json = json.dumps(prepared_request, ensure_ascii=False, sort_keys=True)
-        with TemporaryDirectory(prefix=".acs-codex-wiki-judge-", dir=self.project_root) as temp_dir:
-            schema_path = Path(temp_dir) / "wiki-write-judge-schema.json"
-            schema_path.write_text(json.dumps(_wiki_write_decision_json_schema(), ensure_ascii=False, indent=2), encoding="utf-8")
-            command = [
-                codex_command,
-                "exec",
-                "-C",
-                str(self.project_root),
-                "--sandbox",
-                "read-only",
-                "--skip-git-repo-check",
-                "-c",
-                "approval_policy=never",
-                "-c",
-                "service_tier=fast",
-                "-c",
-                "model_reasoning_effort=low",
-                "-c",
-                "features.hooks=false",
-                "--json",
-                "--output-schema",
-                str(schema_path),
-            ]
-            model = self.routing_hints.get("model")
-            if model:
-                command.extend(["--model", str(model)])
-            command.append(_wiki_write_prompt(request_json=request_json))
-            result = subprocess.run(
-                command,
-                cwd=str(self.project_root),
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                timeout=self.timeout_seconds,
-                check=False,
-                shell=False,
-                env=_codex_exec_env(),
-            )
-        if result.returncode != 0:
-            raise RuntimeError(f"codex-cli wiki write judge failed with exit_code={result.returncode}: {result.stderr.strip()}")
-        return _parse_codex_exec_json_payload(result.stdout)
+        runtime = CodexExecRuntime(
+            codex_command=self.codex_command,
+            project_root=self.project_root,
+            timeout_seconds=self.timeout_seconds,
+            model=str(self.routing_hints["model"]) if self.routing_hints.get("model") else None,
+        )
+        return runtime.run_structured(
+            prompt=_wiki_write_prompt(request_json=request_json),
+            schema=_wiki_write_decision_json_schema(),
+            schema_filename="wiki-write-judge-schema.json",
+            error_label="codex-cli wiki write judge",
+        )
 
 
 def normalize_wiki_auto_mode(mode: str | None) -> str:
@@ -268,17 +231,18 @@ def evaluate_wiki_write_with_judge(
         min_score=min_score,
     )
     try:
-        payload = _call_router_with_json_repair(
+        payload = call_router_with_json_repair(
             router=router,
             request=request,
             safety=llm_safety or LLMInputSafetyOptions(),
             error_label="Wiki write judge router",
         )
-        return _enforce_min_score(
+        decision = _enforce_min_score(
             decision=WikiWriteDecision.from_dict(payload),
             min_score=min_score,
             mode=normalized_mode,
         )
+        return _validate_candidate_selection(decision=decision, candidates=candidates)
     except Exception as exc:
         return _review_required_decision(
             code="judge_unavailable",
@@ -461,6 +425,48 @@ def _enforce_min_score(*, decision: WikiWriteDecision, min_score: float, mode: s
     )
 
 
+def _validate_candidate_selection(
+    *,
+    decision: WikiWriteDecision,
+    candidates: list[PromotionCandidate],
+) -> WikiWriteDecision:
+    if decision.decision not in {"apply_managed", "apply_flexible"}:
+        return decision
+    known_ids = {candidate.candidate_id for candidate in candidates}
+    selected_ids = list(dict.fromkeys(decision.candidate_ids))
+    unknown_ids = [candidate_id for candidate_id in selected_ids if candidate_id not in known_ids]
+    if selected_ids and not unknown_ids:
+        return WikiWriteDecision(
+            ok=decision.ok,
+            score=decision.score,
+            decision=decision.decision,
+            candidate_ids=selected_ids,
+            issues=list(decision.issues),
+            rationale=decision.rationale,
+            metadata=dict(decision.metadata),
+        )
+    message = "Judge approval must select at least one known promotion candidate."
+    if unknown_ids:
+        message = f"Judge selected unknown promotion candidate ids: {', '.join(unknown_ids)}."
+    return WikiWriteDecision(
+        ok=False,
+        score=decision.score,
+        decision="review_required",
+        candidate_ids=selected_ids,
+        issues=[
+            *decision.issues,
+            WikiWriteIssue(
+                code="invalid_candidate_selection",
+                severity="warning",
+                field="candidate_ids",
+                message=message,
+            ),
+        ],
+        rationale=decision.rationale,
+        metadata={**decision.metadata, "selection_validation": "failed"},
+    )
+
+
 def _skip_decision(*, reason: str) -> WikiWriteDecision:
     return WikiWriteDecision(
         ok=False,
@@ -511,32 +517,6 @@ def _positive_int_hint(hints: dict[str, object], key: str, *, default: int) -> i
     except (TypeError, ValueError):
         return default
     return value if value > 0 else default
-
-
-def _parse_codex_exec_json_payload(stdout: str) -> dict[str, object]:
-    stripped = stdout.strip()
-    if not stripped:
-        raise ValueError("codex-cli wiki write judge returned empty stdout")
-    try:
-        return _parse_json_text_object(stripped)
-    except (ValueError, json.JSONDecodeError):
-        pass
-    last_agent_text: str | None = None
-    for line in stripped.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
-            last_agent_text = str(item["text"])
-        elif event.get("type") == "agent_message" and isinstance(event.get("text"), str):
-            last_agent_text = str(event["text"])
-    if last_agent_text is None:
-        raise ValueError("codex-cli wiki write judge JSONL output did not include an agent_message item")
-    return _parse_json_text_object(last_agent_text)
 
 
 def _wiki_write_prompt(*, request_json: str) -> str:

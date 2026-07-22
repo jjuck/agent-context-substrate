@@ -6,11 +6,17 @@ from pathlib import Path
 import json
 import os
 
-from .context_packet import build_context_packet, export_context_packet
+from .finalize_artifacts import (
+    FinalizeArtifactOptions,
+    FinalizeArtifactResult,
+    build_finalize_artifacts,
+    summary_artifact_paths,
+)
 from .ledger import SessionLedger
 from .lint import count_lint_issues, export_lint_report, lint_wiki
+from .llm_runtime import AgentLLMRouter, LLMInputSafetyOptions
 from .models import MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
-from .naming import derive_goal, derive_task_title, derive_unit_title, slugify_label
+from .naming import slugify_label
 from .paths import HarnessPaths
 from .policy import should_process_bundle
 from .promotion import (
@@ -21,11 +27,9 @@ from .promotion import (
 )
 from .recovery import build_recovery_brief
 from .raw_extract import build_typed_session_bundle, export_session_bundle
-from .summarizer import build_micro_summary, build_unit_summary
-from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
 from .summary_judge import evaluate_summary_with_judge, export_summary_judge_verdict
 from .summary_lint import lint_micro_summary_v2, lint_unit_summary_v2
-from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
+from .summary_pipeline import SummaryArtifactResult
 from .wiki_patches import WikiPatchApplyResult
 
 
@@ -50,18 +54,6 @@ class IntegrationResult:
     wiki_patch_path: Path | None = None
     wiki_patch_markdown_path: Path | None = None
     wiki_apply_result: WikiPatchApplyResult | None = None
-
-
-@dataclass(frozen=True)
-class PacketBuildArtifacts:
-    raw_export_path: Path
-    task_title: str
-    unit_title: str
-    goal: str
-    unit_summary: object
-    packet: object
-    packet_json_path: Path
-    packet_markdown_path: Path
 
 
 @dataclass(frozen=True)
@@ -168,10 +160,6 @@ def _register_promoted_page(
     )
 
 
-def _lint_issue_count(report) -> int:
-    return count_lint_issues(report)
-
-
 def _dedupe_related_pages(pages: list[str]) -> list[str]:
     seen: set[str] = set()
     deduped: list[str] = []
@@ -226,60 +214,9 @@ def _build_default_promotion_plan(
     )
 
 
-def _build_packet_artifacts(
-    *,
-    session_id: str,
-    packet_id: str,
-    paths: HarnessPaths,
-    task_title: str | None,
-    unit_title: str | None,
-    goal: str | None,
-    related_pages: list[str],
-) -> PacketBuildArtifacts:
-    raw_export_path = export_session_bundle(session_id=session_id, paths=paths)
-    session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
-
-    resolved_task_title = task_title or derive_task_title(session_bundle=session_bundle, session_id=session_id)
-    resolved_unit_title = unit_title or derive_unit_title(session_bundle=session_bundle, task_title=resolved_task_title)
-    unit_id = f"{packet_id}-unit-1"
-
-    micro_summary = build_micro_summary(
-        session_bundle=session_bundle,
-        micro_id=f"{packet_id}-micro-1",
-        parent_unit_id=unit_id,
-    )
-    resolved_goal = goal or derive_goal(resolved_task_title, micro_summary)
-    unit_summary = build_unit_summary(
-        unit_id=unit_id,
-        session_id=session_id,
-        title=resolved_unit_title,
-        goal=resolved_goal,
-        micro_summaries=[micro_summary],
-        related_pages=list(related_pages),
-    )
-    packet = build_context_packet(
-        packet_id=packet_id,
-        task_title=resolved_task_title,
-        macro_context=f"Recover session {session_id} without replaying the full raw transcript.",
-        unit_summary=unit_summary,
-        micro_summaries=[micro_summary],
-    )
-    packet_json_path, packet_markdown_path = export_context_packet(packet=packet, paths=paths)
-    return PacketBuildArtifacts(
-        raw_export_path=raw_export_path,
-        task_title=resolved_task_title,
-        unit_title=resolved_unit_title,
-        goal=resolved_goal,
-        unit_summary=unit_summary,
-        packet=packet,
-        packet_json_path=packet_json_path,
-        packet_markdown_path=packet_markdown_path,
-    )
-
-
 def _promote_default_artifacts(
     *,
-    packet_artifacts: PacketBuildArtifacts,
+    packet_artifacts: FinalizeArtifactResult,
     promotion_plan: PromotionPlan,
     paths: HarnessPaths,
 ) -> dict[str, Path]:
@@ -362,7 +299,7 @@ def _export_lint_artifacts(*, paths: HarnessPaths, packet_id: str) -> LintArtifa
     return LintArtifacts(
         json_path=lint_json_path,
         markdown_path=lint_markdown_path,
-        issue_count=_lint_issue_count(report),
+        issue_count=count_lint_issues(report),
     )
 
 
@@ -373,44 +310,6 @@ def _build_summary_routing_hints(*, summary_model: str | None, summary_budget: s
     if summary_budget:
         hints["budget"] = summary_budget
     return hints
-
-
-def _export_v2_summary_artifacts(
-    *,
-    packet_artifacts: PacketBuildArtifacts,
-    session_id: str,
-    packet_id: str,
-    paths: HarnessPaths,
-    related_pages: list[str],
-    summary_mode: str,
-    summarizer_command: str | None,
-    agent_llm_router: AgentLLMRouter | None,
-    summary_model: str | None,
-    summary_budget: str | None,
-    summary_cache: bool,
-    llm_safety: LLMInputSafetyOptions | None,
-) -> SummaryArtifactResult:
-    session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
-    return build_v2_summary_artifacts(
-        session_bundle=session_bundle,
-        paths=paths,
-        options=SummaryOptions(
-            session_id=session_id,
-            packet_id=packet_id,
-            unit_title=packet_artifacts.unit_title,
-            goal=packet_artifacts.goal,
-            related_pages=list(related_pages),
-            summary_mode=summary_mode,
-            summarizer_command=summarizer_command,
-            routing_hints=_build_summary_routing_hints(
-                summary_model=summary_model,
-                summary_budget=summary_budget,
-            ),
-            summary_cache=summary_cache,
-            agent_llm_router=agent_llm_router,
-            llm_safety=llm_safety or LLMInputSafetyOptions(),
-        ),
-    )
 
 
 def _export_summary_judge_artifact(
@@ -447,40 +346,9 @@ def _export_summary_judge_artifact(
     return export_summary_judge_verdict(packet_id=packet_id, verdict=verdict, exports_dir=paths.exports_dir)
 
 
-def _summary_artifact_paths(summary_artifacts: SummaryArtifactResult | None) -> dict[str, str]:
-    if summary_artifacts is None:
-        return {}
-    artifact_paths = {
-        "summary_micro_path": str(summary_artifacts.micro_path),
-        "summary_unit_path": str(summary_artifacts.unit_path),
-        "summary_evidence_path": str(summary_artifacts.evidence_path),
-    }
-    artifact_paths.update(_summary_metadata_artifact_paths(summary_artifacts.micro_path, prefix="summary_micro"))
-    artifact_paths.update(_summary_metadata_artifact_paths(summary_artifacts.unit_path, prefix="summary_unit"))
-    if summary_artifacts.judge_path is not None:
-        artifact_paths["summary_judge_path"] = str(summary_artifacts.judge_path)
-    return artifact_paths
-
-
-def _summary_metadata_artifact_paths(path: Path, *, prefix: str) -> dict[str, str]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    metadata = payload.get("metadata") if isinstance(payload, dict) else None
-    if not isinstance(metadata, dict):
-        return {}
-    result: dict[str, str] = {}
-    for key in ["mode", "fallback_from", "fallback_reason"]:
-        value = metadata.get(key)
-        if value:
-            result[f"{prefix}_{key}"] = str(value)
-    return result
-
-
 def _build_base_artifact_paths(
     *,
-    packet_artifacts: PacketBuildArtifacts,
+    packet_artifacts: FinalizeArtifactResult,
     promoted_paths: dict[str, Path],
     lint_artifacts: LintArtifacts,
     promotion_mode: str,
@@ -498,7 +366,7 @@ def _build_base_artifact_paths(
         "lint_json_path": str(lint_artifacts.json_path),
         "lint_markdown_path": str(lint_artifacts.markdown_path),
     }
-    artifact_paths.update(_summary_artifact_paths(summary_artifacts))
+    artifact_paths.update(summary_artifact_paths(summary_artifacts))
     artifact_paths.update({name: str(path) for name, path in promoted_paths.items()})
     return artifact_paths
 
@@ -699,31 +567,32 @@ def run_session_finalize_pipeline(
 
         try:
             partial_artifact_paths: dict[str, str] = {}
-            packet_artifacts = _build_packet_artifacts(
-                session_id=session_id,
-                packet_id=packet_id,
+            session_bundle = build_typed_session_bundle(session_id=session_id, paths=paths)
+            raw_export_path = export_session_bundle(session_id=session_id, paths=paths)
+            packet_artifacts = build_finalize_artifacts(
+                session_bundle=session_bundle,
+                raw_export_path=raw_export_path,
                 paths=paths,
-                task_title=task_title,
-                unit_title=unit_title,
-                goal=goal,
-                related_pages=related_pages,
-            )
-            summary_artifacts = None
-            if summary_mode:
-                summary_artifacts = _export_v2_summary_artifacts(
-                    packet_artifacts=packet_artifacts,
+                options=FinalizeArtifactOptions(
                     session_id=session_id,
                     packet_id=packet_id,
-                    paths=paths,
-                    related_pages=related_pages,
+                    task_title=task_title,
+                    unit_title=unit_title,
+                    goal=goal,
+                    macro_context=f"Recover session {session_id} without replaying the full raw transcript.",
+                    related_pages=tuple(related_pages),
                     summary_mode=summary_mode,
                     summarizer_command=summarizer_command,
-                    agent_llm_router=agent_llm_router,
-                    summary_model=summary_model,
-                    summary_budget=summary_budget,
+                    summary_routing_hints=_build_summary_routing_hints(
+                        summary_model=summary_model,
+                        summary_budget=summary_budget,
+                    ),
                     summary_cache=summary_cache,
+                    agent_llm_router=agent_llm_router,
                     llm_safety=llm_safety,
-                )
+                ),
+            )
+            summary_artifacts = packet_artifacts.summary_artifacts
             promoted_paths: dict[str, Path] = {}
             if promotion_mode == "full":
                 promotion_plan = _build_default_promotion_plan(

@@ -13,12 +13,13 @@ ACS reads Codex session files **read-only**, writes audit artifacts under the cl
 | Codex home | `%USERPROFILE%\.codex` | Local Codex settings and sessions |
 | Codex SQLite | `%USERPROFILE%\.codex\state_5.sqlite` | Thread metadata, read-only for ACS |
 | Codex rollout JSONL | `%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl` | Thread event stream, read-only for ACS |
+| Ordinary Codex workspace example | `%USERPROFILE%\Documents\Codex` | A normal workspace location; it is not required to contain the ACS checkout |
 | ACS project root | cloned `agent-context-substrate` folder | Code plus generated `data\...` artifacts |
 | ACS artifacts | `<PROJECT_ROOT>\data\...` | Raw exports, packets, recovery, ledger, retrieval index, wiki proposals, judge decisions |
 | LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` default template | Human-facing Obsidian wiki updated by judge-approved patches; setup stores the template unless `--wiki-root` is explicit |
 | Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | Installed ACS Codex plugin asset |
 | Codex plugin registry | `agent-context-substrate@personal` in `codex plugin list` | Codex app registration; may appear under `Personal` or `Created by you` |
-| Codex workspace root | `%USERPROFILE%\Documents\Codex` default template | Default `allowed_workspace_roots`; ordinary Codex workspaces can finalize even when ACS artifacts live elsewhere |
+| Codex workspace scope | `all` | Default Stop-hook scope; restricted installations may opt into `allowed_workspace_roots` |
 | Codex user hook | `%USERPROFILE%\.codex\hooks.json` | Optional Stop hook fallback; not installed by default |
 
 ## 2. Prerequisites and automatic install scope
@@ -84,7 +85,7 @@ The script creates `.venv`, runs `pip install -e .`, then runs:
 
 If `doctor-codex` reports `codex_plugin_registered=missing`, run the same `codex plugin add` command manually. The plugin browser may show the plugin under `Personal` or `Created by you`.
 
-`project_root` is the ACS artifact root, not the active Codex workspace allowlist. New installs set `allowed_workspace_roots` to `%USERPROFILE%\Documents\Codex` so ordinary Codex workspaces finalize on Stop while generated ACS artifacts remain under `<PROJECT_ROOT>\data\...`.
+`project_root` is the ACS artifact root, not the active Codex workspace allowlist. New installs use `workspace_scope="all"`, so any active Codex workspace can finalize on Stop while generated ACS artifacts remain under `<PROJECT_ROOT>\data\...`. Set `workspace_scope="restricted"` and explicit `allowed_workspace_roots` only when an allowlist is required.
 
 Default Windows setup installs the plugin-bundled Stop hook only. It does not
 also register `%USERPROFILE%\.codex\hooks.json`, because Codex loads matching
@@ -105,7 +106,7 @@ Health check:
 
 The doctor output includes `codex_plugin_registered`. A missing registry entry means the plugin files can exist while Codex still considers `agent-context-substrate@personal` not installed.
 
-The doctor output also includes `codex_hook_recent_workspace_skips`. A warning there means recent Stop hooks skipped with a workspace guard detail such as `cwd outside configured project_root` or `cwd outside configured allowed_workspace_roots`; review `allowed_workspace_roots` in the installed plugin `local_config.json`.
+The doctor output also includes `codex_hook_recent_workspace_skips`. In restricted mode, a warning means recent Stop hooks were outside `allowed_workspace_roots`; review `workspace_scope` and the configured roots in the installed plugin `local_config.json`.
 
 User-facing paths:
 
@@ -125,7 +126,8 @@ Codex LLM summaries and judge-gated wiki writes are on by default in new install
 
 ```json
 {
-  "allowed_workspace_roots": ["%USERPROFILE%\\Documents\\Codex"],
+  "workspace_scope": "all",
+  "allowed_workspace_roots": [],
   "summary_mode": "auto",
   "wiki_auto_mode": "apply-flexible",
   "wiki_write_judge_mode": "auto",
@@ -134,7 +136,7 @@ Codex LLM summaries and judge-gated wiki writes are on by default in new install
 ```
 
 With that config, the Stop hook accepts ordinary Codex workspaces under
-`%USERPROFILE%\Documents\Codex`, tries `codex exec` first, and falls back to
+any active Codex workspace, tries isolated `codex exec` first, and falls back to
 heuristic summaries on CLI, timeout, JSON, or lint failure. For wiki writes, it
 plans a flexible patch and asks the write judge whether the LLM Wiki should be
 updated. If the judge path is unavailable or below the minimum score, ACS leaves
@@ -237,9 +239,11 @@ agent-context-substrate Stop hook now?"
 
 Codex may require review again if the hook file or command changes. The installer does not auto-approve this trust step.
 
+The installed hook script is intentionally a thin bootstrap into the editable ACS Python package. Core Python changes normally take effect through the existing editable install. Run `setup-codex --yes` again when bundled hook, skill, plugin metadata, or marketplace/cache assets change; Codex may then request hook review again.
+
 ## 6. Obsidian
 
-ACS can create the effective wiki folder resolved from the `%USERPROFILE%\Documents\LLM Wiki` default template, but it does not automatically open or register the vault in Obsidian.
+ACS can create the minimal vault skeleton at the effective root resolved from the `%USERPROFILE%\Documents\LLM Wiki` default template, but it does not automatically open or register the vault in Obsidian.
 
 If Obsidian is installed, open Obsidian, choose `Open folder as vault`, and select the effective path from `config-codex paths`:
 
@@ -247,7 +251,7 @@ If Obsidian is installed, open Obsidian, choose `Open folder as vault`, and sele
 %USERPROFILE%\Documents\LLM Wiki
 ```
 
-The default automatic mode is `apply-flexible` with `wiki_write_judge_mode=auto`. Codex thread finalization writes context packets, recovery, ledger, retrieval artifacts, wiki proposals, and judge decisions under `<PROJECT_ROOT>\data\...`; it updates the LLM Wiki only when the write judge approves and the patch safety checks pass.
+The default automatic mode is `apply-flexible` with `wiki_write_judge_mode=auto`. New flexible pages use root-level `<Title>.md` placement; optional category/type metadata, sources, links, and the dynamic index carry meaning. Codex thread finalization writes context packets, recovery, ledger, retrieval artifacts, wiki proposals, and judge decisions under `<PROJECT_ROOT>\data\...`; it updates the page, index, log, promotion state, and applied record in one recoverable transaction only when the write judge approves and patch safety checks pass.
 
 ## 7. Real Stop hook smoke test
 
@@ -307,7 +311,7 @@ Requirements:
 - Tell me that Codex source data lives under %USERPROFILE%\.codex: state_5.sqlite plus sessions\...\rollout-*.jsonl.
 - Treat %USERPROFILE%\Documents\LLM Wiki as the portable default LLM Wiki template, explain the effective path, and confirm before installing.
 - Tell me that ACS artifacts are written under the cloned agent-context-substrate project data\... directory.
-- Explain that project_root is the ACS artifact root, while allowed_workspace_roots defaults to %USERPROFILE%\Documents\Codex so ordinary Codex workspaces can finalize on Stop.
+- Explain that project_root is the ACS artifact root, while workspace_scope defaults to all so any Codex workspace can finalize on Stop.
 - Use scripts/setup-codex-windows.ps1 as the default install path.
 - Explain that new installs default to summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85.
 - Explain that LLM Wiki content is added when the write judge approves evidence-backed flexible patches, not only when the user explicitly asks for each wiki write.
@@ -324,7 +328,7 @@ Requirements:
 - Full Access, approval mode, and sandbox settings are not the same as hook trust.
 - ACS does not modify Codex SQLite or rollout JSONL files.
 - New Codex installs default to judge-gated `apply-flexible`; failed or low-confidence judge runs leave review-required artifacts instead of writing the LLM Wiki.
-- `project_root` is the ACS artifact root. It should not be treated as the only allowed Codex workspace root; use `allowed_workspace_roots` when workspaces live outside `%USERPROFILE%\Documents\Codex`.
+- `project_root` is the ACS artifact root. It should not be treated as a workspace boundary; use restricted `workspace_scope` and `allowed_workspace_roots` only when an explicit allowlist is desired.
 - `doctor-codex` checks setup health; `diagnose-codex --fix` repairs only safe ACS local files.
 - `--user-hook-fallback` is optional and should not be used together with a working plugin hook unless you are intentionally testing duplicate-hook behavior.
 - Obsidian is optional. ACS creates the LLM Wiki folder, but the user must open it as a vault in Obsidian.

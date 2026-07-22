@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from .models import MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
+from .llm_runtime import AgentLLMRouter, LLMInputSafetyOptions, call_router_with_json_repair
 from .recovery import RecoveryQualityReport
 from .safe_paths import safe_artifact_stem, safe_child_path
-from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions, _call_router_with_json_repair
 from .summary_lint import SummaryLintReport
 
 
@@ -168,7 +168,7 @@ def evaluate_summary_with_judge(
         routing_hints=dict(routing_hints or {}),
     )
     try:
-        payload = _call_router_with_json_repair(
+        payload = call_router_with_json_repair(
             router=router,
             request=request,
             safety=llm_safety or LLMInputSafetyOptions(),

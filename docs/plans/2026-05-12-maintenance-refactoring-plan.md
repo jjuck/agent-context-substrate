@@ -1,5 +1,7 @@
 # Agent Context Substrate Maintenance Refactoring Plan
 
+> **Historical plan:** This document records the 2026-05-12 proposal. The current typed finalization, runtime, wiki-intent, and transaction boundaries are documented in [`../PIPELINE.md`](../PIPELINE.md); see the [plan archive](./README.md).
+
 > **For Hermes:** Treat this as a maintenance/refactoring track, separate from feature/spec execution. Use `subagent-driven-development` only after choosing one narrow slice.
 
 **Goal:** Reduce long-term maintenance risk in `agent-context-substrate` without expanding alpha product scope.
@@ -55,10 +57,10 @@
 **Verification:**
 
 ```bash
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && git status --short --branch --untracked-files=all
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && . .venv/bin/activate && python -m pytest -q
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && . .venv/bin/activate && ruff check .
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && git diff --check
+cd '<PROJECT_ROOT>' && git status --short --branch --untracked-files=all
+cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
+cd '<PROJECT_ROOT>' && . .venv/bin/activate && ruff check .
+cd '<PROJECT_ROOT>' && git diff --check
 ```
 
 ### A2. Centralize shared safety/path helpers
@@ -280,10 +282,10 @@ raw messages
 Run after each slice:
 
 ```bash
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && . .venv/bin/activate && python -m pytest -q
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && . .venv/bin/activate && ruff check .
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && git diff --check
-cd '/mnt/c/Users/이주완/Desktop/py/My_Project/agent-context-substrate' && python3 - <<'PY'
+cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
+cd '<PROJECT_ROOT>' && . .venv/bin/activate && ruff check .
+cd '<PROJECT_ROOT>' && git diff --check
+cd '<PROJECT_ROOT>' && python3 - <<'PY'
 from pathlib import Path
 print('asset_pycache_count=', len(list(Path('src/agent_context_substrate/assets').rglob('__pycache__'))))
 print('asset_pyc_count=', len(list(Path('src/agent_context_substrate/assets').rglob('*.pyc'))))

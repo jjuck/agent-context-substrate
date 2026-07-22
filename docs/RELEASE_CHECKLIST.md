@@ -20,11 +20,10 @@ python - <<'PY'
 from pathlib import Path
 markers = ['/' + 'mnt/' + 'c/Users/', 'C:' + '\\\\Users\\\\']
 roots = [Path('src'), Path('tests'), Path('README.md'), Path('README.ko.md'), Path('docs'), Path('spec.md'), Path('CHANGELOG.md'), Path('pyproject.toml')]
-allowed = {'docs/plans/2026-04-27-distribution-hardening-final-plan.md'}
 for root in roots:
     files = [root] if root.is_file() else root.rglob('*')
     for path in files:
-        if not path.is_file() or path.as_posix() in allowed:
+        if not path.is_file():
             continue
         if path.suffix not in {'.py', '.md', '.toml', '.yaml', '.yml', '.txt'}:
             continue
@@ -43,7 +42,7 @@ python -m pytest -q
 ruff check .
 ```
 
-Expected current public alpha baseline: `347 passed, 12 skipped` and `All checks passed!` from Ruff.
+Expected current public alpha baseline: `408 passed, 12 skipped` and `All checks passed!` from Ruff.
 
 For a Windows Codex app release, also verify the Windows-facing one-shot install docs and hook-trust instructions in `README.ko.md`, `README.md`, and `docs/WINDOWS_CODEX_APP_SETUP*.md`.
 
@@ -127,9 +126,9 @@ agent-context-substrate config-codex paths \
   --wiki-root <wiki-root>
 ```
 
-Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, `codex_plugin_registered=ok` when a usable Codex CLI is available, `codex_hook_recent_workspace_skips=ok`, direct Codex CLI diagnostics, and paths for `state_5.sqlite`, the `%USERPROFILE%\Documents\LLM Wiki` default template plus its effective root, `%USERPROFILE%\Documents\Codex` as the default `allowed_workspace_roots` template, and `data\...`. Default Windows setup should copy the plugin asset/marketplace/cache files, register `agent-context-substrate@personal` with Codex via `codex plugin add agent-context-substrate@personal --json`, and not leave an ACS Stop hook in `~/.codex/hooks.json`; use `--user-hook-fallback` only when plugin-bundled hooks are unavailable. The plugin may appear under `Personal` or `Created by you`. Codex still requires `Codex app -> Settings -> Hooks` review/trust before non-managed command hooks run; CLI `/hooks` and `Hooks need review` are alternate review paths. Hook trust is separate from Full Access, approval mode, sandbox settings, auto-review, and plugin installation state. Do not document or use trust bypass as a normal install path.
+Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, `codex_plugin_registered=ok` when a usable Codex CLI is available, `codex_hook_recent_workspace_skips=ok`, direct Codex CLI diagnostics, and paths for `state_5.sqlite`, the `%USERPROFILE%\Documents\LLM Wiki` default template plus its effective root, default `workspace_scope=all`, and `data\...`. Default Windows setup should copy the plugin asset/marketplace/cache files, register `agent-context-substrate@personal` with Codex via `codex plugin add agent-context-substrate@personal --json`, and not leave an ACS Stop hook in `~/.codex/hooks.json`; use `--user-hook-fallback` only when plugin-bundled hooks are unavailable. The plugin may appear under `Personal` or `Created by you`. Codex still requires `Codex app -> Settings -> Hooks` review/trust before non-managed command hooks run; CLI `/hooks` and `Hooks need review` are alternate review paths. Hook trust is separate from Full Access, approval mode, sandbox settings, auto-review, and plugin installation state. Do not document or use trust bypass as a normal install path.
 
-For Codex LLM summary and wiki-write smoke, confirm `local_config.json` has the default `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`, plus a direct `codex_cli_command` when one is detected. Run `doctor-codex --summary-smoke`, then run an interactive Stop hook smoke and verify summary artifacts under `data/exports/summaries/`, wiki proposals under `data/wiki_patches/`, and write decisions under `data/wiki_decisions/`. The summary metadata should show either `mode=codex-cli` or heuristic fallback fields such as `fallback_from=auto` / `fallback_reason=codex_cli_unavailable`; ledger artifact paths should include the requested `summary_mode`, `wiki_auto_mode`, write decision, and summary fallback metadata. If `doctor-codex` reports `service_tier="default"`, remove that Codex config value or set a supported tier before treating Codex summaries as healthy.
+For Codex LLM summary and wiki-write smoke, confirm `local_config.json` has the default `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`, plus a direct `codex_cli_command` when one is detected. Run `doctor-codex --summary-smoke`, then run a Stop-hook E2E against temporary project and wiki roots. Verify summary artifacts under `data/exports/summaries/`, wiki proposals under `data/wiki_patches/`, decisions under `data/wiki_decisions/`, and transaction manifests under `data/wiki_patches/transactions/`. The summary metadata should show either `mode=codex-cli` or heuristic fallback fields such as `fallback_from=auto` / `fallback_reason=codex_cli_unavailable`; ledger artifact paths should include the requested modes and decision. An approved apply must create a root-level page, update `index.md`/`log.md`, mark every selected candidate applied, commit the transaction, and finish with blocking `lint_issue_count=0`. If `doctor-codex` reports `service_tier="default"`, remove that Codex config value or set a supported tier before treating Codex summaries as healthy.
 
 Windows one-shot bootstrap smoke:
 
@@ -176,8 +175,17 @@ Expected:
 - [ ] Do not publish generated/private substrate artifact directories such as `data/exports/`, `data/atoms/`, `data/promotions/`, `data/wiki_patches/`, `data/lint/`, or `data/cache/`.
 - [ ] Do not publish raw `state.db` exports.
 - [ ] Confirm docs warn that raw session exports may include private conversation content, local paths, commands, and sensitive operational context.
+- [ ] Use temporary vaults for live-write tests; do not use the real user wiki as a release fixture.
 
-## 8. Gateway restart
+## 8. Transaction and recovery checks
+
+- [ ] A successful flexible apply leaves the manifest `committed` and no stale snapshot directory.
+- [ ] An injected page/index/log/promotion/applied-log failure restores every snapshot and leaves the manifest `rolled_back`.
+- [ ] A synthetic stale `prepared` transaction is recovered before the next apply.
+- [ ] Same-title candidates merge only when their normalized resolved target path is identical.
+- [ ] Applied records retain both legacy `candidate_id` and complete `candidate_ids`.
+
+## 9. Gateway restart
 
 After installing plugin/context-engine changes into a live Hermes gateway, restart the gateway so cached modules are refreshed:
 
@@ -188,18 +196,18 @@ hermes gateway restart
 Do this only when it is acceptable to interrupt active messaging sessions.
 
 
-## 9. Current public alpha baseline
+## 10. Current public alpha baseline
 
-Latest verified local baseline for the v0.2.0 release candidate after spec pipeline implementation, real-wiki dry-run validation, semantic atom/lint/patch expansion, and release cleanup:
+Latest verified local baseline for the v0.2.0 release candidate after emergent-root placement, judge-gated live writes, transaction hardening, and adapter-boundary refactoring:
 
 ```text
 commit: use `git log -1 --oneline` at audit time
 repo: https://github.com/jjuck/agent-context-substrate
 visibility: public
-project tests: 347 passed, 12 skipped
+project tests: 408 passed, 12 skipped
 fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
-real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
-live Codex runtime: plugin agent-context-substrate, Stop hook installed, watcher fallback available
+isolated Codex E2E: summary_mode=codex-cli decision=apply_flexible score=0.95 applied_count=1 lint_issue_count=0
+live Codex runtime: plugin agent-context-substrate, Stop hook installed, source/hook hash matched, watcher fallback available
 live Hermes runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
 ```
 

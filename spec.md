@@ -1,11 +1,11 @@
 # Agent Context Substrate Improvement Spec
 
-> **For Hermes:** Use `subagent-driven-development` if implementing this spec task-by-task.
+> **Status note (2026-07-21):** This is an evolutionary design record. Sections describing the original review-first alpha remain useful history but are superseded where they conflict with the current architecture in [`docs/PIPELINE.md`](./docs/PIPELINE.md), the operator contract in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md), and the defaults in the README.
 
-**Status:** Partially implemented alpha; MVP scope locked
+**Status:** Implemented alpha; architecture continues to evolve
 **Scope:** Summarization quality, knowledge atoms, promotion queue, wiki patching, and semantic lint
 **Default posture:** Keep Obsidian human-facing. Keep generated machine artifacts outside the wiki by default.
-**Alpha decision:** Implement recovery and LLM-input safety gaps; keep wiki growth automation intentionally review-first and MVP-sized.
+**Current decision:** Codex uses judge-gated automatic flexible writes by default. Evidence, path safety, conflict checks, transaction rollback, and blocking lint remain mechanical invariants.
 
 ## 1. Goal
 
@@ -31,7 +31,7 @@ ContextPacket
   -> claim / decision / entity atoms
   -> promotion candidates
   -> wiki patch proposals
-  -> reviewed wiki updates
+  -> judge-approved transactional wiki updates
 ```
 
 ## 2. Core Diagnosis
@@ -67,14 +67,14 @@ The current weak points are:
 4. **Every claim needs evidence.**
    Decisions, claims, and action items must cite `message_id`, `micro_id`, packet, or source refs.
 
-5. **Wiki writes should be patches, not rewrites.**
-   Default behavior should propose small, reviewable patches.
+5. **Wiki writes should be auditable patches, not opaque rewrites.**
+   Every automatic write starts as a proposal, records the judge decision, and applies only selected candidates through mechanical gates.
 
 6. **Human wiki and machine substrate stay separate.**
-   Machine artifacts live under `data/`. Obsidian receives curated, reviewed knowledge.
+   Machine artifacts live under `data/`. Obsidian receives curated or judge-approved durable knowledge.
 
-7. **LLM features are opt-in.**
-   Default summarization remains heuristic for privacy, cost, speed, offline use, and reproducibility.
+7. **LLM behavior must degrade safely.**
+   New Codex installs use `auto`, while heuristic/offline paths remain available for privacy, cost, speed, and reproducibility.
 
 ## 3.1 Product Philosophy and Quality Metrics
 
@@ -87,10 +87,10 @@ The alpha should optimize for usefulness, trust, and reviewability rather than a
    Lexical retrieval is sufficient for the alpha, but larger substrates will need better precision, recency, and source-aware ranking. Retrieval results should make it clear why a hit appeared, how recent it is, and which artifact or wiki source supports it.
 
 3. **Promotion queue friction must stay low.**
-   The review-first philosophy is correct only if users can quickly triage proposed wiki updates. If patch proposals become noisy or hard to compare, backlog will grow and the wiki will stop improving. Queue/listing UX, grouping, evidence display, and status transitions are therefore product-quality concerns, not just CLI polish.
+   Human review remains the fallback for low-confidence or failed judge decisions. Queue/listing UX, grouping, evidence display, and status transitions are product-quality concerns, not just CLI polish.
 
-4. **Automation should reduce review load, not bypass it.**
-   The substrate should help decide what deserves wiki life. It should not become an automatic page factory or broad wiki editor before review, rollback, and conflict handling are mature.
+4. **Automation must remain accountable.**
+   The write judge decides what deserves wiki life; deterministic gates, recoverable transactions, lint, and ledgers keep the decision inspectable and reversible.
 
 ## 4. Non-goals
 
@@ -99,7 +99,7 @@ This spec does **not** require:
 - replacing the current heuristic summarizer immediately;
 - making LLM summarization the default;
 - writing generated packets directly into Obsidian;
-- redesigning the existing Obsidian folder structure;
+- migrating or reorganizing existing user wiki folders automatically;
 - adding provider SDKs as core dependencies;
 - rewriting existing wiki pages wholesale;
 - implementing every possible wiki patch operation in the alpha;
@@ -113,8 +113,8 @@ The alpha scope is intentionally split into **Implemented**, **MVP to implement*
 | --- | --- | --- |
 | `search_knowledge(mode="recovery")` | **MVP to implement** | Recovery is part of the core promise. Search should surface recovery briefs and packet recovery fields directly. |
 | LLM input safety flags | **MVP to implement** | `agent-llm`, `hybrid`, and `custom-command` modes need a visible input boundary before broader use. |
-| Wiki patch operations | **MVP subset only** | More operations would turn the project into an automatic wiki editor before review, rollback, and conflict UX are mature. |
-| Semantic lint | **Structural MVP now, semantic heuristics later** | Deep duplicate/stale/contradiction checks require ontology, similarity, and freshness policy to avoid noisy warnings. |
+| Wiki patch operations | **Implemented guarded subset** | Flexible `create_page`/`replace_page` and legacy managed-block operations remain proposal- and policy-gated. |
+| Semantic lint | **Structural blocking + advisory quality checks** | Provenance/graph safety blocks apply success; language, structure, category, and related-link quality remain advisory. |
 | Native Windows support | **Implemented release gate** | Native Windows `pytest` and `ruff` are now required because Codex desktop usage is Windows-heavy. |
 | Codex local integration | **Implemented MVP** | Codex reads `~/.codex/state_5.sqlite` and rollout JSONL read-only, uses a plugin-bundled Stop hook as the primary trigger, and keeps watcher fallback available. |
 | Other non-Hermes adapters | **Future before expansion** | Claude Code/OpenCode/Gemini remain future adapters; see `docs/AGENT_PORTABILITY_NOTES.md` before claiming broader support. |
@@ -364,8 +364,11 @@ Promotion is a decision, not a format conversion.
 {
   "candidate_id": "cand_2026_0507_001",
   "packet_id": "20260507_...",
-  "kind": "concept_update",
-  "target_page": "01 지식/LLM Wiki.md",
+  "kind": "wiki_update",
+  "target_page": "LLM Wiki.md",
+  "category": "knowledge systems",
+  "page_type": "concept",
+  "language": "en",
   "reason": "The session clarified the difference between session recovery substrate and living wiki maintenance.",
   "evidence": ["packet:20260507_...#unit-1", "claim:claim_001"],
   "proposed_action": "update_existing",
@@ -389,13 +392,13 @@ Acceptance criteria:
 
 ### 6.7 Wiki Patch Proposal
 
-All wiki updates should be reviewable patches.
+All wiki updates should be inspectable patches, even when the configured judge approves automatic apply.
 
 ```json
 {
   "patch_id": "patch_042",
-  "target": "01 지식/LLM Wiki.md",
-  "operation": "insert_claim_block",
+  "target": "LLM Wiki.md",
+  "operation": "replace_page",
   "rationale": "New evidence clarifies LLM Wiki vs hierarchical RAG.",
   "evidence": ["claim_101", "claim_102"],
   "risk": "low",
@@ -434,9 +437,9 @@ split_page
 
 Acceptance criteria:
 
-- Default is dry-run.
+- Manual `apply-wiki-patch` is dry-run unless `--apply` is explicit; Codex `apply-flexible` may apply an approved proposal automatically.
 - Patch proposal shows target file, rationale, evidence, and diff.
-- Applying a patch updates only the intended alpha-managed section or managed block.
+- Applying a patch updates only the resolved target and transaction-owned registration artifacts.
 - Alpha apply skips experimental or future operations instead of guessing a broader edit.
 
 ## 7. Wiki Editing Policy
@@ -994,7 +997,7 @@ Acceptance criteria:
 - Add JSON parse / repair / fallback.
 - Add privacy redaction before Agent LLM calls.
 - Add MVP CLI controls: `--llm-redact`, `--llm-max-input-chars`, `--llm-allow-code-snippets`, and `--llm-path-policy`.
-- Keep heuristic as default.
+- Keep heuristic as a deterministic fallback; each adapter owns its default summary policy.
 - Do not add direct provider SDKs as core dependencies.
 - Hermes auxiliary-router smoke is covered by an integration test and still requires confirmation in a real WSL/Hermes checkout before release tagging.
 
@@ -1005,12 +1008,12 @@ Acceptance criteria:
 - Add `propose-promotions`.
 - Ensure no Obsidian writes happen during proposal.
 
-### Phase 6: Wiki patch planner — **MVP subset locked**
+### Phase 6: Wiki patch planner — **Implemented guarded subset**
 
 - Add patch proposal model.
 - Add managed block support.
-- Add dry-run by default.
-- Add apply command with explicit confirmation or flag.
+- Keep manual apply dry-run by default and require `--apply`.
+- Allow Codex automation to apply only a judge-approved candidate selection that passes mechanical gates.
 - Keep alpha write operations narrow and applied by default only for: `create_page`, `insert_claim_block`, `append_managed_section`, and `append_section`.
 - Treat `add_link` and `mark_stale` as experimental proposal operations that alpha apply skips by default.
 - Leave broad page-editing operations such as `replace_section`, `merge_pages`, and `split_page` for future work.
@@ -1042,6 +1045,15 @@ Acceptance criteria:
 - Add `codex-finalize`, `codex-watch`, `codex-status`, `search-knowledge`, `expand-hit`, and `install-codex-plugin`.
 - Package a non-MCP Codex plugin with no `mcpServers`, no `apps`, and no manifest `hooks`; default hook assets live under `hooks/hooks.json`. Provide an explicit user-level hook install fallback for runtimes where plugin-bundled hooks are unavailable or unverified.
 
+### Phase 10: Emergent wiki and maintainable boundaries — **Implemented**
+
+- Default new vaults to `placement_policy: emergent-root` with principle/ontology seed guides instead of a fixed category-folder registry.
+- Preserve optional category/type/language metadata through typed `WikiPageIntent`; group candidates only by normalized resolved target path.
+- Resolve Codex wiki roots at runtime from environment, portable installed template, or explicit/legacy config.
+- Register applied pages into frontmatter-driven MOC sections and treat new categories as non-blocking.
+- Apply pages, index, log, promotion state, and applied records through a recoverable transaction.
+- Share source-neutral finalization after Hermes/Codex produce `SessionBundle`; isolate Codex process policy and keep the installed hook as a thin bootstrap.
+
 ## 15. Testing Requirements
 
 Minimum tests:
@@ -1063,6 +1075,9 @@ tests/test_semantic_lint.py
 tests/test_codex_source.py
 tests/test_codex_integration.py
 tests/test_codex_cli.py
+tests/test_finalize_artifacts.py
+tests/test_wiki_apply_transaction.py
+tests/test_codex_exec.py
 ```
 
 Verification commands:
@@ -1084,32 +1099,35 @@ Update docs after implementation:
 - `README.md`
 - `README.ko.md`
 - `docs/PIPELINE.md`
+- `docs/OPERATIONS.md`
+- `docs/README.md`
 - `docs/USER_GUIDE.md`
 - `docs/USER_GUIDE.en.md`
 - CLI help text
 
 Required documentation points:
 
-- `packet-only` remains default.
-- LLM summarization is opt-in.
+- Hermes manual finalization keeps `packet-only` as its default promotion mode.
+- New Codex installs use automatic LLM summary and judge modes with explicit fallback behavior.
 - Privacy/redaction behavior is explicit.
 - Legacy full promotion is not the recommended wiki path.
-- Promotion candidates and wiki patches are the recommended path.
+- Promotion candidates, judge decisions, transactions, and wiki patches are the recommended path.
+- Emergent-root placement and portable/effective wiki-root semantics are explicit.
 
 ## 17. Acceptance Summary
 
 This spec is satisfied when:
 
-- heuristic summarization still works as the default;
+- heuristic summarization remains a deterministic fallback;
 - v2 summary artifacts distinguish recovery, knowledge, and retrieval summaries;
 - LLM/hybrid summarization can be added without core provider lock-in;
 - every LLM-derived decision/claim/action cites evidence;
 - summary lint catches common hallucination and grounding errors;
 - atoms can be extracted without touching Obsidian;
 - promotion candidates can be generated without touching Obsidian;
-- wiki patches are proposed before apply;
+- wiki patches and judge decisions are recorded before automatic apply;
 - semantic lint starts measuring wiki health as a living graph;
-- generated machine artifacts remain separate from the human-facing wiki unless explicitly reviewed and applied.
+- generated machine artifacts remain separate from the human-facing wiki; only curated or judge-approved durable knowledge is applied.
 
 ## 18. North Star
 
@@ -1121,5 +1139,5 @@ Promotion queue decides what deserves wiki life.
 Wiki patches update human knowledge safely.
 ```
 
-The project should not become an automatic page factory.
+The project should not become an automatic transcript-to-page factory.
 It should become the evidence, memory, and promotion substrate beneath a healthy LLM Wiki.

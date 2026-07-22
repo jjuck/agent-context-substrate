@@ -88,25 +88,21 @@ data/wiki_decisions/<packet_id>.json
 
 ledger에는 wiki automation mode와 write decision도 기록됩니다. 기존에 legacy `full`로 처리한 세션이 있어도, 이후 `packet-only` 요청은 promotion mode가 다르므로 잘못 reuse하지 않습니다.
 
+실제 wiki apply는 page만 먼저 바꾸는 단순 순차 write가 아닙니다. ACS는 target page, `index.md`, `log.md`, promotion status, `applied.jsonl`을 하나의 recoverable transaction으로 처리합니다. 중간 오류는 snapshot으로 rollback하고, 프로세스가 중단되어 `prepared` manifest가 남으면 다음 apply 전에 복구합니다.
+
 ## 4. Obsidian human-facing wiki 구조
 
-현재 사용자 vault 권장 구조는 다음과 같습니다.
+새 vault는 고정 taxonomy folder를 만들지 않습니다. 기본 skeleton은 다음과 같습니다.
 
 ```text
 LLM Wiki/
-  Home.md
-  index.md              # harness lint compatibility catalog
-  SCHEMA.md
+  index.md              # category 기반으로 동적으로 갱신되는 MOC
   log.md
-  01 지식/
-  02 내 아이디어/
-  03 인물과 조직/
-  04 프로젝트/
-  05 계획/
-  06 원천 자료/
-  90 보관/
   _system/
     config.yaml
+    guides/
+      wiki-principles.md
+      ontology-seeds.md
     templates/
       ko/
       en/
@@ -114,18 +110,18 @@ LLM Wiki/
       llm-wiki.css
 ```
 
-폴더는 사람이 이해하기 쉬운 목적 기준으로 나누고, 기계 분류는 frontmatter로 보완합니다.
+기본 `placement_policy`는 `emergent-root`입니다. 자동 flexible write는 `<Title>.md`를 vault root에 만들고, page 의미는 frontmatter와 link graph가 담당합니다.
 
-| Folder | 용도 |
+| 요소 | 역할 |
 | --- | --- |
-| `01 지식/` | 처리된 지식, 개념, 비교, 패턴 |
-| `02 내 아이디어/` | 사용자 발상, 설계 직관, 가설 |
-| `03 인물과 조직/` | 사람, 회사, 연구소, 커뮤니티 |
-| `04 프로젝트/` | 프로젝트 hub, SPEC, 사용설명서, 아키텍처, 다음 진행 |
-| `05 계획/` | durable 계획과 roadmap |
-| `06 원천 자료/` | article/repo/paper/docs/video source card |
-| `90 보관/` | active graph에서 제외된 legacy/generated page |
-| `_system/` | config, templates, CSS |
+| `type` | page의 넓은 형태. 없으면 `knowledge` |
+| `category` | 선택적인 의미 grouping. 새 값도 허용되는 열린 vocabulary |
+| `sources` | claim과 page의 provenance |
+| wikilink | 이미 존재하는 durable page 사이의 graph edge |
+| `index.md` | category별로 동적 갱신되는 인간용 MOC |
+| `review_needed` | write를 막지 않고 사후 검토 필요성을 표시 |
+
+Category가 없는 page는 index의 `Unclassified / Review Needed` section에 들어갑니다. 기존 `category_registry`와 folder mapping은 `placement_policy: registry-folder`를 명시한 vault에서만 compatibility mode로 사용합니다.
 
 ## 5. 언어 설정법
 
@@ -141,6 +137,7 @@ wiki:
   filename_language: ko
   template_language: ko
   source_language_preserve: true
+  placement_policy: emergent-root
 ```
 
 | 필드 | 의미 |
@@ -150,20 +147,19 @@ wiki:
 | `filename_language` | 새 파일명을 어떤 언어 관례로 만들지 |
 | `template_language` | 기본 template 언어 |
 | `source_language_preserve` | 원천 자료의 원문 언어를 보존할지 |
+| `placement_policy` | 기본 자동 배치 정책. 새 vault는 `emergent-root` |
 
 ### 5.2 Page frontmatter
 
-모든 active human-facing page는 `lang`을 가져야 합니다.
+자동 생성 page는 candidate가 제안한 언어를 우선하고, 추론할 수 없으면 vault 기본 언어를 사용합니다. 수동 page도 `lang`을 두는 것이 좋습니다.
 
 ```yaml
 ---
 title: Context Packet
 lang: ko
 type: knowledge
-category: knowledge
 status: active
-tags: [context, hermes, recovery]
-cssclasses: [knowledge-page]
+sources: ["claim:packet-1-claim-1"]
 ---
 ```
 
@@ -174,10 +170,8 @@ cssclasses: [knowledge-page]
 title: Context Packet
 lang: en
 type: knowledge
-category: knowledge
 status: active
-tags: [context, hermes, recovery]
-cssclasses: [knowledge-page]
+sources: ["claim:packet-1-claim-1"]
 ---
 ```
 
@@ -201,7 +195,7 @@ _system/templates/en/project.md
 1. page type을 고릅니다. (`knowledge`, `idea`, `source`, `project`, `spec`, `plan`, `decision` 등)
 2. 언어를 고릅니다. (`ko` 또는 `en`)
 3. 필요하면 해당 template을 시작점으로 복사합니다.
-4. frontmatter의 `title`, `lang`, `type`, `category`, `status`, `tags`를 채웁니다.
+4. frontmatter의 `title`, `lang`, `type`, `status`, `sources`를 채웁니다. `category`와 `tags`는 필요할 때만 추가합니다.
 
 ### 5.4 언어 lint
 
@@ -217,6 +211,8 @@ cd '<PROJECT_ROOT>'
 
 - `Missing language`
 - `Unsupported language`
+
+언어와 권장 section 형태는 advisory입니다. `--fail-on-issues`를 실패시키는 blocking lint는 provenance, index discoverability, broken wikilink, unsafe/generated page shape, 내부 artifact graph 무결성에 집중합니다.
 
 언어와 섹션 구성 문제는 advisory로 보고됩니다. 자동화 gate를 막는 blocking issue는 provenance 누락, broken wikilink, index 누락, generated/session-id page, internal artifact graph 오류처럼 안전성과 graph 무결성에 직접 영향을 주는 항목입니다.
 
@@ -315,7 +311,9 @@ Windows Codex 앱 사용자는 [Windows 상세 가이드](./WINDOWS_CODEX_APP_SE
 
 `setup-codex`는 plugin asset, personal marketplace entry, Codex plugin cache를 복사한 뒤, 사용 가능한 Codex CLI가 있으면 `codex plugin add`로 `agent-context-substrate@personal`을 등록합니다. 파일 배치와 Codex registry 등록은 별개입니다. `doctor-codex`는 `codex_plugin_registered`를 보고하고, 앱에서 plugin이 not installed로 보이면 `codex plugin add agent-context-substrate@personal --json`을 실행하라고 안내합니다. plugin은 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
 
-설치된 `project_root`는 ACS artifact root이며, 모든 Codex thread가 ACS checkout 안에서 실행되어야 한다는 뜻이 아닙니다. 새 설치는 `allowed_workspace_roots`를 `%USERPROFILE%\Documents\Codex`로 설정해서 ordinary Codex workspaces가 Stop 때 finalize되도록 하고, artifact는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다. `doctor-codex`는 최근 hook event에서 이 guard가 workspace를 skip한 흔적이 있으면 `codex_hook_recent_workspace_skips`로 보고합니다.
+설치된 Stop hook은 core `codex_hook.py`를 불러오는 얇은 bootstrap입니다. Editable Python package의 core 변경은 보통 삭제/재설치 없이 반영됩니다. Bundled hook, skill, plugin metadata, marketplace/cache asset이 바뀐 경우에만 `setup-codex --yes`를 다시 실행하고, Codex가 요청하면 hook을 다시 review합니다.
+
+설치된 `project_root`는 ACS artifact root이며, 모든 Codex thread가 ACS checkout 안에서 실행되어야 한다는 뜻이 아닙니다. 새 설치는 `workspace_scope="all"`을 사용해 어느 Codex workspace에서든 Stop finalize를 수행하고, artifact는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다. 명시적인 경계가 필요한 설치만 `workspace_scope="restricted"`와 `allowed_workspace_roots`를 설정합니다.
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
@@ -624,7 +622,7 @@ standalone/Hermes packet workflow는 명시적으로 설정하지 않으면 Obsi
 - write-judge score threshold와 review-required fallback
 - promotion/wiki patch semantic lint
 - retrieval read-only 기본값
-- wiki patch dry-run 기본값
+- 수동 wiki patch의 dry-run 기본값과 자동 write의 judge/mechanical gate
 
 ## 15. 빠른 문제 해결
 

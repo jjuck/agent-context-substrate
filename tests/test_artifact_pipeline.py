@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -234,6 +236,67 @@ def test_apply_wiki_patch_file_marks_merged_candidates_and_registers_page(tmp_pa
     assert "## Codex Runtime Insight" in index_text
     assert "[[Agent Context Substrate]]" in index_text
     assert "Agent Context Substrate.md" in (wiki_root / "log.md").read_text(encoding="utf-8")
+
+
+def test_apply_wiki_patch_file_rolls_back_all_artifacts_when_registration_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    paths = HarnessPaths(project_root=project_root, wiki_root=wiki_root, home_dir=tmp_path)
+    wiki_root.mkdir(parents=True)
+    (wiki_root / "index.md").write_text("# Wiki Index\n", encoding="utf-8")
+    (wiki_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
+    candidate = PromotionCandidate(
+        candidate_id="packet-1-candidate-1",
+        packet_id="packet-1",
+        kind="wiki_update",
+        target_page="Transactional Wiki Apply",
+        reason="Wiki apply state must remain consistent.",
+        evidence=["claim:packet-1-claim-1"],
+        proposed_change="Wiki page, promotion, applied log, and index updates form one transaction.",
+        proposed_action="update_existing",
+        confidence=0.95,
+        status="pending",
+    )
+    promotions_dir = project_root / "data" / "promotions"
+    promotions_dir.mkdir(parents=True)
+    promotion_path = promotions_dir / "packet-1.json"
+    promotion_path.write_text(json.dumps([candidate.to_dict()], indent=2), encoding="utf-8")
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[candidate],
+        wiki_root=wiki_root,
+        write_mode="flexible",
+        judge_verdict="approved",
+    )
+    patch_dir = project_root / "data" / "wiki_patches"
+    patch_dir.mkdir(parents=True)
+    patch_path = patch_dir / "packet-1.json"
+    patch_path.write_text(json.dumps(proposal.to_dict(), indent=2), encoding="utf-8")
+
+    with monkeypatch.context() as patch_context:
+        patch_context.setattr(
+            "agent_context_substrate.artifact_pipeline.register_applied_wiki_patch_pages",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("registration failed")),
+        )
+        with pytest.raises(RuntimeError, match="registration failed"):
+            apply_wiki_patch_file(patch_file=patch_path, paths=paths, dry_run=False)
+
+    assert not (wiki_root / "Transactional Wiki Apply.md").exists()
+    assert json.loads(promotion_path.read_text(encoding="utf-8"))[0]["status"] == "pending"
+    assert not (patch_dir / "applied.jsonl").exists()
+    assert (wiki_root / "index.md").read_text(encoding="utf-8") == "# Wiki Index\n"
+    assert (wiki_root / "log.md").read_text(encoding="utf-8") == "# Wiki Log\n"
+    transaction_path = patch_dir / "transactions" / "packet-1-wiki-patch-proposal.json"
+    assert json.loads(transaction_path.read_text(encoding="utf-8"))["status"] == "rolled_back"
+
+    result = apply_wiki_patch_file(patch_file=patch_path, paths=paths, dry_run=False)
+
+    assert result.applied_patch_ids == ["packet-1-patch-1"]
+    assert (wiki_root / "Transactional Wiki Apply.md").exists()
+    assert json.loads(promotion_path.read_text(encoding="utf-8"))[0]["status"] == "applied"
 
 
 def test_apply_wiki_patch_file_registers_uncategorized_root_page(tmp_path: Path) -> None:

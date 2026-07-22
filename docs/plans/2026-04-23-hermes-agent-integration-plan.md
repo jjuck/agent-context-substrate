@@ -1,6 +1,6 @@
 # Hermes Agent Integration Plan
 
-> Current status document for integrating `agent-context-substrate` with Hermes Agent. This file is now a living status/roadmap document, not the original pre-implementation plan.
+> **Historical plan:** This document records the 2026-04-23 design, including a folder taxonomy that is no longer the default. See [`../PIPELINE.md`](../PIPELINE.md) and the [plan archive](./README.md) for current behavior.
 
 ## Goal
 

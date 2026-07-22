@@ -13,12 +13,13 @@ ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 a
 | Codex home | `%USERPROFILE%\.codex` | Codex 앱의 로컬 설정과 세션 저장소 |
 | Codex SQLite | `%USERPROFILE%\.codex\state_5.sqlite` | thread metadata. ACS가 읽기 전용으로 조회 |
 | Codex rollout JSONL | `%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl` | 실제 thread event. ACS가 읽기 전용으로 조회 |
+| 일반 Codex workspace 예시 | `%USERPROFILE%\Documents\Codex` | 보통의 작업 폴더 예시. ACS checkout을 포함할 필요는 없음 |
 | ACS project root | clone한 `agent-context-substrate` 폴더 | ACS 코드와 `data\...` artifact 저장 위치 |
 | ACS artifacts | `<PROJECT_ROOT>\data\...` | raw export, packet, recovery, ledger, retrieval index, wiki proposal, judge decision |
 | LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` default template | judge-approved patch가 반영되는 Obsidian LLM Wiki. `--wiki-root`를 명시하지 않으면 사용자별 절대 경로 대신 이 portable template을 저장합니다. |
 | Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | ACS Codex plugin asset |
 | Codex plugin registry | `codex plugin list`의 `agent-context-substrate@personal` | Codex 앱 등록 상태. UI에서는 `Personal` 또는 `Created by you` 아래에 보일 수 있음 |
-| Codex workspace root | `%USERPROFILE%\Documents\Codex` default template | 기본 `allowed_workspace_roots`. ordinary Codex workspaces는 ACS artifact 저장소 밖에 있어도 finalize 가능 |
+| Codex workspace scope | `all` | 기본 Stop hook 범위. 제한이 필요한 설치만 `allowed_workspace_roots`를 사용 |
 | Codex user hook | `%USERPROFILE%\.codex\hooks.json` | 선택 Stop hook fallback. 기본 설치에서는 만들지 않음 |
 
 ## 2. 준비물과 자동 설치 범위
@@ -78,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Chec
 
 `doctor-codex`가 `codex_plugin_registered=missing`을 보고하면 같은 `codex plugin add` 명령을 수동으로 실행하세요. plugin browser에서는 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
 
-`project_root`는 ACS artifact root이지 active Codex workspace allowlist가 아닙니다. 새 설치는 `allowed_workspace_roots`를 `%USERPROFILE%\Documents\Codex`로 설정해서 ordinary Codex workspaces가 Stop 때 finalize되도록 하고, 생성된 ACS artifact는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다.
+`project_root`는 ACS artifact root이지 active Codex workspace allowlist가 아닙니다. 새 설치는 `workspace_scope="all"`을 사용해 어느 Codex workspace에서든 Stop finalize를 수행하고, 생성된 ACS artifact는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다. 명시적인 경계가 필요한 설치만 `workspace_scope="restricted"`와 `allowed_workspace_roots`를 설정합니다.
 
 기본 Windows setup은 plugin에 포함된 Stop hook 하나만 설치합니다. Codex는 여러 hook source의 matching hook을 모두 실행하므로, 기본 설치에서 `%USERPROFILE%\.codex\hooks.json` fallback까지 같이 만들면 Stop hook이 중복 실행될 수 있습니다. plugin hook을 쓸 수 없는 런타임에서만 명시적으로 fallback을 켭니다.
 
@@ -96,7 +97,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Chec
 
 doctor 출력에는 `codex_plugin_registered`가 포함됩니다. 이 값이 missing이면 plugin 파일은 존재하지만 Codex registry에서는 아직 `agent-context-substrate@personal`이 installed 상태가 아니라는 뜻입니다.
 
-doctor 출력에는 `codex_hook_recent_workspace_skips`도 포함됩니다. 여기에 warning이 뜨면 최근 Stop hook이 `cwd outside configured project_root` 또는 `cwd outside configured allowed_workspace_roots` 같은 workspace guard 이유로 skip되었다는 뜻입니다. 설치된 plugin `local_config.json`의 `allowed_workspace_roots`를 확인하세요.
+doctor 출력에는 `codex_hook_recent_workspace_skips`도 포함됩니다. restricted 모드에서 warning이 뜨면 최근 Stop hook의 cwd가 `allowed_workspace_roots` 밖이었다는 뜻입니다. 설치된 plugin `local_config.json`의 `workspace_scope`와 roots를 확인하세요.
 
 사용자-facing 경로 확인:
 
@@ -114,7 +115,8 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 
 ```json
 {
-  "allowed_workspace_roots": ["%USERPROFILE%\\Documents\\Codex"],
+  "workspace_scope": "all",
+  "allowed_workspace_roots": [],
   "summary_mode": "auto",
   "wiki_auto_mode": "apply-flexible",
   "wiki_write_judge_mode": "auto",
@@ -122,7 +124,7 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 }
 ```
 
-이 설정에서 Stop hook은 `%USERPROFILE%\Documents\Codex` 아래 ordinary Codex workspaces를 허용하고, 먼저 `codex exec`를 시도하며, CLI/timeout/JSON/lint 실패 시 heuristic summary로 fallback합니다. wiki write는 flexible patch를 계획한 뒤 write judge에게 LLM Wiki 반영 여부를 맡깁니다. judge 경로를 사용할 수 없거나 점수가 낮으면 Obsidian을 쓰지 않고 review-required proposal과 decision artifact를 남깁니다.
+이 설정에서 Stop hook은 어느 active Codex workspace에서든 동작하고, 격리된 `codex exec`를 먼저 시도하며, CLI/timeout/JSON/lint 실패 시 heuristic summary로 fallback합니다. wiki write는 flexible patch를 계획한 뒤 write judge에게 LLM Wiki 반영 여부를 맡깁니다. judge 경로를 사용할 수 없거나 점수가 낮으면 Obsidian을 쓰지 않고 review-required proposal과 decision artifact를 남깁니다.
 
 `auto` 경로는 `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks-disabled, inline bounded JSON input으로 실행한 뒤 반환된 strict JSON을 검증합니다.
 
@@ -211,9 +213,11 @@ Hooks need review
 
 Hook 파일이나 명령이 바뀌면 Codex가 다시 review 대상으로 표시할 수 있습니다. installer는 이 trust를 자동 승인하지 않습니다.
 
+설치된 hook script는 editable ACS Python package를 호출하는 얇은 bootstrap입니다. Core Python 변경은 보통 기존 editable install에 바로 반영됩니다. Bundled hook, skill, plugin metadata, marketplace/cache asset을 바꾼 경우에는 `setup-codex --yes`를 다시 실행해야 하며, 이때 Codex가 hook review를 다시 요구할 수 있습니다.
+
 ## 6. Obsidian 안내
 
-ACS는 `%USERPROFILE%\Documents\LLM Wiki` default template에서 런타임에 해석된 effective wiki 폴더 구조를 만들 수 있지만, Obsidian 앱을 자동으로 열어 vault로 등록하지는 않습니다.
+ACS는 `%USERPROFILE%\Documents\LLM Wiki` default template에서 런타임에 해석된 effective root에 최소 vault skeleton을 만들 수 있지만, Obsidian 앱을 자동으로 열어 vault로 등록하지는 않습니다.
 
 Obsidian을 설치했다면 Obsidian에서 `Open folder as vault`를 선택하고 아래 폴더를 엽니다.
 
@@ -221,7 +225,7 @@ Obsidian을 설치했다면 Obsidian에서 `Open folder as vault`를 선택하�
 %USERPROFILE%\Documents\LLM Wiki
 ```
 
-기본 자동 처리는 `apply-flexible` + `wiki_write_judge_mode=auto`입니다. Codex thread 종료 때 `<PROJECT_ROOT>\data\...` 아래에 context packet, recovery, ledger, retrieval artifact, wiki proposal, judge decision을 남기고, write judge가 승인하고 patch safety check를 통과할 때만 LLM Wiki Markdown을 갱신합니다.
+기본 자동 처리는 `apply-flexible` + `wiki_write_judge_mode=auto`입니다. 새 flexible page는 root-level `<Title>.md`에 두고 optional category/type metadata, sources, link, dynamic index로 의미를 구성합니다. Codex thread 종료 때 `<PROJECT_ROOT>\data\...` 아래에 context packet, recovery, ledger, retrieval artifact, wiki proposal, judge decision을 남기며, write judge 승인과 patch safety check를 통과한 경우에만 page, index, log, promotion state, applied record를 하나의 복구 가능한 transaction으로 갱신합니다.
 
 ## 7. 실제 Stop hook smoke test
 
@@ -276,7 +280,7 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - Codex 원본 저장소는 %USERPROFILE%\.codex 아래의 state_5.sqlite와 sessions\...\rollout-*.jsonl임을 사용자에게 알려줘.
 - LLM Wiki 기본값은 %USERPROFILE%\Documents\LLM Wiki portable template으로 설명하고, 런타임 effective path를 설치 전에 사용자에게 확인해.
 - ACS artifact는 clone한 agent-context-substrate 프로젝트의 data\... 아래에 저장된다고 알려줘.
-- project_root는 ACS artifact root이고, allowed_workspace_roots 기본값은 %USERPROFILE%\Documents\Codex라서 ordinary Codex workspaces가 Stop 때 finalize될 수 있다고 설명해.
+- project_root는 ACS artifact root이고, workspace_scope 기본값은 all이라서 어느 Codex workspace에서든 Stop finalize가 가능하다고 설명해.
 - scripts/setup-codex-windows.ps1를 기본 설치 경로로 사용해.
 - 새 설치 기본값은 summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, wiki_auto_min_score=0.85라고 설명해.
 - LLM Wiki 내용은 사용자가 매번 wiki write를 요청할 때만 쌓이는 것이 아니라, write judge가 evidence-backed flexible patch를 승인할 때 반영된다고 설명해.
@@ -293,7 +297,7 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - `기본 권한`, `자동검토`, `전체권한`은 Codex agent의 작업 승인/샌드박스 설정입니다. Hook trust와는 별개입니다.
 - ACS는 Codex SQLite와 rollout JSONL을 수정하지 않습니다.
 - 새 Codex 설치의 기본값은 judge-gated `apply-flexible`입니다. judge 실패나 낮은 confidence는 LLM Wiki를 쓰지 않고 review-required artifact로 남깁니다.
-- `project_root`는 ACS artifact root입니다. 유일한 Codex workspace root로 취급하지 말고, `%USERPROFILE%\Documents\Codex` 밖의 작업 폴더는 `allowed_workspace_roots`에 추가하세요.
+- `project_root`는 ACS artifact root입니다. workspace 경계로 취급하지 말고, 명시적인 제한이 필요한 경우에만 restricted `workspace_scope`와 `allowed_workspace_roots`를 사용하세요.
 - `doctor-codex`는 설치 상태를 점검하고, `diagnose-codex --fix`는 안전한 ACS 로컬 파일만 복구합니다.
 - `--user-hook-fallback`은 선택 경로입니다. plugin hook이 정상 동작하는 환경에서는 같이 켜지 않는 것이 중복 Stop hook을 피하는 기본값입니다.
 - Obsidian은 선택 의존성입니다. ACS는 LLM Wiki 폴더를 만들지만 Obsidian 앱/vault 등록은 사용자가 직접 확인해야 합니다.

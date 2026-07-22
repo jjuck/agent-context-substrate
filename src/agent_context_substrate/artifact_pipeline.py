@@ -30,6 +30,7 @@ from .wiki_patches import (
 )
 from .wiki_registration import register_promoted_page
 from .wiki_config import UNCLASSIFIED_REVIEW_SECTION, load_wiki_config
+from .wiki_apply_transaction import WikiApplyTransaction
 
 
 def load_micro_summary_v2(path: Path) -> MicroSummaryV2:
@@ -190,12 +191,21 @@ def apply_wiki_patch_file(
 ) -> WikiPatchApplyResult:
     proposal = load_wiki_patch_proposal(patch_file)
     effective_wiki_root = wiki_root or paths.wiki_root
-    result = apply_wiki_patch_proposal(
-        proposal=proposal,
-        wiki_root=effective_wiki_root,
-        dry_run=dry_run,
-    )
-    if not dry_run:
+    if dry_run:
+        return apply_wiki_patch_proposal(
+            proposal=proposal,
+            wiki_root=effective_wiki_root,
+            dry_run=True,
+        )
+
+    def apply_pages() -> WikiPatchApplyResult:
+        return apply_wiki_patch_proposal(
+            proposal=proposal,
+            wiki_root=effective_wiki_root,
+            dry_run=False,
+        )
+
+    def commit_artifacts(result: WikiPatchApplyResult) -> None:
         append_applied_wiki_patch_log(paths=paths, proposal=proposal, result=result)
         mark_applied_promotion_candidates(paths=paths, proposal=proposal, result=result)
         register_applied_wiki_patch_pages(
@@ -204,7 +214,9 @@ def apply_wiki_patch_file(
             proposal=proposal,
             result=result,
         )
-    return result
+
+    transaction = WikiApplyTransaction(paths=paths, wiki_root=Path(effective_wiki_root), proposal=proposal)
+    return transaction.execute(apply_pages=apply_pages, commit_artifacts=commit_artifacts)
 
 
 def append_applied_wiki_patch_log(

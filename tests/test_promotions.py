@@ -46,9 +46,54 @@ def test_propose_promotion_candidates_from_claim_atoms() -> None:
             proposed_action="update_existing",
             confidence=0.75,
             status="pending",
+            language="en",
         )
     ]
     assert PromotionCandidate.from_dict(candidates[0].to_dict()) == candidates[0]
+
+
+def test_promotion_candidate_skips_generic_context_packet_subject() -> None:
+    claim = _claim()
+    claim = ClaimAtom(
+        **{
+            **claim.to_dict(),
+            "subjects": ["context-packet", "summarization"],
+        }
+    )
+
+    candidates = propose_promotion_candidates(packet_id="packet-1", claims=[claim])
+
+    assert candidates[0].target_page == "summarization"
+
+
+def test_promotion_candidate_infers_korean_language_without_forcing_category() -> None:
+    claim = ClaimAtom(
+        **{
+            **_claim().to_dict(),
+            "text": "공통 finalize 경계는 typed SessionBundle을 사용한다.",
+            "subjects": ["Finalize Boundary"],
+        }
+    )
+
+    candidate = propose_promotion_candidates(packet_id="packet-1", claims=[claim])[0]
+
+    assert candidate.language == "ko"
+    assert candidate.category is None
+    assert candidate.target_page == "Finalize Boundary"
+
+
+def test_promotion_candidate_leaves_all_generic_subjects_for_review() -> None:
+    claim = ClaimAtom(
+        **{
+            **_claim().to_dict(),
+            "subjects": ["context-packet", "session", "summary"],
+        }
+    )
+
+    candidate = propose_promotion_candidates(packet_id="packet-1", claims=[claim])[0]
+
+    assert candidate.target_page == ""
+    assert candidate.proposed_action == "review_required"
 
 
 def test_promotion_candidate_loads_legacy_json_without_optional_fields() -> None:

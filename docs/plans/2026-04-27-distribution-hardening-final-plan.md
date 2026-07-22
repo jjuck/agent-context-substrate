@@ -1,5 +1,7 @@
 # Agent Context Substrate Distribution Hardening Implementation Plan
 
+> **Historical plan:** This document records the 2026-04-27 release design. See [`../OPERATIONS.md`](../OPERATIONS.md), [`../RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md), and the [plan archive](./README.md) for current behavior.
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
 **Goal:** Turn the current user-local alpha into a distributable Hermes Agent extension that a fresh user can install, initialize, attach to Hermes, and verify without Korean/Windows path assumptions.

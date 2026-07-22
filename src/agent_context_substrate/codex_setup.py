@@ -4,12 +4,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import json
-import os
 import subprocess
 import shutil
 import sys
 import tomllib
 
+from .codex_cli import (
+    classify_codex_cli_path,
+    default_local_app_data,
+    default_windows_apps_dir,
+    detect_codex_cli,
+)
+from .codex_exec import CodexExecRuntime
 from .codex_source import (
     codex_hook_support_status,
     codex_installed_hook_status,
@@ -26,7 +32,6 @@ from .paths import HarnessPaths
 
 CODEX_PLUGIN_NAME = "agent-context-substrate"
 CODEX_PERSONAL_PLUGIN_ID = f"{CODEX_PLUGIN_NAME}@personal"
-DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
 STATUS_OK = "ok"
 STATUS_WARN = "warn"
 STATUS_MISSING = "missing"
@@ -43,38 +48,6 @@ REQUIRED_CODEX_CHECKS = {
     "hook_primary_installed",
     "data_dir_writable",
 }
-
-
-@dataclass(frozen=True)
-class CodexCliDetection:
-    status: str
-    path_kind: str
-    path_codex: Path | None = None
-    path_codex_candidates: list[Path] = field(default_factory=list)
-    standalone_cli_path: Path | None = None
-    direct_app_cli_path: Path | None = None
-    app_cli_path: Path | None = None
-    versioned_app_cli_candidates: list[Path] = field(default_factory=list)
-    windows_apps_candidates: list[Path] = field(default_factory=list)
-    recommended_path: Path | None = None
-    npm_precedes_openai_cli: bool = False
-    messages: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "path_kind": self.path_kind,
-            "path_codex": str(self.path_codex) if self.path_codex is not None else None,
-            "path_codex_candidates": [str(path) for path in self.path_codex_candidates],
-            "standalone_cli_path": str(self.standalone_cli_path) if self.standalone_cli_path is not None else None,
-            "direct_app_cli_path": str(self.direct_app_cli_path) if self.direct_app_cli_path is not None else None,
-            "app_cli_path": str(self.app_cli_path) if self.app_cli_path is not None else None,
-            "versioned_app_cli_candidates": [str(path) for path in self.versioned_app_cli_candidates],
-            "windows_apps_candidates": [str(path) for path in self.windows_apps_candidates],
-            "recommended_path": str(self.recommended_path) if self.recommended_path is not None else None,
-            "npm_precedes_openai_cli": self.npm_precedes_openai_cli,
-            "messages": list(self.messages),
-        }
 
 
 @dataclass(frozen=True)
@@ -211,122 +184,6 @@ def codex_config_paths(
         "codex_plugin": codex_home_path / "plugins" / CODEX_PLUGIN_NAME,
         "codex_user_hook": codex_home_path / "hooks.json",
     }
-
-
-def detect_codex_cli(
-    *,
-    path_entries: list[Path | str] | None = None,
-    local_app_data: Path | str | None = None,
-    windows_apps: Path | str | None = None,
-) -> CodexCliDetection:
-    local_app_data_path = Path(local_app_data).expanduser() if local_app_data is not None else _default_local_app_data()
-    windows_apps_path = Path(windows_apps).expanduser() if windows_apps is not None else _default_windows_apps_dir()
-    path_codex_candidates = _find_all_codex_on_path(path_entries=path_entries)
-    path_codex = path_codex_candidates[0] if path_codex_candidates else None
-    standalone_cli_path = _standalone_codex_cli_candidate(local_app_data=local_app_data_path)
-    direct_app_cli_path = _direct_codex_app_cli_candidate(local_app_data=local_app_data_path)
-    versioned_app_cli_candidates = _versioned_codex_app_cli_candidates(local_app_data=local_app_data_path)
-    windows_apps_candidates = _windows_apps_codex_cli_candidates(windows_apps=windows_apps_path)
-    app_cli_path = _preferred_codex_app_cli_candidate(
-        standalone_cli_path=standalone_cli_path,
-        direct_app_cli_path=direct_app_cli_path,
-        versioned_app_cli_candidates=versioned_app_cli_candidates,
-        windows_apps_candidates=windows_apps_candidates,
-    )
-    path_kind = _classify_codex_cli_path(
-        path_codex,
-        local_app_data=local_app_data_path,
-        windows_apps=windows_apps_path,
-    )
-    npm_precedes_openai_cli = _npm_precedes_openai_cli(
-        path_codex_candidates,
-        local_app_data=local_app_data_path,
-        windows_apps=windows_apps_path,
-    )
-    messages: list[str] = []
-
-    if path_codex is not None:
-        messages.append(f"Codex CLI on PATH: {path_codex}")
-    else:
-        messages.append("Codex CLI was not found on PATH.")
-    if path_codex_candidates:
-        messages.append("All PATH codex candidates: " + "; ".join(str(path) for path in path_codex_candidates))
-
-    if standalone_cli_path is not None:
-        messages.append(f"Codex standalone CLI candidate: {standalone_cli_path}")
-    else:
-        messages.append("Codex standalone CLI candidate was not found under LOCALAPPDATA Programs OpenAI Codex paths.")
-    if direct_app_cli_path is not None:
-        messages.append(f"Codex direct app CLI candidate: {direct_app_cli_path}")
-    else:
-        messages.append("Codex direct app CLI candidate was not found under LOCALAPPDATA OpenAI Codex paths.")
-    if app_cli_path is not None:
-        messages.append(f"Codex recommended direct CLI candidate: {app_cli_path}")
-    else:
-        messages.append("Codex app CLI candidate was not found under LOCALAPPDATA OpenAI Codex paths.")
-    if versioned_app_cli_candidates:
-        messages.append(
-            "Versioned Codex app CLI candidates: "
-            + "; ".join(str(path) for path in versioned_app_cli_candidates)
-        )
-    else:
-        messages.append("Versioned Codex app CLI candidates were not found under LOCALAPPDATA OpenAI Codex bin subdirectories.")
-    if windows_apps_candidates:
-        messages.append("WindowsApps Codex CLI candidates: " + "; ".join(str(path) for path in windows_apps_candidates))
-
-    if path_kind == "npm-shim":
-        messages.append("PATH codex appears to be an npm shim; prefer the Codex app CLI direct path for Windows hook review.")
-    elif path_kind in {"standalone-cli", "direct-app-cli", "versioned-app-cli", "windowsapps-app-bundle"}:
-        messages.append(f"PATH codex appears to be a direct Codex CLI ({path_kind}).")
-    elif path_kind == "other":
-        messages.append("PATH codex does not look like the Windows Codex app CLI; verify it can open Codex /hooks.")
-    if npm_precedes_openai_cli:
-        messages.append("An npm/global shim appears before a direct OpenAI Codex CLI on PATH.")
-
-    if app_cli_path is not None:
-        return CodexCliDetection(
-            status=STATUS_OK,
-            path_kind=path_kind,
-            path_codex=path_codex,
-            path_codex_candidates=path_codex_candidates,
-            standalone_cli_path=standalone_cli_path,
-            direct_app_cli_path=direct_app_cli_path,
-            app_cli_path=app_cli_path,
-            versioned_app_cli_candidates=versioned_app_cli_candidates,
-            windows_apps_candidates=windows_apps_candidates,
-            recommended_path=app_cli_path,
-            npm_precedes_openai_cli=npm_precedes_openai_cli,
-            messages=messages,
-        )
-    if path_codex is not None and path_kind != "npm-shim":
-        return CodexCliDetection(
-            status=STATUS_OK,
-            path_kind=path_kind,
-            path_codex=path_codex,
-            path_codex_candidates=path_codex_candidates,
-            standalone_cli_path=standalone_cli_path,
-            direct_app_cli_path=direct_app_cli_path,
-            app_cli_path=None,
-            versioned_app_cli_candidates=versioned_app_cli_candidates,
-            windows_apps_candidates=windows_apps_candidates,
-            recommended_path=path_codex,
-            npm_precedes_openai_cli=npm_precedes_openai_cli,
-            messages=messages,
-        )
-    return CodexCliDetection(
-        status=STATUS_WARN,
-        path_kind=path_kind,
-        path_codex=path_codex,
-        path_codex_candidates=path_codex_candidates,
-        standalone_cli_path=standalone_cli_path,
-        direct_app_cli_path=direct_app_cli_path,
-        app_cli_path=None,
-        versioned_app_cli_candidates=versioned_app_cli_candidates,
-        windows_apps_candidates=windows_apps_candidates,
-        recommended_path=None,
-        npm_precedes_openai_cli=npm_precedes_openai_cli,
-        messages=messages,
-    )
 
 
 def setup_codex(
@@ -522,7 +379,10 @@ def doctor_codex(
     selected_codex_cli_kind = _selected_codex_cli_kind(selected_codex_cli)
     plugin_registry = _inspect_codex_plugin_registry(selected_codex_cli=selected_codex_cli)
     checks["codex_plugin_registered"] = plugin_registry.status
-    workspace_skips = _inspect_recent_workspace_guard_skips(project_root=project_root_path)
+    workspace_skips = _inspect_recent_workspace_guard_skips(
+        project_root=project_root_path,
+        local_config=local_config,
+    )
     checks["codex_hook_recent_workspace_skips"] = workspace_skips.status
     checks["codex_summary_cli_config"] = _summary_cli_config_status(
         summary_mode=summary_mode,
@@ -649,7 +509,8 @@ def default_codex_local_config(*, codex_home: Path | str | None, project_root: P
         "python_executable": sys.executable,
         "python_path_entries": [str(project_root_path / "src")],
         "hook_event_log_path": str(project_root_path / "data" / "index" / "codex_hook_events.jsonl"),
-        "allowed_workspace_roots": [DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE],
+        "workspace_scope": "all",
+        "allowed_workspace_roots": [],
         "trigger_strategy": "hook-primary",
         "watcher_fallback": True,
         "hook_timeout_seconds": 110,
@@ -734,10 +595,10 @@ def _selected_codex_cli_kind(command: str) -> str:
     else:
         found = shutil.which(command)
         resolved = Path(found) if found else None
-    return _classify_codex_cli_path(
+    return classify_codex_cli_path(
         resolved,
-        local_app_data=_default_local_app_data(),
-        windows_apps=_default_windows_apps_dir(),
+        local_app_data=default_local_app_data(),
+        windows_apps=default_windows_apps_dir(),
     )
 
 
@@ -755,37 +616,17 @@ def _codex_summary_smoke_status(
     if not selected_codex_cli or not _command_exists(selected_codex_cli):
         return STATUS_WARN
     try:
-        result = subprocess.run(
-            [
-                selected_codex_cli,
-                "exec",
-                "-C",
-                str(project_root),
-                "--sandbox",
-                "read-only",
-                "--skip-git-repo-check",
-                "-c",
-                "approval_policy=never",
-                "-c",
-                "service_tier=fast",
-                "-c",
-                "model_reasoning_effort=low",
-                "-c",
-                "features.hooks=false",
-                "Return exactly ACS_CODEX_SUMMARY_SMOKE_OK.",
-            ],
-            cwd=str(project_root),
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            capture_output=True,
-            timeout=45,
-            check=False,
-            shell=False,
+        stdout = CodexExecRuntime(
+            codex_command=selected_codex_cli,
+            project_root=project_root,
+            timeout_seconds=45,
+        ).run_text(
+            prompt="Return exactly ACS_CODEX_SUMMARY_SMOKE_OK.",
+            error_label="codex summary smoke",
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, RuntimeError):
         return STATUS_WARN
-    return STATUS_OK if result.returncode == 0 and "ACS_CODEX_SUMMARY_SMOKE_OK" in result.stdout else STATUS_WARN
+    return STATUS_OK if "ACS_CODEX_SUMMARY_SMOKE_OK" in stdout else STATUS_WARN
 
 
 def _register_codex_personal_plugin(
@@ -926,7 +767,13 @@ def _codex_personal_plugin_line(output: str) -> str | None:
     return None
 
 
-def _inspect_recent_workspace_guard_skips(*, project_root: Path) -> CodexHookWorkspaceSkipCheck:
+def _inspect_recent_workspace_guard_skips(
+    *,
+    project_root: Path,
+    local_config: dict[str, Any] | None = None,
+) -> CodexHookWorkspaceSkipCheck:
+    if _workspace_scope_is_all(local_config or {}):
+        return CodexHookWorkspaceSkipCheck(status=STATUS_OK)
     event_log_path = project_root / "data" / "index" / "codex_hook_events.jsonl"
     if not event_log_path.exists():
         return CodexHookWorkspaceSkipCheck(status=STATUS_OK)
@@ -959,10 +806,22 @@ def _inspect_recent_workspace_guard_skips(*, project_root: Path) -> CodexHookWor
             (
                 f"Codex hook workspace guard: {len(matching_records)} recent Stop hook skip(s) found; "
                 f"latest detail={latest.get('detail')}, cwd={latest.get('cwd')}. "
-                f"Review allowed_workspace_roots in local_config.json; default is {DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE}."
+                "Review workspace_scope and allowed_workspace_roots in local_config.json."
             )
         ],
     )
+
+
+def _workspace_scope_is_all(config: dict[str, Any]) -> bool:
+    scope = str(config.get("workspace_scope") or "").strip().lower()
+    if scope == "all":
+        return True
+    if scope == "restricted":
+        return False
+    configured = config.get("allowed_workspace_roots")
+    if isinstance(configured, list):
+        return not any(str(value).strip() for value in configured)
+    return not (isinstance(configured, str) and configured.strip())
 
 
 def _command_exists(command: str) -> bool:
@@ -985,139 +844,6 @@ def _codex_service_tier_value(config_path: Path) -> str | None:
         return None
     value = payload.get("service_tier") if isinstance(payload, dict) else None
     return str(value).strip().lower() if value is not None else None
-
-
-def _default_local_app_data() -> Path | None:
-    value = os.environ.get("LOCALAPPDATA")
-    return Path(value).expanduser() if value else None
-
-
-def _default_windows_apps_dir() -> Path | None:
-    local_app_data = _default_local_app_data()
-    if local_app_data is None:
-        return None
-    return local_app_data / "Microsoft" / "WindowsApps"
-
-
-def _find_all_codex_on_path(*, path_entries: list[Path | str] | None = None) -> list[Path]:
-    entries = path_entries
-    if entries is None:
-        entries = [Path(entry) for entry in os.environ.get("PATH", "").split(os.pathsep) if entry]
-    candidate_names = ["codex.exe", "codex.cmd", "codex.bat", "codex.ps1", "codex"]
-    candidates: list[Path] = []
-    for entry in entries:
-        directory = Path(entry).expanduser()
-        for name in candidate_names:
-            candidate = directory / name
-            if candidate.exists():
-                candidates.append(candidate)
-                break
-    return candidates
-
-
-def _standalone_codex_cli_candidate(*, local_app_data: Path | None) -> Path | None:
-    if local_app_data is not None:
-        candidate = local_app_data / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _direct_codex_app_cli_candidate(*, local_app_data: Path | None) -> Path | None:
-    if local_app_data is not None:
-        candidate = local_app_data / "OpenAI" / "Codex" / "bin" / "codex.exe"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _versioned_codex_app_cli_candidates(*, local_app_data: Path | None) -> list[Path]:
-    if local_app_data is None:
-        return []
-    codex_bin = local_app_data / "OpenAI" / "Codex" / "bin"
-    candidates = [path for path in codex_bin.glob("*/codex.exe") if path.exists()]
-    return sorted(candidates, key=_codex_candidate_sort_key, reverse=True)
-
-
-def _windows_apps_codex_cli_candidates(*, windows_apps: Path | None) -> list[Path]:
-    if windows_apps is None:
-        return []
-    candidates = [path for path in sorted(windows_apps.glob("OpenAI.Codex_*/codex.exe")) if path.exists()]
-    generic_candidate = windows_apps / "codex.exe"
-    if generic_candidate.exists():
-        candidates.append(generic_candidate)
-    return candidates
-
-
-def _codex_candidate_sort_key(path: Path) -> tuple[float, str]:
-    try:
-        mtime = path.stat().st_mtime
-    except OSError:
-        mtime = 0.0
-    return (mtime, path.as_posix().lower())
-
-
-def _preferred_codex_app_cli_candidate(
-    *,
-    standalone_cli_path: Path | None,
-    direct_app_cli_path: Path | None,
-    versioned_app_cli_candidates: list[Path],
-    windows_apps_candidates: list[Path],
-) -> Path | None:
-    candidates: list[Path] = []
-    if standalone_cli_path is not None:
-        candidates.append(standalone_cli_path)
-    if direct_app_cli_path is not None:
-        candidates.append(direct_app_cli_path)
-    candidates.extend(versioned_app_cli_candidates)
-    candidates.extend(windows_apps_candidates)
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _classify_codex_cli_path(path: Path | None, *, local_app_data: Path | None, windows_apps: Path | None) -> str:
-    if path is None:
-        return "missing"
-    normalized = path.as_posix().lower()
-    if "/appdata/roaming/npm/" in normalized or normalized.endswith("/npm/codex.ps1") or normalized.endswith("/npm/codex.cmd"):
-        return "npm-shim"
-    if local_app_data is not None:
-        try:
-            relative = path.resolve(strict=False).relative_to(local_app_data.resolve(strict=False))
-        except ValueError:
-            relative = None
-        if relative is not None:
-            relative_text = relative.as_posix().lower()
-            if relative_text == "programs/openai/codex/bin/codex.exe":
-                return "standalone-cli"
-            if relative_text == "openai/codex/bin/codex.exe":
-                return "direct-app-cli"
-            if relative_text.startswith("openai/codex/bin/") and path.name.lower() == "codex.exe":
-                return "versioned-app-cli"
-            if relative_text.startswith("microsoft/windowsapps/openai.codex_") and path.name.lower() == "codex.exe":
-                return "windowsapps-app-bundle"
-    if windows_apps is not None:
-        try:
-            path.resolve(strict=False).relative_to(windows_apps.resolve(strict=False))
-        except ValueError:
-            pass
-        else:
-            return "windowsapps-app-bundle"
-    return "other"
-
-
-def _npm_precedes_openai_cli(paths: list[Path], *, local_app_data: Path | None, windows_apps: Path | None) -> bool:
-    npm_index: int | None = None
-    openai_index: int | None = None
-    for index, path in enumerate(paths):
-        path_kind = _classify_codex_cli_path(path, local_app_data=local_app_data, windows_apps=windows_apps)
-        if path_kind == "npm-shim" and npm_index is None:
-            npm_index = index
-        if path_kind in {"standalone-cli", "direct-app-cli", "versioned-app-cli", "windowsapps-app-bundle"} and openai_index is None:
-            openai_index = index
-    return npm_index is not None and openai_index is not None and npm_index < openai_index
 
 
 def _hooks_json_has_acs_stop_hook(hooks_path: Path) -> bool:
@@ -1222,10 +948,7 @@ def _diagnostic_actions(report: CodexDoctorReport) -> list[str]:
     if checks.get("codex_plugin_registered") == STATUS_MISSING:
         actions.append(f"run codex plugin add {CODEX_PERSONAL_PLUGIN_ID} to register the personal ACS plugin")
     if checks.get("codex_hook_recent_workspace_skips") == STATUS_WARN:
-        actions.append(
-            "review allowed_workspace_roots in the installed plugin local_config.json; "
-            f"default Codex workspaces should be covered by {DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE}"
-        )
+        actions.append("review workspace_scope and allowed_workspace_roots in the installed plugin local_config.json")
     if checks.get("codex_cli_available") == STATUS_WARN:
         actions.append("install or locate the Windows Codex app CLI; if PATH codex is an npm shim, use the direct app CLI path")
     if checks.get("codex_summary_cli_config") == STATUS_WARN:

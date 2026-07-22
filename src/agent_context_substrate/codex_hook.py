@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 import json
@@ -13,7 +14,6 @@ from .codex_wiki_root import resolve_codex_wiki_root
 
 
 DEFAULT_HOOK_TIMEOUT_SECONDS = 110
-DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
 _PERCENT_ENV_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
 _DOLLAR_ENV_PATTERN = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 
@@ -48,6 +48,7 @@ def build_codex_stop_finalize_decision(
     payload: dict[str, Any],
     plugin_root: Path | str,
     python_executable: str = sys.executable,
+    config: dict[str, Any] | None = None,
 ) -> CodexStopFinalizeDecision:
     plugin_root_path = Path(plugin_root).expanduser()
     if str(payload.get("hook_event_name") or "") != "Stop":
@@ -57,10 +58,8 @@ def build_codex_stop_finalize_decision(
     if not thread_id:
         return CodexStopFinalizeDecision(should_finalize=False, skip_reason="missing session_id")
 
-    config_path = plugin_root_path / "local_config.json"
-    try:
-        config = json.loads(config_path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
+    config = dict(config) if config is not None else _load_config(plugin_root_path)
+    if not config:
         return CodexStopFinalizeDecision(should_finalize=False, skip_reason="missing or invalid local_config.json")
 
     project_root_value = config.get("project_root")
@@ -74,8 +73,7 @@ def build_codex_stop_finalize_decision(
     wiki_root = wiki_root_resolution.path
     cwd_value = payload.get("cwd") or project_root
     cwd = _resolve_non_strict(Path(str(cwd_value)).expanduser())
-    allowed_workspace_roots = _allowed_workspace_roots(config, project_root=project_root)
-    if not any(_is_path_relative_to(cwd, root) for root in allowed_workspace_roots):
+    if not _workspace_is_allowed(config, cwd=cwd, project_root=project_root):
         return CodexStopFinalizeDecision(
             should_finalize=False,
             skip_reason="cwd outside configured allowed_workspace_roots",
@@ -117,37 +115,66 @@ def run_codex_stop_finalize_hook(
     python_executable: str = sys.executable,
     runner: Callable[..., CodexHookCommandRunnerResult] | None = None,
 ) -> dict[str, Any]:
+    plugin_root_path = Path(plugin_root).expanduser()
+    config = _load_config(plugin_root_path)
     decision = build_codex_stop_finalize_decision(
         payload=payload,
-        plugin_root=plugin_root,
+        plugin_root=plugin_root_path,
         python_executable=python_executable,
+        config=config,
     )
     if not decision.should_finalize:
+        _append_hook_event(config, payload=payload, status="skipped", detail=decision.skip_reason)
         return {"continue": True}
 
-    run = runner or _run_command
     try:
-        result = run(
-            decision.command,
-            cwd=decision.cwd or Path.cwd(),
-            timeout_seconds=decision.timeout_seconds,
-        )
+        if runner is None:
+            result = _run_command(
+                decision.command,
+                cwd=decision.cwd or Path.cwd(),
+                timeout_seconds=decision.timeout_seconds,
+                env=_subprocess_environment(config, project_root=decision.project_root or Path.cwd()),
+            )
+        else:
+            result = runner(
+                decision.command,
+                cwd=decision.cwd or Path.cwd(),
+                timeout_seconds=decision.timeout_seconds,
+            )
     except Exception as exc:
-        return _non_blocking_failure(f"ACS Codex finalize hook failed: {exc}")
+        message = f"ACS Codex finalize hook failed: {exc}"
+        _append_hook_event(config, payload=payload, status="failed", detail=message)
+        return _non_blocking_failure(message)
 
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
-        return _non_blocking_failure(f"ACS Codex finalize hook failed: {detail}")
+        message = f"ACS Codex finalize hook failed: {detail}"
+        _append_hook_event(config, payload=payload, status="failed", detail=message)
+        return _non_blocking_failure(message)
     _mark_watcher_state_processed(decision)
+    wiki_root_resolution = resolve_codex_wiki_root(config)
+    _append_hook_event(
+        config,
+        payload=payload,
+        status="finalized",
+        detail=f"codex-finalize completed; wiki_root_source={wiki_root_resolution.source}",
+    )
     return {"continue": True}
 
 
-def _run_command(command: list[str], *, cwd: Path, timeout_seconds: int) -> CodexHookCommandRunnerResult:
+def _run_command(
+    command: list[str],
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    env: dict[str, str],
+) -> CodexHookCommandRunnerResult:
     completed = subprocess.run(
         command,
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        env=env,
         timeout=timeout_seconds,
         check=False,
     )
@@ -156,6 +183,67 @@ def _run_command(command: list[str], *, cwd: Path, timeout_seconds: int) -> Code
         stdout=completed.stdout,
         stderr=completed.stderr,
     )
+
+
+def _load_config(plugin_root: Path) -> dict[str, Any]:
+    try:
+        config = json.loads((plugin_root / "local_config.json").read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _subprocess_environment(config: dict[str, Any], *, project_root: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    entries: list[str] = []
+    configured_entries = config.get("python_path_entries")
+    if isinstance(configured_entries, list):
+        entries.extend(str(entry) for entry in configured_entries if str(entry).strip())
+    project_src = project_root / "src"
+    if project_src.exists():
+        entries.append(str(project_src))
+    if entries:
+        existing = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = os.pathsep.join([*entries, existing] if existing else entries)
+    return env
+
+
+def _append_hook_event(
+    config: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    status: str,
+    detail: str,
+) -> None:
+    try:
+        project_root_value = config.get("project_root")
+        if not project_root_value:
+            return
+        project_root = _resolve_non_strict(Path(str(project_root_value)).expanduser())
+        configured_log_path = config.get("hook_event_log_path")
+        log_path = (
+            _resolve_non_strict(Path(str(configured_log_path)).expanduser())
+            if configured_log_path
+            else project_root / "data" / "index" / "codex_hook_events.jsonl"
+        )
+        wiki_root_resolution = resolve_codex_wiki_root(config)
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "detail": detail,
+            "hook_event_name": str(payload.get("hook_event_name") or ""),
+            "session_id": str(payload.get("session_id") or ""),
+            "turn_id": str(payload.get("turn_id") or ""),
+            "cwd": str(payload.get("cwd") or ""),
+            "wiki_root": wiki_root_resolution.raw_value,
+            "wiki_root_source": wiki_root_resolution.source,
+            "wiki_root_effective": str(wiki_root_resolution.path or ""),
+        }
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    except Exception:
+        return
 
 
 def _non_blocking_failure(message: str) -> dict[str, Any]:
@@ -245,15 +333,25 @@ def _allowed_workspace_roots(config: dict[str, Any], *, project_root: Path) -> l
         values.extend(str(value).strip() for value in configured if str(value).strip())
     elif isinstance(configured, str) and configured.strip():
         values.append(configured.strip())
-    else:
-        values.append(DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE)
-
     roots = [project_root]
     for value in values:
         resolved = _resolve_template_path(value)
         if resolved is not None:
             roots.append(resolved)
     return _dedupe_paths(roots)
+
+
+def _workspace_is_allowed(config: dict[str, Any], *, cwd: Path, project_root: Path) -> bool:
+    scope = str(config.get("workspace_scope") or "").strip().lower()
+    configured = config.get("allowed_workspace_roots")
+    has_explicit_roots = (
+        any(str(value).strip() for value in configured)
+        if isinstance(configured, list)
+        else isinstance(configured, str) and bool(configured.strip())
+    )
+    if scope == "all" or (scope != "restricted" and not has_explicit_roots):
+        return True
+    return any(_is_path_relative_to(cwd, root) for root in _allowed_workspace_roots(config, project_root=project_root))
 
 
 def _resolve_template_path(value: str) -> Path | None:

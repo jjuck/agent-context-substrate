@@ -48,7 +48,8 @@ def test_setup_codex_installs_default_windows_codex_integration(tmp_path: Path) 
     assert local_config["wiki_auto_mode"] == "apply-flexible"
     assert local_config["wiki_write_judge_mode"] == "auto"
     assert local_config["wiki_auto_min_score"] == 0.85
-    assert local_config["allowed_workspace_roots"] == ["%USERPROFILE%\\Documents\\Codex"]
+    assert local_config["workspace_scope"] == "all"
+    assert local_config["allowed_workspace_roots"] == []
     assert result.doctor_report is not None
     assert result.doctor_report.checks["codex_plugin_installed"] == "ok"
     assert result.doctor_report.checks["codex_user_hook_installed"] == "warn"
@@ -144,7 +145,8 @@ def test_default_codex_local_config_does_not_persist_env_wiki_root(tmp_path: Pat
 
     assert config["wiki_root"] == "%USERPROFILE%\\Documents\\LLM Wiki"
     assert config["wiki_root_source"] == "default-template"
-    assert config["allowed_workspace_roots"] == ["%USERPROFILE%\\Documents\\Codex"]
+    assert config["workspace_scope"] == "all"
+    assert config["allowed_workspace_roots"] == []
 
 
 def test_setup_codex_user_hook_fallback_is_explicit_opt_in(tmp_path: Path) -> None:
@@ -220,6 +222,15 @@ def test_doctor_codex_warns_about_recent_workspace_guard_skips(tmp_path: Path) -
         personal_marketplace_root=tmp_path / "marketplace",
         overwrite=True,
     )
+    local_config_path = codex_home / "plugins" / "agent-context-substrate" / "local_config.json"
+    local_config = json.loads(local_config_path.read_text(encoding="utf-8"))
+    local_config.update(
+        {
+            "workspace_scope": "restricted",
+            "allowed_workspace_roots": [str(tmp_path / "Documents" / "Codex")],
+        }
+    )
+    local_config_path.write_text(json.dumps(local_config), encoding="utf-8")
     event_log = project_root / "data" / "index" / "codex_hook_events.jsonl"
     event_log.parent.mkdir(parents=True, exist_ok=True)
     event_log.write_text(
@@ -312,6 +323,25 @@ def test_detect_codex_cli_prefers_windows_app_candidate_when_path_codex_is_npm_s
     assert detection.recommended_path == app_cli
     assert detection.versioned_app_cli_candidates == [app_cli]
     assert "npm shim" in "\n".join(detection.messages)
+
+
+def test_detect_codex_cli_prefers_versioned_app_binary_over_stale_direct_binary(tmp_path: Path) -> None:
+    npm_dir = tmp_path / "npm"
+    app_bin = tmp_path / "local-app-data" / "OpenAI" / "Codex" / "bin"
+    versioned_dir = app_bin / "new-build"
+    npm_dir.mkdir()
+    versioned_dir.mkdir(parents=True)
+    (npm_dir / "codex.cmd").write_text("@echo off\n", encoding="utf-8")
+    direct_cli = app_bin / "codex.exe"
+    versioned_cli = versioned_dir / "codex.exe"
+    direct_cli.write_text("stale", encoding="utf-8")
+    versioned_cli.write_text("current", encoding="utf-8")
+
+    detection = detect_codex_cli(path_entries=[npm_dir], local_app_data=tmp_path / "local-app-data")
+
+    assert detection.direct_app_cli_path == direct_cli
+    assert detection.versioned_app_cli_candidates == [versioned_cli]
+    assert detection.recommended_path == versioned_cli
 
 
 def test_detect_codex_cli_reports_all_windows_candidates_and_path_order(tmp_path: Path) -> None:

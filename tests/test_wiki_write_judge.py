@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from agent_context_substrate.summarizer_backends import LLMInputSafetyOptions, _
 from agent_context_substrate.promotions import PromotionCandidate
 from agent_context_substrate.wiki_patches import plan_wiki_patch_proposal
 from agent_context_substrate.wiki_write_judge import (
+    CodexCliWikiWriteJudgeRouter,
     WikiWriteDecision,
     evaluate_wiki_write_with_judge,
     export_wiki_write_decision,
@@ -68,6 +70,37 @@ def test_wiki_write_judge_approves_flexible_apply_when_llm_verdict_is_strong(tmp
     assert requests[0]["proposal"]["operations"][0]["operation"] == "create_page"
 
 
+def test_wiki_write_judge_rejects_approval_with_unknown_candidate_ids(tmp_path: Path) -> None:
+    candidate = _candidate()
+    proposal = plan_wiki_patch_proposal(
+        packet_id="packet-1",
+        candidates=[candidate],
+        wiki_root=tmp_path / "wiki",
+        write_mode="flexible",
+    )
+
+    decision = evaluate_wiki_write_with_judge(
+        packet_id="packet-1",
+        candidates=[candidate],
+        proposal=proposal,
+        mode="hybrid",
+        router=lambda _request: {
+            "ok": True,
+            "score": 0.95,
+            "decision": "apply_flexible",
+            "candidate_ids": ["unknown-candidate"],
+            "issues": [],
+            "rationale": "Approved.",
+            "metadata": {},
+        },
+        min_score=0.85,
+    )
+
+    assert decision.ok is False
+    assert decision.decision == "review_required"
+    assert decision.issues[-1].code == "invalid_candidate_selection"
+
+
 def test_wiki_write_judge_degrades_to_review_required_without_llm() -> None:
     decision = evaluate_wiki_write_with_judge(
         packet_id="packet-1",
@@ -81,6 +114,39 @@ def test_wiki_write_judge_degrades_to_review_required_without_llm() -> None:
     assert decision.decision == "review_required"
     assert decision.approved_for_auto_apply("apply-flexible") is False
     assert decision.issues[0].code == "judge_unavailable"
+
+
+def test_codex_cli_wiki_judge_runs_ephemeral_and_ignores_user_config(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        payload = {
+            "ok": True,
+            "score": 0.91,
+            "decision": "apply_flexible",
+            "candidate_ids": ["packet-1-candidate-1"],
+            "issues": [],
+            "rationale": "Durable evidence-backed knowledge.",
+            "metadata": {},
+        }
+        stdout = json.dumps(
+            {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(payload)}}
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("agent_context_substrate.codex_exec.subprocess.run", fake_run)
+    router = CodexCliWikiWriteJudgeRouter(
+        codex_command=str(tmp_path / "codex.exe"),
+        project_root=tmp_path,
+    )
+
+    result = router({"kind": "wiki-write-judge"})
+
+    assert result["decision"] == "apply_flexible"
+    assert "--ephemeral" in calls[0]
+    assert "--ignore-user-config" in calls[0]
+    assert "--ignore-rules" in calls[0]
 
 
 def test_export_wiki_write_decision_writes_reviewable_artifact(tmp_path) -> None:

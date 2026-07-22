@@ -17,6 +17,7 @@ from agent_context_substrate.summarizer_backends import (  # noqa: E402
     HeuristicSummarizerBackend,
     HybridSummarizerBackend,
     LLMInputSafetyOptions,
+    _prepare_llm_request,
     get_summarizer_backend,
 )
 
@@ -124,6 +125,9 @@ def test_codex_cli_summarizer_invokes_codex_exec_with_safety_flags_and_parses_js
     assert "--sandbox" in command
     assert "read-only" in command
     assert "--skip-git-repo-check" in command
+    assert "--ephemeral" in command
+    assert "--ignore-user-config" in command
+    assert "--ignore-rules" in command
     assert "approval_policy=never" in command
     assert "-c" in command
     assert "service_tier=fast" in command
@@ -165,6 +169,28 @@ def test_codex_cli_summarizer_falls_back_to_heuristic_when_exec_fails(monkeypatc
     assert summary.metadata.fallback_from == "codex-cli"
     assert summary.metadata.fallback_reason == "command_failed"
     assert summary.micro_id == "micro-codex-fallback"
+
+
+def test_llm_request_bounding_preserves_representative_evidence() -> None:
+    request = {
+        "kind": "micro",
+        "schema_version": "micro_summary_v2",
+        "evidence": {
+            "messages": [
+                {"id": index, "role": "user", "content": f"durable evidence {index} " + ("detail " * 30)}
+                for index in range(1, 101)
+            ],
+            "explicit_questions": ["What should be retained?"],
+        },
+        "routing_hints": {"codex_timeout_seconds": 90},
+    }
+
+    prepared = _prepare_llm_request(request, safety=LLMInputSafetyOptions(max_input_chars=1_200))
+
+    assert len(json.dumps(prepared, ensure_ascii=False, sort_keys=True)) <= 1_200
+    assert prepared["llm_input_truncated"] is True
+    assert prepared["evidence"]["messages"]
+    assert prepared["evidence"]["explicit_questions"] == ["What should be retained?"]
 
 
 def test_codex_cli_summarizer_falls_back_when_jsonl_output_is_not_summary_json(

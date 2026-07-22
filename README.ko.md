@@ -1,255 +1,160 @@
-<div align="center">
-
 # Agent Context Substrate
 
-**Hermes와 Codex 대화 기록을 다시 찾고, 이어서 작업하고, 필요할 때 검색할 수 있는 개인 지식층으로 바꾸는 도구입니다.**
+**Hermes와 Codex 세션을 복구 가능한 context, 검색 가능한 artifact, 근거 기반의 살아 있는 Markdown wiki로 바꿉니다.**
 
-![Status](https://img.shields.io/badge/status-public%20alpha-orange) ![Python](https://img.shields.io/badge/python-3.11%2B-blue) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[English README](./README.md) | [문서 지도](./docs/README.md) | [사용자 가이드](./docs/USER_GUIDE.md) | [Windows Codex 설치](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)
 
-[English README](./README.md) · [빠른 시작](#빠른-시작) · [Windows Codex 앱 설치](#windows-codex-앱-빠른-설치) · [Hermes에 설치](#hermes에-설치) · [검증된 기준선](#검증된-기준선) · [사용자 가이드](./docs/USER_GUIDE.md) · [Windows 상세 가이드](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)
+## 무엇을 하는가
 
-</div>
+ACS는 로컬 agent session 저장소를 수정하지 않고 읽어서 다음 context 계층을 만듭니다.
 
-## 한 줄로 말하면
+- provenance가 있는 raw session export
+- compact context packet과 recovery brief
+- deterministic fallback을 갖춘 evidence-backed V2 summary
+- claim atom과 promotion candidate
+- 감사 가능한 wiki patch proposal과 write decision
+- knowledge, recovery, graph read-only 검색
+- lint, ledger, hook event artifact
 
-`agent-context-substrate`는 Hermes Agent나 Codex 앱에서 나눈 긴 대화를 그냥 흘려보내지 않고, 나중에 다시 쓸 수 있는 **요약 파일, 복구 브리프, 검색 가능한 지식 자료**로 정리해주는 Python CLI 도구입니다.
+현재 packaged adapter는 Hermes Agent와 Windows Codex 앱을 지원합니다. 각 adapter가 typed `SessionBundle`을 만든 뒤에는 공통 pipeline을 사용합니다.
 
-현재 packaged adapter는 **Hermes Agent**와 **비-MCP Codex 로컬 세션 source**를 지원합니다. Codex 경로는 `~/.codex/state_5.sqlite`와 `~/.codex/sessions/**/rollout-*.jsonl`을 read-only로 읽고, plugin Stop hook을 primary trigger로 사용하며 `codex-watch` fallback을 유지합니다. 이 프로젝트의 이전 이름은 `hermes-llm-wiki-harness`였습니다.
+## Codex 기본 동작
 
-Hermes는 `~/.hermes/state.db`에 대화 기록을 저장하고, Codex 앱은 `%USERPROFILE%\.codex\state_5.sqlite`와 rollout JSONL에 thread 정보를 저장합니다. 이 하네스는 원본을 읽기 전용으로 읽어서 다음을 만듭니다.
+새 Codex 설치의 기본값:
 
 ```text
-Hermes 대화 DB 또는 Codex rollout JSONL
-  -> 원본 세션 export
-  -> context packet JSON / Markdown
-  -> lint report JSON / Markdown
-  -> recovery brief JSON
-  -> session ledger
-  -> Hermes가 필요할 때 읽는 검색 도구
+summary_mode=auto
+wiki_auto_mode=apply-flexible
+wiki_write_judge_mode=auto
+wiki_auto_min_score=0.85
+workspace_scope=all
 ```
 
-## 왜 유용한가
-
-긴 대화형 AI 작업에서는 이런 문제가 자주 생깁니다.
-
-- 이전 세션에서 무슨 결정을 했는지 기억이 안 난다.
-- Telegram이나 CLI 세션이 재시작되어 맥락이 사라진다.
-- 프로젝트 설계, 파일 경로, 테스트 결과가 대화 속에 묻혀 있다.
-- Obsidian에는 사람이 읽을 수 있는 wiki 문서만 남기고, 자동 생성된 중간 산출물은 분리하고 싶다.
-
-이 도구를 쓰면:
-
-- 이전 Hermes/Codex 세션을 `context packet`으로 정리할 수 있습니다.
-- 새 세션에서 빠르게 맥락을 복구할 수 있습니다.
-- Hermes가 작업 중 필요하면 `wiki_knowledge_search`로 과거 지식을 직접 찾을 수 있습니다.
-- Obsidian LLM Wiki는 evidence와 judge 승인으로 자라게 하고, 중간 artifact와 review-required proposal은 프로젝트 `data/...`에 남깁니다.
-
-## 기본 정책: judge-gated apply-flexible
-
-Windows Codex 기본 설치의 자동 처리 모드는 **`apply-flexible` + write judge**입니다.
-
-즉, LLM Wiki는 사용자가 매번 “이번 내용을 wiki에 쌓아줘”라고 요청할 때만 자라는 저장소가 아닙니다. Codex Stop hook이 eligible thread를 finalize할 때마다 evidence-backed summary, claim atom, promotion candidate, flexible wiki patch proposal을 만들고, write-judge LLM이 근거와 통합 품질을 보고 LLM Wiki에 반영할지 결정합니다.
+eligible Codex thread가 종료되면 ACS는 다음 흐름을 실행합니다.
 
 ```text
-data/exports/<session_id>.json
-data/exports/context_packets/<session_id>.json
-data/exports/context_packets/<session_id>.md
-data/exports/evidence/<session_id>/<micro_id>.json
-data/exports/summaries/<packet_id>-micro-v2.json
-data/exports/summaries/<packet_id>-unit-v2.json
-data/atoms/claims.jsonl
-data/promotions/<packet_id>.json
-data/wiki_patches/<packet_id>.json
-data/wiki_decisions/<packet_id>.json
-data/exports/lint/<session_id>-lint.json
-data/exports/lint/<session_id>-lint.md
-data/exports/recovery/<session_id>.json
-data/index/session_ledger.json
-```
-
-judge가 승인하고 evidence, target safety, 현재 page hash guard를 통과하면 LLM Wiki Markdown이 자동 갱신됩니다. judge가 불확실하거나 실행할 수 없거나 점수가 낮으면 ACS는 Obsidian을 쓰지 않고 `data/...` 아래 review-required proposal과 decision artifact만 남깁니다.
-
-새로운 지식 성장 경로는 evidence-first, judge-gated 흐름입니다.
-
-```text
-ContextPacket
-  -> EvidenceBundle
-  -> MicroSummaryV2 / UnitSummaryV2
-  -> claim atom
-  -> promotion candidate
+Codex rollout
+  -> typed SessionBundle
+  -> context packet + evidence-backed summary
+  -> atoms + promotion candidates
   -> flexible wiki patch proposal
-  -> write-judge decision
-  -> 승인된 LLM Wiki 반영 또는 review-required proposal
+  -> write judge 판단과 candidate 선택
+  -> guarded transaction 또는 review artifact
+  -> lint + recovery + ledger
 ```
 
-즉 `ContextPacket`은 wiki page가 아니라, wiki를 안전하게 키우기 위한 재료입니다.
+Judge는 지식이 durable한지 판단하고 적용할 정확한 candidate ID를 선택합니다. 실제 write 단계는 evidence, safe path, operation type, 현재 page hash를 다시 확인합니다. Judge 실패나 낮은 점수는 vault write로 이어지지 않습니다.
 
-## 빠른 사실
+## 살아 있는 Wiki 모델
 
-| 항목 | 값 |
-| --- | --- |
-| 상태 | Public alpha; v0.2.0 로컬 release candidate; Hermes Agent와 비-MCP Codex 로컬 연동 포함 |
-| 실행 환경 | Python 3.11+ |
-| 주 인터페이스 | CLI: `agent-context-substrate` |
-| 현재 agent 지원 | Hermes Agent와 Codex 로컬 세션 |
-| Hermes 연동 | user plugin `agent-context-substrate` + context engine `agent_context_substrate` |
-| Codex 연동 | `codex-finalize`, `codex-watch`, `codex-status`, 비-MCP Codex plugin skill |
-| 장기 확장 방향 | Claude Code, OpenCode, Gemini 등은 추후 adapter로 추가 가능하나 아직 packaged support는 없음 |
-| 기본 산출물 | `data/exports/`, `data/index/session_ledger.json` |
-| 기본 Codex 설치 정책 | `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, `wiki_auto_min_score=0.85` |
-| standalone/Hermes promotion mode | 명시 설정이 없으면 `packet-only` |
-| 선택 요약 모드 | `heuristic`, `agent-llm`, `hybrid`, `custom-command`, `codex-cli`, `auto` |
-| 권장 wiki 성장 경로 | atoms -> promotion candidates -> flexible patch proposal -> write judge -> apply 또는 review |
-| Obsidian 역할 | evidence와 judge decision으로 관리되는 semantic LLM Wiki |
-| 지원 wiki 언어 | `ko`, `en` |
-| 라이선스 | MIT |
+기본 wiki 정책은 `emergent-root`입니다.
+
+- 새 automatic flexible write는 vault root의 `<Title>.md`를 target으로 합니다.
+- folder path는 저장 위치일 뿐 의미 taxonomy가 아닙니다.
+- 의미는 `type`, optional `category`, `sources`, wikilink, index/MOC가 담당합니다.
+- 새로운 category는 write를 차단하지 않습니다.
+- category와 type은 enum이 아닌 열린 vocabulary입니다.
+- `context packet`처럼 generic한 subject만으로 인공적인 canonical page를 만들지 않습니다.
+- 기존 registry-folder vault는 명시적인 compatibility mode로 계속 지원합니다.
+
+`init-wiki`는 LLM이 wiki를 성장시키는 데 필요한 최소 구조만 만듭니다.
+
+```text
+LLM Wiki/
+  index.md
+  log.md
+  _system/
+    config.yaml
+    guides/
+      wiki-principles.md
+      ontology-seeds.md
+    templates/
+    styles/
+```
 
 ## 빠른 시작
 
-Windows Codex 앱 사용자라면 먼저 [Windows Codex 앱 빠른 설치](#windows-codex-앱-빠른-설치)를 보세요. 아래 블록은 개발자용 smoke 경로입니다.
+요구사항은 Python 3.11+와 Git입니다. runtime dependency는 Python 표준 라이브러리뿐입니다.
 
 ```bash
-git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
+git clone https://github.com/jjuck/agent-context-substrate.git
 cd agent-context-substrate
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-python -m pytest -q
-ruff check .
-.venv/bin/agent-context-substrate --help
+python -m venv .venv
 ```
 
-기대 결과:
-
-```text
-347 passed, 12 skipped
-```
-
-그리고 `--help`에 다음 명령들이 보여야 합니다.
-
-```text
-init-wiki
-install-plugin
-install-codex-plugin
-setup-codex
-setup-codex-wizard
-doctor-codex
-diagnose-codex
-config-codex
-install-context-engine
-doctor
-fresh-install-smoke
-codex-status
-codex-finalize
-codex-watch
-extract-session
-build-context-packet
-lint-wiki
-```
-
-## Windows Codex 앱 빠른 설치
-
-Codex 앱만 쓰는 사용자는 Hermes 섹션을 건너뛰고 이 절차로 시작하면 됩니다. 순정 Codex에게 GitHub repo URL만 주는 경우에도 아래 경로와 명령을 기준으로 설치하게 하면 됩니다.
-
-설치 전에 사용자가 알아야 할 경로:
-
-| 경로 | Windows 기본값 | 용도 |
-| --- | --- | --- |
-| Codex SQLite | `%USERPROFILE%\.codex\state_5.sqlite` | Codex thread metadata. ACS가 읽기 전용으로 조회 |
-| Codex rollout | `%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl` | Codex event stream. ACS가 읽기 전용으로 조회 |
-| LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` default template | judge-approved patch가 반영되는 Obsidian LLM Wiki. `--wiki-root`를 명시하지 않으면 setup은 사용자별 절대 경로 대신 이 portable template을 저장합니다. |
-| ACS project data | `<PROJECT_ROOT>\data\...` | raw export, packet, recovery, ledger, retrieval, wiki proposal, judge decision |
-
-PowerShell 단일 설치:
+Windows PowerShell:
 
 ```powershell
-git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
-cd agent-context-substrate
+Set-ExecutionPolicy -Scope Process Bypass
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+Linux, macOS, WSL:
+
+```bash
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m pytest -q
+```
+
+## Windows Codex 설치
+
+권장 설치 명령:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 ```
 
-도구가 빠져 있으면 아래처럼 선택 설치를 허용할 수 있습니다. script가 쓰는 winget package ID는 `Python.Python.3.13`, `Git.Git`, `Obsidian.Obsidian`입니다.
+이 스크립트는 환경 생성, 기본 wiki 초기화, plugin 및 personal marketplace/cache 설치, 가능한 경우 `agent-context-substrate@personal` registry 등록, 진단을 수행합니다.
+
+기본 wiki config에는 사용자명이 들어간 absolute path 대신 `%USERPROFILE%\Documents\LLM Wiki` portable template을 저장합니다. Effective root 우선순위:
+
+1. `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT`
+2. `WIKI_PATH`
+3. installed `local_config.json["wiki_root"]`
+4. `%USERPROFILE%\Documents\LLM Wiki`
+
+설치 후 Codex를 재시작하고 **Codex app -> Settings -> Hooks**(Codex 앱 -> 설정 -> 훅)에서 `agent-context-substrate` Stop hook을 확인하고 신뢰하세요. CLI/TUI에서는 `/hooks`를 사용할 수 있습니다. Hook trust는 Full Access(전체 권한), approval mode, sandbox 설정과 별개입니다.
+
+검증:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
-```
-
-plain `codex`가 `%APPDATA%\npm\codex.ps1` 같은 npm shim을 가리키면 Windows Codex 앱 CLI가 아닐 수 있습니다. `setup-codex`와 `doctor-codex`는 PATH 후보와 `%LOCALAPPDATA%\Programs\OpenAI\Codex\bin`, `%LOCALAPPDATA%\OpenAI\Codex\bin` 아래 direct 후보를 보여주고, 발견한 direct CLI를 `local_config.json`의 `codex_cli_command`로 저장합니다.
-
-`setup-codex`는 personal marketplace/cache 파일을 배치한 뒤, 사용 가능한 Codex CLI가 있으면 아래 registry 등록도 실행합니다.
-
-```powershell
-codex plugin add agent-context-substrate@personal --json
-```
-
-이 단계가 Codex 앱에서 plugin을 installed/enabled 상태로 보이게 만드는 Codex registry 등록입니다. `doctor-codex`가 `codex_plugin_registered=missing`을 보고하면 같은 명령을 수동으로 실행하세요. 앱 UI에서는 plugin이 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
-
-`project_root`는 ACS artifact root이지 active workspace allowlist가 아닙니다. 새 설치는 `allowed_workspace_roots=["%USERPROFILE%\\Documents\\Codex"]`를 저장해서 ordinary Codex workspaces가 Stop 때 finalize되도록 하고, 생성된 ACS data는 계속 `<PROJECT_ROOT>\data\...` 아래에 둡니다. `doctor-codex`는 최근 `codex_hook_events.jsonl`에 workspace guard skip이 남아 있으면 경고합니다.
-
-설치 후 확인:
-
-```powershell
+.\.venv\Scripts\agent-context-substrate.exe codex-status
 .\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
 .\.venv\Scripts\agent-context-substrate.exe config-codex paths
 ```
 
-기본 `setup-codex`는 설치된 plugin `local_config.json`에 `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, `wiki_auto_min_score=0.85`를 씁니다. 따라서 Stop hook은 로그인된 Codex CLI로 evidence-backed summary를 만들고, write judge에게 flexible LLM Wiki patch를 적용할지 묻습니다. OpenAI Platform API key는 필요하지 않으며, judge 경로가 실패하면 Obsidian을 쓰지 않고 review-required artifact로 degrade합니다.
+예상 mode:
 
-`doctor-codex --summary-smoke`로 로그인된 `codex exec` 호출이 가능한지 명시적으로 확인할 수 있습니다. doctor가 `%USERPROFILE%\.codex\config.toml`의 `service_tier="default"`를 경고하면 해당 줄을 제거하거나 `fast`/`flex`로 바꾸세요.
-
-문제가 있으면:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex --fix
+```text
+hook_support=supported
+hook_primary=installed
+watcher_fallback=available
 ```
 
-대화형으로 경로를 보며 설치하려면:
+`project_root`는 ACS artifact root이지 workspace boundary가 아닙니다. 새 설치는 `workspace_scope="all"`을 사용합니다. 명시적인 제한이 필요한 경우에만 `workspace_scope="restricted"`와 `allowed_workspace_roots`를 설정하세요.
 
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
-```
+Hook 승인, smoke test, 진단, fallback은 [Windows Codex 앱 설치 가이드](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)를 참고하세요.
 
-마지막으로 Codex 앱을 재시작한 뒤 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 `agent-context-substrate` Stop hook을 찾고, hook command/path를 확인한 뒤 `Trust all and continue` 또는 해당 신뢰/활성화 동작을 선택해야 자동 finalize가 실행됩니다. Codex CLI/TUI를 쓰는 경우에만 대체 경로로 `/hooks`를 열어 같은 Stop hook을 신뢰하세요. 이 단계는 `전체권한` 설정과 별개이며, installer가 몰래 우회하지 않습니다. 기본 설치는 plugin Stop hook 하나만 활성화하고, `~\.codex\hooks.json` fallback은 중복 Stop hook을 피하기 위해 기본으로 설치하지 않습니다. plugin hook을 쓸 수 없는 런타임에서만 `--user-hook-fallback`을 명시하세요.
-
-실제 smoke에서는 짧은 Codex thread 종료 후 `Running Stop hook: Finalizing Codex thread into Agent Context Substrate`가 보이고, `data\index\codex_hook_events.jsonl`에 `status=finalized`가 남으며, `search-knowledge --mode recovery`로 방금 만든 recovery artifact가 검색되어야 합니다.
-
-순정 Codex에게 GitHub repo만 주고 설치를 맡기려면 [Windows 상세 가이드의 프롬프트](./docs/WINDOWS_CODEX_APP_SETUP.ko.md#5-순정-codex에게-맡기는-프롬프트)를 그대로 붙여넣으세요.
-
-## Hermes에 설치
-
-아래 placeholder를 실제 경로로 바꾸세요.
-
-| Placeholder | 의미 |
-| --- | --- |
-| `<PROJECT_ROOT>` | 이 repository checkout 또는 harness project root |
-| `<WIKI_ROOT>` | Obsidian LLM Wiki vault root |
-| `<HERMES_AGENT_ROOT>` | Hermes Agent root, 보통 `~/.hermes/hermes-agent` |
+## Hermes 설치
 
 ```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
+agent-context-substrate init-wiki --wiki-root '<WIKI_ROOT>'
 
-# 1) Obsidian LLM Wiki 기본 구조 생성 또는 보강
-.venv/bin/agent-context-substrate init-wiki \
-  --wiki-root '<WIKI_ROOT>'
-
-# 2) Hermes user plugin 설치
-.venv/bin/agent-context-substrate install-plugin \
+agent-context-substrate install-plugin \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
-# 3) Hermes context engine 설치
-.venv/bin/agent-context-substrate install-context-engine \
+agent-context-substrate install-context-engine \
   --hermes-agent-root '<HERMES_AGENT_ROOT>' \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --overwrite
 
-# 4) 설치 상태 점검
-.venv/bin/agent-context-substrate doctor \
+agent-context-substrate doctor \
   --hermes-home ~/.hermes \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
@@ -257,315 +162,91 @@ cd '<PROJECT_ROOT>'
   --fail-on-issues
 ```
 
-Hermes plugin을 켭니다.
+Hermes/standalone finalize는 legacy full promotion을 명시하지 않는 한 `packet-only`입니다.
+
+## 자주 쓰는 명령
 
 ```bash
-cd '<HERMES_AGENT_ROOT>'
-. venv/bin/activate
-hermes plugins enable agent-context-substrate
-```
+# 전체 명령 확인
+agent-context-substrate --help
 
-`~/.hermes/config.yaml`에서 context engine을 선택합니다.
-
-```yaml
-plugins:
-  enabled:
-    - agent-context-substrate
-
-context:
-  engine: agent_context_substrate
-```
-
-Telegram gateway가 이미 실행 중이었다면 설정 반영을 위해 재시작하세요.
-
-```text
-/restart
-```
-
-## Codex에 설치
-
-Codex 연동은 hook-primary, watcher fallback 전략입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 hook을 trust하면 Stop hook이 thread를 finalize하고, Codex CLI summary를 만들고, flexible wiki patch를 계획한 뒤 write judge에게 적용 여부를 맡깁니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다.
-
-Windows Codex 앱 사용자는 [Windows Codex 앱 빠른 설치](#windows-codex-앱-빠른-설치) 또는 [Windows 상세 가이드](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)를 먼저 보는 것이 좋습니다. 아래 명령은 portable 개발자용 형태입니다.
-
-`setup-codex`는 plugin asset/marketplace/cache 파일을 복사한 뒤, 사용 가능한 Codex CLI가 있으면 `codex plugin add`로 `agent-context-substrate@personal`을 등록합니다. lower-level `install-codex-plugin`은 파일 배치만 수행합니다. `doctor-codex`가 `codex_plugin_registered=missing`을 보고하면 `codex plugin add agent-context-substrate@personal --json`을 실행하세요. Codex 앱에서는 plugin이 `Personal` 또는 `Created by you` 아래에 보일 수 있습니다.
-
-설치된 `project_root`는 ACS artifact 저장소이며, thread가 반드시 ACS checkout 안에서 실행되어야 한다는 뜻이 아닙니다. `allowed_workspace_roots` 기본값은 `%USERPROFILE%\Documents\Codex`라서 ordinary Codex workspaces를 포괄합니다. Codex 작업 폴더가 다른 위치라면 이 목록에 root를 추가하세요.
-
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-
-.venv/bin/agent-context-substrate install-codex-plugin \
-  --codex-home ~/.codex \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --overwrite
-
-.venv/bin/agent-context-substrate codex-status --codex-home ~/.codex
-
-# Expected mode:
-# hook_support=supported
-# hook_primary=installed
-# watcher_fallback=available
-```
-
-Codex의 non-managed hook은 한 번 review/trust 해야 실행됩니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)을 열고 `agent-context-substrate` Stop hook의 command/path를 확인한 뒤 신뢰 또는 활성화하세요. Codex CLI/TUI를 쓰는 경우에는 대체 경로로 `/hooks`를 열어 같은 Stop hook을 trust할 수 있습니다. Hook 승인이 안 되었거나 Stop event를 놓친 환경에서는 watcher fallback을 명시적으로 실행할 수 있습니다.
-
-기본으로 plugin hook과 `~/.codex/hooks.json` fallback을 함께 설치하지 마세요. 특정 Codex 런타임에서 plugin-bundled hook을 읽지 못할 때만 `setup-codex --user-hook-fallback` 또는 lower-level `install-codex-plugin --install-user-hook`을 사용하세요.
-
-```bash
-.venv/bin/agent-context-substrate codex-watch \
-  --codex-home ~/.codex \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --summary-mode auto \
-  --wiki-auto-mode apply-flexible \
-  --wiki-write-judge-mode auto \
-  --interval-seconds 15 \
-  --idle-seconds 90
-```
-
-수동 finalize도 가능합니다.
-
-```bash
-.venv/bin/agent-context-substrate codex-finalize \
-  --thread-id '<CODEX_THREAD_ID>' \
-  --codex-home ~/.codex \
+# Codex thread 하나 finalize
+agent-context-substrate codex-finalize \
+  --thread-id '<THREAD_ID>' \
   --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>' \
   --summary-mode auto \
   --wiki-auto-mode apply-flexible \
   --wiki-write-judge-mode auto
+
+# read-only 검색
+agent-context-substrate search-knowledge \
+  --query '<QUERY>' \
+  --mode knowledge \
+  --project-root '<PROJECT_ROOT>' \
+  --wiki-root '<WIKI_ROOT>'
+
+# 검색 결과 확장
+agent-context-substrate expand-hit \
+  --hit-id '<HIT_ID>' \
+  --project-root '<PROJECT_ROOT>' \
+  --wiki-root '<WIKI_ROOT>'
+
+# wiki 검증
+WIKI_PATH='<WIKI_ROOT>' agent-context-substrate lint-wiki \
+  --project-root '<PROJECT_ROOT>' \
+  --report-id manual-check \
+  --fail-on-issues
 ```
 
-## 처음 설치가 제대로 됐는지 확인하기
+수동 `apply-wiki-patch`는 기본 dry-run입니다. 실제 적용 시 `--apply`를 명시해야 하며 judge metadata와 mechanical safety gate는 계속 적용됩니다.
 
-실제 Obsidian vault를 건드리지 않고 temp directory에서 배포 경로를 테스트합니다.
+## Artifact
 
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-TMP_PROJECT=$(mktemp -d)
-TMP_WIKI=$(mktemp -d)
-TMP_AGENT=$(mktemp -d)
-
-.venv/bin/agent-context-substrate fresh-install-smoke \
-  --session-id '<SESSION_ID>' \
-  --hermes-home ~/.hermes \
-  --project-root "$TMP_PROJECT" \
-  --wiki-root "$TMP_WIKI" \
-  --hermes-agent-root "$TMP_AGENT"
-```
-
-성공 예시:
+Machine-facing artifact는 `<PROJECT_ROOT>/data` 아래에 둡니다.
 
 ```text
-fresh-install-smoke ok=True
-retrieval_hit_count=1
-expanded_content_length=14195
-lint_issue_count=0
+data/
+  exports/raw/
+  exports/context_packets/
+  exports/evidence/
+  exports/summaries/
+  exports/recovery/
+  atoms/
+  promotions/
+  wiki_decisions/
+  wiki_patches/
+  index/
 ```
 
-## 검증된 기준선
+Wiki write는 별도로 resolve된 vault root에 반영됩니다. Non-dry-run에서는 page, index, log, promotion status, applied log를 복구 가능한 transaction으로 함께 처리합니다. `prepared` 상태에서 중단된 transaction은 다음 apply 전에 복구합니다.
 
-현재 public alpha 기준선은 공개 repository와 package-managed integration 경로에서 검증되었습니다.
+## Lint 정책
 
-| 항목 | 현재 결과 |
-| --- | --- |
-| 프로젝트 테스트 | `347 passed, 12 skipped` |
-| Fresh install smoke | `fresh-install-smoke ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
-| 실제 wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
-| Live Codex 연결 | plugin `agent-context-substrate`, Stop hook 설치됨, watcher fallback 사용 가능 |
-| Live Hermes 연결 | plugin `agent-context-substrate`, context engine `agent_context_substrate`, retrieval tools 로드됨 |
-| GitHub sync | `main`이 `jjuck/agent-context-substrate`에 push됨 |
+Blocking issue는 provenance와 graph integrity를 보호합니다. 예: missing provenance, index 미등록, discoverability 부재, broken link, 내부 packet/summary 참조 오류.
 
-release를 자르거나 installer/runtime 동작을 바꾸면 이 기준선을 다시 갱신하세요.
-
-## 자주 쓰는 명령
-
-| 명령 | 설명 |
-| --- | --- |
-| `extract-session` | Hermes 세션 하나를 raw JSON으로 export합니다. |
-| `build-context-packet` | raw export와 context packet을 생성합니다. `--summary-mode`를 주면 v2 evidence/summary도 생성합니다. |
-| `extract-atoms` | v2 summary에서 claim atom을 추출합니다. |
-| `propose-promotions` | claim atom을 wiki 반영 후보로 제안합니다. Obsidian은 수정하지 않습니다. |
-| `plan-wiki-patches` | promotion candidate를 dry-run wiki patch proposal로 바꿉니다. |
-| `apply-wiki-patch` | 기본은 dry-run입니다. `--apply`를 명시해야 하며 managed/flexible 쓰기는 evidence, 승인 metadata, page hash 정책을 통과해야 합니다. |
-| `list-promotions` | promotion queue 상태를 봅니다. |
-| `list-wiki-patches` | wiki patch proposal/apply 기록을 봅니다. |
-| `lint-promotions` | promotion/wiki patch 기록에 대한 semantic lint를 실행합니다. |
-| `build-topic-map` | wiki와 substrate artifact로 topic map report를 만듭니다. |
-| `codex-status` | 로컬 Codex state와 hook/watch mode를 확인합니다. |
-| `codex-finalize` | Codex thread 하나를 raw/context-packet/recovery artifact로 finalize합니다. |
-| `codex-watch` | Codex rollout JSONL을 감시하고 idle thread를 한 번씩 처리합니다. |
-| `search-knowledge` | durable knowledge/recovery/graph/raw source를 검색합니다. |
-| `expand-hit` | retrieval hit id를 전체 local content로 확장합니다. |
-| `lint-wiki` | Obsidian wiki와 packet artifact graph를 검사합니다. |
-| `init-wiki` | human-facing wiki 폴더와 설정을 초기화합니다. |
-| `install-plugin` | Hermes user plugin을 packaged asset에서 설치합니다. |
-| `install-codex-plugin` | 비-MCP Codex plugin asset을 설치합니다. |
-| `setup-codex` | Windows Codex 앱용 wiki/plugin/hook/diagnostic 설치를 한 번에 실행합니다. |
-| `setup-codex-wizard` | 경로를 확인하며 Codex 설치를 진행하는 대화형 wizard입니다. |
-| `doctor-codex` | Codex source, plugin, hook, wiki, artifact 경로를 점검합니다. |
-| `diagnose-codex` | Codex 설치 문제와 복구 명령을 설명하고 `--fix`로 안전한 로컬 파일을 복구합니다. |
-| `config-codex` | 설치된 Codex plugin `local_config.json`과 사용자-facing 경로를 확인/수정합니다. |
-| `install-context-engine` | Hermes context engine을 packaged asset에서 설치합니다. |
-| `doctor` | 설치 상태를 점검합니다. |
-| `fresh-install-smoke` | 배포 경로를 end-to-end로 검사합니다. |
-
-## Telegram에서 쓰는 명령
-
-| 명령 | 용도 |
-| --- | --- |
-| `/harness` | plugin 상태, 경로, import 가능 여부 확인 |
-| `/packet <session_id>` | 특정 세션을 수동으로 packet-only finalize |
-| `/wiki-resume <session_id>` | 특정 세션의 recovery brief 확인 |
-| `/wiki-lint` | wiki와 artifact lint 실행 |
-
-## Hermes가 자동으로 검색하는 방식
-
-`context.engine: agent_context_substrate`가 켜져 있으면 Hermes Agent는 작업 중 과거 지식이 필요할 때 read-only 검색 도구를 사용할 수 있습니다.
-
-검색 순서:
-
-1. Obsidian durable wiki pages
-2. context packet JSON artifacts
-3. packet 안의 unit/micro summaries
-4. 필요할 때 raw Hermes `state.db` evidence
-5. `codex-finalize` 이후 raw Codex export
-
-노출 도구:
-
-```text
-wiki_recovery_context
-wiki_knowledge_search
-wiki_knowledge_expand
-```
-
-검색은 read-only입니다. 검색만으로 Obsidian 문서가 수정되지는 않습니다.
-
-`build-topic-map`을 실행하면 wiki page, claim, promotion, wiki patch 사이의 연결을 `data/index/<report-id>.json`과 `.md`로 볼 수 있습니다.
-
-## Obsidian Wiki 구조
-
-권장 vault 구조:
-
-```text
-LLM Wiki/
-  Home.md
-  index.md
-  SCHEMA.md
-  log.md
-  01 지식/
-  02 내 아이디어/
-  03 인물과 조직/
-  04 프로젝트/
-  05 계획/
-  06 원천 자료/
-  90 보관/
-  _system/
-```
-
-active page는 `lang: ko` 또는 `lang: en`, provenance/source, type별 필수 섹션을 가져야 합니다. `lint-wiki`가 이를 검사합니다.
-
-Codex 자동 보조 업데이트의 기본값은 write-judge가 승인한 flexible prose 통합입니다. managed claim block은 명시적/수동 workflow에서 계속 사용할 수 있습니다.
-
-```md
-<!-- acs:auto:claims:start -->
-- 근거가 있는 claim `claim:<id>`
-<!-- acs:auto:claims:end -->
-```
-
-중요한 canonical page는 evidence, 승인 metadata, target safety, 현재 page hash 일치가 모두 맞을 때만 자동 반영됩니다. 조건을 통과하지 못하면 ACS는 proposal과 decision artifact만 남깁니다.
-
-## v2 요약과 judge-gated wiki 성장
-
-수동 `build-context-packet`은 기존 packet artifact만 만듭니다. v2 summary를 원할 때만 `--summary-mode`를 추가합니다. Codex Stop hook 설치 경로는 기본으로 `summary_mode=auto`를 사용합니다.
-
-```bash
-agent-context-substrate build-context-packet \
-  --session-id '<SESSION_ID>' \
-  --packet-id '<PACKET_ID>' \
-  --task-title '<task title>' \
-  --macro-context '<macro context>' \
-  --unit-title '<unit title>' \
-  --goal '<goal>' \
-  --summary-mode heuristic \
-  --summary-cache on \
-  --project-root '<PROJECT_ROOT>'
-```
-
-생성되는 추가 artifact:
-
-```text
-data/exports/evidence/<SESSION_ID>/<PACKET_ID>-micro-1.json
-data/exports/summaries/<PACKET_ID>-micro-v2.json
-data/exports/summaries/<PACKET_ID>-unit-v2.json
-data/exports/evals/<PACKET_ID>-summary-judge.json   # --summary-judge-mode hybrid
-data/cache/summaries/<cache_key>.json
-```
-
-Summary judge는 opt-in 평가 artifact입니다. Host integration이 Agent LLM router를 주입하면 recovery usefulness, hallucination risk, missing next steps, wiki-candidate noise를 평가합니다. summary를 수정하거나 wiki patch를 apply하지 않습니다.
-
-수동 wiki 반영은 아래처럼 제안부터 만들 수 있습니다. Codex 자동 경로는 이 흐름을 실행한 뒤 write judge decision을 추가로 기록합니다.
-
-```bash
-agent-context-substrate extract-atoms --packet-id '<PACKET_ID>' --project-root '<PROJECT_ROOT>'
-agent-context-substrate propose-promotions --packet-id '<PACKET_ID>' --project-root '<PROJECT_ROOT>'
-agent-context-substrate plan-wiki-patches \
-  --promotion-file '<PROJECT_ROOT>/data/promotions/<PACKET_ID>.json' \
-  --wiki-root '<WIKI_ROOT>' \
-  --project-root '<PROJECT_ROOT>'
-```
-
-페이지 전체 prose 통합이 필요하면 `plan-wiki-patches --write-mode flexible`을 명시합니다. Codex 기본 자동 경로는 flexible mode를 전제로 하며, semantic judge 승인 metadata가 없으면 proposal-only로 남고 실제 apply 단계에서도 evidence, 안전한 target, 현재 page hash를 다시 확인합니다.
-
-수동 CLI에서는 검토 후 실제 반영할 때만 `apply-wiki-patch --apply`를 사용합니다.
-
-참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`, `custom-command`, `codex-cli`, `auto`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다. `auto`는 사용 가능한 Codex CLI가 있으면 `codex exec`를 read-only, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks-disabled, inline bounded JSON input으로 호출하고, 실패하거나 JSON/lint 검증을 통과하지 못하면 heuristic summary로 fallback metadata를 남깁니다.
-
-Codex 사용자는 ACS가 Codex OAuth token을 직접 읽거나 저장하지 않아도 LLM summary와 write judge를 쓸 수 있습니다. 새 설치는 아래 값을 기본으로 갖고, 오래된 설치를 갱신할 때만 직접 설정하면 됩니다.
-
-```powershell
-agent-context-substrate config-codex set --key summary_mode --value auto --project-root "<PROJECT_ROOT>"
-agent-context-substrate config-codex set --key wiki_auto_mode --value apply-flexible --project-root "<PROJECT_ROOT>"
-agent-context-substrate config-codex set --key wiki_write_judge_mode --value auto --project-root "<PROJECT_ROOT>"
-```
-
-| 선택지 | 사용 시점 | 주의점 |
-| --- | --- | --- |
-| `codex-cli` / `auto` | Codex CLI/App에 이미 로그인되어 있는 로컬 Codex 사용자 | subprocess 경로지만 ACS가 credential을 저장하지 않고 실패 시 heuristic으로 degrade |
-| `custom-command` | 별도 local summarizer나 API wrapper를 이미 갖고 있을 때 | 인증, 비용, schema 출력, 안전장치는 command 작성자가 책임짐 |
-| OpenAI Platform API key | CI나 Codex 밖 자동화에서 명시적 API 과금이 필요할 때 | 별도 key 발급과 사용량 비용이 필요 |
-| 직접 Codex OAuth 구현 | 권장하지 않음 | token 저장/갱신/폐기/endpoint 안정성을 ACS가 떠안게 됨 |
-| Codex Python SDK | app-server 기반 후속 실험 후보 | 이번 MVP는 sandbox/approval/JSONL/schema flag가 명확한 `codex exec`를 우선 사용 |
+언어, 권장 section, thin content, related-link 품질, registry mode의 category warning은 advisory입니다. Emergent-root mode에서는 새 category 자체를 문제로 보지 않습니다.
 
 ## 개인정보와 안전
 
-이 프로젝트는 민감한 로컬 데이터를 다룹니다.
+- Hermes `state.db`, Codex SQLite/rollout, `data/exports`에는 private message, tool output, local path가 들어갈 수 있습니다.
+- ACS는 원본 session store를 read-only로 읽습니다.
+- Codex worker는 read-only sandbox, `approval_policy=never`, fast service tier, low reasoning effort, hooks-disabled로 실행됩니다.
+- LLM input은 길이를 제한하며 secret, email, path, code block을 redact할 수 있습니다.
+- credential, private export, local generated artifact를 commit하지 마세요.
+- release 전에 `git status --short`를 확인하세요.
 
-- `~/.hermes/state.db`에는 전체 대화, tool output, 파일 경로, 운영 메모가 들어갈 수 있습니다.
-- Codex `%USERPROFILE%\.codex\state_5.sqlite`와 rollout JSONL에는 thread metadata, 메시지, tool call, 로컬 경로가 들어갈 수 있습니다.
-- `data/exports/**/*.json`과 `data/exports/**/*.md`에는 raw transcript 또는 상세 요약이 포함될 수 있습니다.
-- API key, token, password, `.env`, raw private session export는 commit하지 마세요.
-- `.gitignore`는 `data/exports/`, ledger, cache, venv를 기본적으로 제외합니다.
+## 문서
 
-## 더 읽기
-
-- [English README](./README.md)
-- [사용자 가이드](./docs/USER_GUIDE.md)
+- [문서 지도](./docs/README.md)
+- [한국어 사용자 가이드](./docs/USER_GUIDE.md)
 - [English User Guide](./docs/USER_GUIDE.en.md)
+- [Windows Codex 설치](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)
 - [운영 가이드](./docs/OPERATIONS.md)
-- [파이프라인 문서](./docs/PIPELINE.md)
-- [릴리스 체크리스트](./docs/RELEASE_CHECKLIST.md)
+- [Pipeline과 아키텍처](./docs/PIPELINE.md)
+- [Release checklist](./docs/RELEASE_CHECKLIST.md)
+- [Changelog](./CHANGELOG.md)
 
-## 현재 한계
+## 상태
 
-- 현재 public alpha입니다. beta/stable 전까지 API, 문서, installer 동작이 바뀔 수 있습니다.
-- atom은 현재 claim 중심으로 시작했습니다. decision/entity/concept/question atom은 후속 확장입니다.
-- recovery brief 품질은 export된 recovery JSON의 `quality_gate` score/issue 목록으로 확인할 수 있습니다.
-- semantic lint는 현재 promotion/wiki patch 구조 검사를 다룹니다. evidence 누락, target 누락, claim source, patch→candidate 무결성, applied patch log를 검사하며, 더 깊은 wiki health 검사는 후속 작업입니다.
-- wiki patch apply는 의도적으로 guarded policy를 유지합니다. Codex 기본 쓰기는 flexible judge-gated path이며, flexible `replace_page`는 evidence, 승인 metadata, 현재 page hash가 맞을 때만 적용됩니다.
-- legacy full promotion은 여전히 `queries/`, `concepts/`, `plans/`, `architectures/` 경로를 사용합니다.
-- Hermes gateway는 plugin/context-engine 변경 뒤 재시작이 필요할 수 있습니다.
+ACS는 alpha software이며 현재 release line은 `0.2.0`입니다. Legacy explicit promotion 명령과 기존 folder-based vault는 호환성을 위해 유지하지만, 권장 경로는 typed finalize artifact와 judge-gated emergent wiki growth입니다.

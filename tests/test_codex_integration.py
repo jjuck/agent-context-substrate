@@ -255,6 +255,78 @@ def test_codex_finalize_auto_merges_same_target_candidates_and_lints_clean(
     assert [candidate["status"] for candidate in promotion_payload] == ["applied", "applied"]
 
 
+def test_codex_finalize_applies_only_candidates_selected_by_judge(tmp_path: Path, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home.mkdir()
+    wiki_root.mkdir()
+    _write_codex_thread(
+        codex_home,
+        thread_id="thread-wiki-subset",
+        rollout_path=codex_home / "sessions" / "rollout-thread-wiki-subset.jsonl",
+    )
+    candidates = [
+        PromotionCandidate(
+            candidate_id=f"thread-wiki-subset-candidate-{index}",
+            packet_id="thread-wiki-subset",
+            kind="wiki_update",
+            target_page="Agent Context Substrate",
+            reason="Durable candidate.",
+            evidence=[f"claim:thread-wiki-subset-claim-{index}"],
+            proposed_change=change,
+            proposed_action="update_existing",
+            confidence=0.92,
+            status="pending",
+        )
+        for index, change in enumerate(
+            ["Selected durable knowledge.", "Transient knowledge that the judge excluded."],
+            start=1,
+        )
+    ]
+
+    def export_candidates(*, packet_id: str, paths):
+        promotion_dir = paths.project_root / "data" / "promotions"
+        promotion_dir.mkdir(parents=True, exist_ok=True)
+        json_path = promotion_dir / f"{packet_id}.json"
+        markdown_path = promotion_dir / f"{packet_id}.md"
+        json_path.write_text(json.dumps([candidate.to_dict() for candidate in candidates]), encoding="utf-8")
+        markdown_path.write_text("# Promotion Candidates\n", encoding="utf-8")
+        return json_path, markdown_path
+
+    monkeypatch.setattr(codex_integration, "export_promotion_candidates", export_candidates)
+
+    def judge_router(_request: dict[str, object]) -> dict[str, object]:
+        return {
+            "ok": True,
+            "score": 0.94,
+            "decision": "apply_flexible",
+            "candidate_ids": [candidates[0].candidate_id],
+            "issues": [],
+            "rationale": "Only the first candidate is durable.",
+            "metadata": {},
+        }
+
+    result = run_codex_thread_finalize_pipeline(
+        thread_id="thread-wiki-subset",
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        summary_mode="heuristic",
+        wiki_auto_mode="apply-flexible",
+        wiki_write_judge_mode="hybrid",
+        wiki_write_judge_router=judge_router,
+    )
+
+    assert result.wiki_apply_result is not None
+    assert result.wiki_apply_result.dry_run is False
+    page_text = (wiki_root / "Agent Context Substrate.md").read_text(encoding="utf-8")
+    assert "Selected durable knowledge." in page_text
+    assert "Transient knowledge that the judge excluded." not in page_text
+    promotion_payload = json.loads((project_root / "data" / "promotions" / "thread-wiki-subset.json").read_text(encoding="utf-8"))
+    assert [candidate["status"] for candidate in promotion_payload] == ["applied", "pending"]
+
+
 def test_codex_watcher_selects_idle_threads_once(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex"
     project_root = tmp_path / "project"

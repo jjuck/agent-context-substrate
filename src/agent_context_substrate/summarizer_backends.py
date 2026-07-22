@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shutil
 import shlex
 import subprocess
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Protocol
 
+from .codex_cli import codex_command_available, resolve_codex_command
+from .codex_exec import CodexExecRuntime
+from .llm_runtime import (
+    AgentLLMRouter,
+    LLMInputSafetyOptions,
+    call_router_with_json_repair,
+    prepare_llm_request,
+)
 from .models import EvidenceMessage, MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
 from .summarizer import build_micro_summary_v2, build_unit_summary_v2
 from .summary_lint import lint_micro_summary_v2, lint_unit_summary_v2
@@ -42,9 +46,6 @@ class SummarizerBackend(Protocol):
         ...
 
 
-AgentLLMRouter = Callable[[dict[str, object]], dict[str, object] | str]
-
-
 def _split_custom_command(command: str) -> list[str]:
     if os.name != "nt":
         return shlex.split(command)
@@ -70,42 +71,9 @@ def _split_windows_command(command: str) -> list[str]:
         local_free(argv)
 
 
-@dataclass(frozen=True)
-class LLMInputSafetyOptions:
-    """Safety controls for payloads sent to opt-in LLM/custom summarizers."""
-
-    redact: bool = True
-    max_input_chars: int = 12_000
-    allow_code_snippets: bool = False
-    path_policy: str = "redact"
-
-    def __post_init__(self) -> None:
-        if self.max_input_chars < 256:
-            raise ValueError("llm max input chars must be at least 256")
-        if self.path_policy not in {"redact", "allow"}:
-            raise ValueError("llm path policy must be one of: allow, redact")
-
-
-_SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"\b([A-Za-z0-9_-]*(?:api[_-]?key|secret|token|password|credential|connection[_-]?string)[A-Za-z0-9_-]*)"
-    r"\s*[:=]\s*([^\s,;]+)",
-    flags=re.IGNORECASE,
-)
-_BEARER_TOKEN_PATTERN = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", flags=re.IGNORECASE)
-_TOKEN_PATTERN = re.compile(
-    r"\b(?:(?:sk|pk)-[A-Za-z0-9_./+=-]{6,}|(?:ghp|github_pat|xox[baprs])[_-][A-Za-z0-9_./+=-]{6,})\b"
-)
-_EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-
-_CODE_FENCE_PATTERN = re.compile(r"```.*?```", flags=re.DOTALL)
-_WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(
-    r"\b[A-Za-z]:[\\/](?:[^\\/\s,;:'\"<>|]+[\\/])*[^\\/\s,;:'\"<>|]+(?: [^\\/\s,;:'\"<>|]+)*"
-)
-_UNIX_ABSOLUTE_PATH_PATTERN = re.compile(
-    r"(?<![^\s('\"\[<{=])/(?:[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*\/)*[^/\s,;:'\"<>|]+(?: [^/\s,;:'\"<>|]+)*"
-)
-_LOCAL_PATH_REDACTION = "<REDACTED_LOCAL_PATH>"
-_TRUNCATION_MARKER = "…<TRUNCATED_FOR_LLM_INPUT>"
+# Backward-compatible aliases for integrations that imported the old private names.
+_call_router_with_json_repair = call_router_with_json_repair
+_prepare_llm_request = prepare_llm_request
 
 
 class AgentLLMSummarizerBackend:
@@ -590,78 +558,20 @@ class CodexCliSummarizerBackend:
         request: dict[str, object],
         schema: dict[str, object],
     ) -> dict[str, object]:
-        codex_command = self._codex_command_for_execution()
         prepared_request = _prepare_llm_request(request, safety=self.llm_safety)
         request_json = json.dumps(prepared_request, ensure_ascii=False, sort_keys=True)
-        with TemporaryDirectory(prefix=".acs-codex-summary-", dir=self.project_root) as temp_dir:
-            temp_path = Path(temp_dir)
-            schema_path = temp_path / f"{kind}-summary-schema.json"
-            schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
-            command = self._codex_exec_command(
-                codex_command=codex_command,
-                request_json=request_json,
-                schema_path=schema_path,
-                kind=kind,
-            )
-            result = subprocess.run(
-                command,
-                cwd=str(self.project_root),
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                timeout=self.timeout_seconds,
-                check=False,
-                shell=False,
-                env=_codex_exec_env(),
-            )
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"codex-cli summarizer failed with exit_code={result.returncode}: {result.stderr.strip()}"
-            )
-        return _parse_codex_exec_summary_payload(result.stdout)
-
-    def _codex_command_for_execution(self) -> str:
-        if self.codex_command:
-            return self.codex_command
-        detected = _detect_codex_cli_command()
-        if detected:
-            return detected
-        raise RuntimeError("codex-cli summarizer unavailable: codex command was not found")
-
-    def _codex_exec_command(
-        self,
-        *,
-        codex_command: str,
-        request_json: str,
-        schema_path: Path,
-        kind: str,
-    ) -> list[str]:
-        command = [
-            codex_command,
-            "exec",
-            "-C",
-            str(self.project_root),
-            "--sandbox",
-            "read-only",
-            "--skip-git-repo-check",
-            "-c",
-            "approval_policy=never",
-            "-c",
-            "service_tier=fast",
-            "-c",
-            "model_reasoning_effort=low",
-            "-c",
-            "features.hooks=false",
-            "--json",
-            "--output-schema",
-            str(schema_path),
-        ]
-        model = self.routing_hints.get("model")
-        if model:
-            command.extend(["--model", str(model)])
-        command.append(_codex_summary_prompt(kind=kind, request_json=request_json))
-        return command
+        runtime = CodexExecRuntime(
+            codex_command=self.codex_command,
+            project_root=self.project_root,
+            timeout_seconds=self.timeout_seconds,
+            model=str(self.routing_hints["model"]) if self.routing_hints.get("model") else None,
+        )
+        return runtime.run_structured(
+            prompt=_codex_summary_prompt(kind=kind, request_json=request_json),
+            schema=schema,
+            schema_filename=f"{kind}-summary-schema.json",
+            error_label="codex-cli summarizer",
+        )
 
     def _raise_if_micro_summary_fails_lint(
         self,
@@ -830,116 +740,6 @@ def _messages_to_raw(messages: list[EvidenceMessage]) -> list[dict[str, object]]
     ]
 
 
-def _call_router_with_json_repair(
-    *,
-    router: AgentLLMRouter,
-    request: dict[str, object],
-    safety: LLMInputSafetyOptions,
-    error_label: str,
-) -> dict[str, object]:
-    response = router(_prepare_llm_request(request, safety=safety))
-    try:
-        return _parse_router_json_response(response, error_label=error_label)
-    except json.JSONDecodeError as exc:
-        repair_request = {
-            "kind": "repair-json",
-            "schema_version": request.get("schema_version"),
-            "invalid_json": response,
-            "json_error": str(exc),
-            "original_request": request,
-            "instruction": "Return only one strict JSON object matching the original schema.",
-        }
-        repaired_response = router(_prepare_llm_request(repair_request, safety=safety))
-        return _parse_router_json_response(repaired_response, error_label=error_label)
-
-
-def _parse_router_json_response(response: dict[str, object] | str, *, error_label: str) -> dict[str, object]:
-    if isinstance(response, str):
-        parsed = json.loads(response)
-    else:
-        parsed = response
-    if not isinstance(parsed, dict):
-        raise ValueError(f"{error_label} must return a JSON object or JSON object string")
-    return parsed
-
-
-def _prepare_llm_request(request: dict[str, object], *, safety: LLMInputSafetyOptions) -> dict[str, object]:
-    prepared = _sanitize_value(request, safety=safety)
-    if not isinstance(prepared, dict):
-        raise TypeError("LLM request must sanitize to a JSON object")
-    return _bound_llm_request(prepared, max_chars=safety.max_input_chars)
-
-
-def _sanitize_value(value, *, safety: LLMInputSafetyOptions):
-    if isinstance(value, dict):
-        sanitized: dict[str, object] = {}
-        for key, item in value.items():
-            if not safety.allow_code_snippets and key == "code_blocks" and isinstance(item, list):
-                sanitized[key] = []
-            else:
-                sanitized[key] = _sanitize_value(item, safety=safety)
-        return sanitized
-    if isinstance(value, list):
-        return [_sanitize_value(item, safety=safety) for item in value]
-    if isinstance(value, str):
-        text = value
-        if not safety.allow_code_snippets:
-            text = _CODE_FENCE_PATTERN.sub("<CODE_BLOCK_OMITTED>", text)
-        if safety.path_policy == "redact":
-            text = _redact_local_paths(text)
-        if safety.redact:
-            text = _redact_llm_text(text)
-        return text
-    return value
-
-
-def _redact_llm_text(text: str) -> str:
-    redacted = _SECRET_ASSIGNMENT_PATTERN.sub(lambda match: f"{match.group(1)}=<REDACTED_SECRET>", text)
-    redacted = _BEARER_TOKEN_PATTERN.sub("Bearer <REDACTED_SECRET>", redacted)
-    redacted = _TOKEN_PATTERN.sub("<REDACTED_SECRET>", redacted)
-    return _EMAIL_PATTERN.sub("<REDACTED_EMAIL>", redacted)
-
-
-def _redact_local_paths(text: str) -> str:
-    redacted = _WINDOWS_ABSOLUTE_PATH_PATTERN.sub(_LOCAL_PATH_REDACTION, text)
-    return _UNIX_ABSOLUTE_PATH_PATTERN.sub(_LOCAL_PATH_REDACTION, redacted)
-
-
-def _bound_llm_request(request: dict[str, object], *, max_chars: int) -> dict[str, object]:
-    if _json_size(request) <= max_chars:
-        return request
-    bounded = _truncate_strings(request, max_chars=max_chars)
-    if _json_size(bounded) <= max_chars:
-        return bounded
-    compact = {
-        "kind": request.get("kind"),
-        "schema_version": request.get("schema_version"),
-        "routing_hints": request.get("routing_hints", {}),
-        "llm_input_truncated": True,
-    }
-    if _json_size(compact) <= max_chars:
-        return compact
-    return {"llm_input_truncated": True}
-
-
-def _truncate_strings(value, *, max_chars: int):
-    if isinstance(value, dict):
-        return {key: _truncate_strings(item, max_chars=max_chars) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_truncate_strings(item, max_chars=max_chars) for item in value]
-    if isinstance(value, str):
-        per_string_limit = max(32, max_chars // 8)
-        if len(value) <= per_string_limit:
-            return value
-        keep = max(0, per_string_limit - len(_TRUNCATION_MARKER))
-        return value[:keep] + _TRUNCATION_MARKER
-    return value
-
-
-def _json_size(value: object) -> int:
-    return len(json.dumps(value, ensure_ascii=False, sort_keys=True))
-
-
 def _summarizer_fallback_reason(exc: Exception) -> str:
     message = str(exc)
     if "failed lint:" in message:
@@ -967,87 +767,10 @@ def _codex_summary_prompt(*, kind: str, request_json: str) -> str:
     )
 
 
-def _codex_exec_env() -> dict[str, str]:
-    env = dict(os.environ)
-    env["AGENT_CONTEXT_SUBSTRATE_CODEX_SUMMARY"] = "1"
-    return env
-
-
-def _parse_codex_exec_summary_payload(stdout: str) -> dict[str, object]:
-    stripped = stdout.strip()
-    if not stripped:
-        raise ValueError("codex-cli summarizer returned empty stdout")
-    try:
-        direct_payload = _parse_json_text_object(stripped)
-    except json.JSONDecodeError:
-        direct_payload = None
-    if direct_payload is not None and _looks_like_summary_payload(direct_payload):
-        return direct_payload
-
-    last_agent_text: str | None = None
-    for line in stripped.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        item = event.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
-            last_agent_text = str(item["text"])
-            continue
-        if event.get("type") == "agent_message" and isinstance(event.get("text"), str):
-            last_agent_text = str(event["text"])
-    if last_agent_text is None:
-        raise ValueError("codex-cli summarizer JSONL output did not include an agent_message item")
-    return _parse_json_text_object(last_agent_text)
-
-
-def _looks_like_summary_payload(payload: dict[str, object]) -> bool:
-    return "metadata" in payload and ("micro_id" in payload or "unit_id" in payload)
-
-
-def _parse_json_text_object(text: str) -> dict[str, object]:
-    parsed = json.loads(_strip_json_fence(text))
-    if not isinstance(parsed, dict):
-        raise ValueError("codex-cli summarizer must return a JSON object")
-    return parsed
-
-
-def _strip_json_fence(text: str) -> str:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-    return stripped
-
-
-def _detect_codex_cli_command() -> str | None:
-    configured = os.environ.get("AGENT_CONTEXT_SUBSTRATE_CODEX_CLI")
-    if configured:
-        return configured if _codex_cli_available(configured) else None
-    try:
-        from .codex_setup import detect_codex_cli
-
-        detection = detect_codex_cli()
-        if detection.recommended_path is not None:
-            return str(detection.recommended_path)
-    except Exception:
-        pass
-    return shutil.which("codex")
-
-
 def _codex_cli_available(command: str | None = None) -> bool:
     if command:
-        command_path = Path(command).expanduser()
-        if command_path.is_absolute() or command_path.parent != Path("."):
-            return command_path.exists()
-        return shutil.which(command) is not None
-    return _detect_codex_cli_command() is not None
+        return codex_command_available(command)
+    return resolve_codex_command() is not None
 
 
 def _codex_cli_command_hint(routing_hints: dict[str, object]) -> str | None:

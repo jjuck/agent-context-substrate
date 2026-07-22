@@ -6,6 +6,7 @@ import re
 
 from .promotions import PromotionCandidate
 from .safe_paths import safe_wiki_target_path
+from .wiki_intent import WikiPageIntent
 from .wiki_config import (
     DEFAULT_FALLBACK_FOLDER,
     PLACEMENT_POLICY_REGISTRY_FOLDER,
@@ -49,13 +50,14 @@ def resolve_wiki_placement(
     config: WikiConfig | None = None,
 ) -> WikiPlacement:
     config = config or load_wiki_config(wiki_root)
-    raw_target = candidate.target_page.strip()
+    intent = candidate.page_intent
+    raw_target = intent.target_page.strip()
     if _is_explicit_markdown_target(raw_target):
         target = _normalize_explicit_target(raw_target)
         title = _title_from_target(target)
-        category = normalize_category(candidate.category)
-        page_type = _page_type_for_candidate(candidate, config, category)
-        language = _language_for_candidate(candidate, config)
+        category = normalize_category(intent.category)
+        page_type = _page_type_for_intent(intent, config, category)
+        language = _language_for_intent(intent, config)
         registered = bool(category and config.rule_for_category(category) is not None)
         return WikiPlacement(
             target=target,
@@ -66,10 +68,10 @@ def resolve_wiki_placement(
             registered=registered,
             fallback=False,
             index_section=config.index_section_for_category(category),
-            placement_reason=candidate.placement_reason or "Explicit Markdown target supplied by promotion candidate.",
+            placement_reason=intent.placement_reason or "Explicit Markdown target supplied by promotion candidate.",
         )
 
-    category = normalize_category(candidate.category)
+    category = normalize_category(intent.category)
     rule = config.rule_for_category(category)
     registered = bool(category and rule is not None)
     title = _display_title(raw_target or "untriaged")
@@ -81,9 +83,9 @@ def resolve_wiki_placement(
         target = f"{folder}/{filename}.md"
     else:
         target = f"{filename}.md"
-    page_type = _page_type_for_candidate(candidate, config, category)
-    language = _language_for_candidate(candidate, config)
-    placement_reason = candidate.placement_reason or (
+    page_type = _page_type_for_intent(intent, config, category)
+    language = _language_for_intent(intent, config)
+    placement_reason = intent.placement_reason or (
         "Category is registered in wiki config."
         if config.placement_policy == PLACEMENT_POLICY_REGISTRY_FOLDER and registered
         else (
@@ -158,16 +160,16 @@ def _safe_markdown_filename(title: str) -> str:
     return cleaned[:120] or "untitled"
 
 
-def _page_type_for_candidate(candidate: PromotionCandidate, config: WikiConfig, category: str) -> str:
-    proposed = (candidate.page_type or "").strip()
+def _page_type_for_intent(intent: WikiPageIntent, config: WikiConfig, category: str) -> str:
+    proposed = (intent.page_type or "").strip()
     if proposed:
         return proposed
     rule = config.rule_for_category(category)
     return rule.page_type if rule is not None else "knowledge"
 
 
-def _language_for_candidate(candidate: PromotionCandidate, config: WikiConfig) -> str:
-    proposed = (candidate.language or "").strip().lower()
+def _language_for_intent(intent: WikiPageIntent, config: WikiConfig) -> str:
+    proposed = (intent.language or "").strip().lower()
     if proposed in config.supported_languages:
         return proposed
     return config.default_language

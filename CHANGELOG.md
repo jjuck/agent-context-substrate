@@ -8,19 +8,26 @@ All notable changes to Agent Context Substrate are summarized here.
 
 - Evidence-backed v2 summary artifacts with heuristic, agent-LLM, hybrid, and custom-command summary modes.
 - Structured atom layer for claims, decisions, entities, concepts, and questions.
-- Promotion candidate queue and review-first wiki patch proposal flow.
+- Promotion candidate queue with judge-gated `propose`, `apply-managed`, and `apply-flexible` wiki flows.
 - Recovery brief exports now include a `quality_gate` with score/issues for task title, macro context, work state, active context, next-step/open-question, and provenance coverage.
 - Semantic lint checks across promotions, patches, claims, concepts, and open questions.
 - Topic map graph generation over wiki pages and substrate artifacts.
 - Request-time retrieval expansion over promotion candidates, wiki patch proposals, applied patch logs, and topic-map paths.
 - Context-engine retrieval tool schema exposes `mode="recovery"` for prior-work recovery searches.
 - `review-promotion` CLI for evidence preview and accept/reject/supersede/apply status updates on promotion candidates.
-- Real-wiki dry-run validation workflow documentation.
+- Emergent-root wiki placement, minimal guide-based vault skeleton, dynamic frontmatter-driven MOC registration, and portable Codex wiki-root resolution.
+- Recoverable wiki apply transactions covering target pages, `index.md`, `log.md`, promotion state, and `applied.jsonl`.
+- Typed `WikiPageIntent`, shared `SessionBundle` finalization services, isolated Codex execution helpers, and a thin installed Stop-hook bootstrap.
+- Windows Codex live-write validation workflow using isolated temporary project and wiki roots.
 - Lightweight Ruff lint gate for release checks.
 
 ### Changed
 
 - `packet-only` remains the default; legacy full wiki promotion is documented as explicit compatibility behavior.
+- New Codex installs default to `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, `wiki_auto_min_score=0.85`, and `workspace_scope=all`.
+- Automatic flexible writes use vault-root `<Title>.md` pages by default. Folder routing is an explicit `registry-folder` compatibility policy, while category/type metadata remain open vocabulary.
+- Unregistered categories are non-blocking. Blocking lint protects provenance, discoverability, links, safe paths, and internal graph integrity; language, structure, and category quality remain advisory.
+- The Codex plugin stores `%USERPROFILE%\Documents\LLM Wiki` as a portable default template and resolves the effective root at runtime. Explicit and legacy absolute roots remain supported.
 - `extract-atoms` now exports all structured atom JSONL files, not only claims.
 - `lint-promotions` now loads atom JSONL files when available and validates patch/candidate/log integrity (`patch_without_candidate`, `applied_patch_missing_log`).
 - `apply-wiki-patch` default apply scope is now locked to alpha-safe operations: `create_page`, `insert_claim_block`, `append_managed_section`, and `append_section`. Experimental `add_link` and `mark_stale` proposals are skipped by default instead of being applied as alpha guarantees.
@@ -52,6 +59,8 @@ All notable changes to Agent Context Substrate are summarized here.
 - Raw session extraction now exposes `build_typed_session_bundle(...)`, and packet construction uses the typed session boundary by default while preserving legacy raw JSON exports.
 - Naming and session-processing policy helpers now accept typed `SessionBundle` inputs while preserving raw bundle compatibility.
 - Session finalize integration now uses typed session bundles for process filtering and packet artifact construction.
+- Hermes and Codex finalize paths now share packet, recovery, and summary artifact construction through `finalize_artifacts.py`.
+- Summary and wiki-judge Codex execution now share process, timeout, output, and error normalization through `codex_exec.py` and `llm_runtime.py`.
 - V2 summary pipeline and build-context command export now accept/use typed `SessionBundle` inputs while keeping raw bundle compatibility.
 - Evidence and summary builders now read typed `SessionBundle` fields directly instead of round-tripping typed inputs through raw bundle payloads.
 - V2 summary lint validation now accepts typed `SessionBundle` inputs directly, so the summary pipeline no longer round-trips typed sessions through raw bundle payloads for linting.
@@ -63,9 +72,11 @@ All notable changes to Agent Context Substrate are summarized here.
 ### Verified
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
-- Project test suite: `277 passed`.
+- Project test suite: `408 passed, 12 skipped` on native Windows.
+- Ruff: `All checks passed!`.
 - Fresh-install smoke: `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0`.
-- Real Obsidian wiki validation was performed as dry-run only; no wiki writes were applied.
+- Isolated live Codex E2E: `summary_mode=codex-cli`, write decision `apply_flexible` at score `0.95`, one root-level page applied, and `lint_issue_count=0`.
+- Source and installed plugin Stop-hook assets were verified after setup; the real user wiki was not used as the E2E fixture.
 
 ## v0.1.0
 

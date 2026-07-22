@@ -13,7 +13,6 @@ import sys
 
 from .wiki_config import default_category_registry
 
-DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE = "%USERPROFILE%\\Documents\\Codex"
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"/mnt/[a-z]/Users/[^/\s'\"]+"),
     re.compile(r"[A-Za-z]:\\\\Users\\\\[^\\\s'\"]+"),
@@ -332,7 +331,8 @@ def _write_codex_local_config(
                 "python_executable": sys.executable,
                 "python_path_entries": [str(project_root / "src")],
                 "hook_event_log_path": str(project_root / "data" / "index" / "codex_hook_events.jsonl"),
-                "allowed_workspace_roots": [DEFAULT_CODEX_WORKSPACE_ROOT_TEMPLATE],
+                "workspace_scope": "all",
+                "allowed_workspace_roots": [],
                 "trigger_strategy": "hook-primary",
                 "watcher_fallback": True,
                 "hook_timeout_seconds": 110,
@@ -660,8 +660,8 @@ def run_fresh_install_smoke(
     wiki_root: Path | str,
     hermes_agent_root: Path | str | None = None,
 ) -> FreshInstallSmokeResult:
-    from .integration import _lint_issue_count, run_session_finalize_pipeline
-    from .lint import lint_wiki
+    from .integration import run_session_finalize_pipeline
+    from .lint import count_lint_issues, lint_wiki
     from .paths import HarnessPaths
     from .retrieval import expand_hit, search_knowledge
 
@@ -707,7 +707,7 @@ def run_fresh_install_smoke(
             detail = expand_hit(hits[0].hit_id, project_root=project_root, wiki_root=wiki_root)
             expanded_content_length = len(detail.content)
         lint_report = lint_wiki(HarnessPaths(project_root=project_root))
-        lint_issue_count = _lint_issue_count(lint_report)
+        lint_issue_count = count_lint_issues(lint_report)
 
     artifacts = {
         "raw_export_path": integration_result.raw_export_path,

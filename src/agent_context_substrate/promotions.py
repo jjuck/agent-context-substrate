@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .atoms import ClaimAtom
+from .wiki_intent import WikiPageIntent
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,16 @@ class PromotionCandidate:
     language: str | None = None
     page_type: str | None = None
     placement_reason: str | None = None
+
+    @property
+    def page_intent(self) -> WikiPageIntent:
+        return WikiPageIntent(
+            target_page=self.target_page,
+            category=self.category,
+            language=self.language,
+            page_type=self.page_type,
+            placement_reason=self.placement_reason,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -70,19 +81,23 @@ def propose_promotion_candidates(*, packet_id: str, claims: list[ClaimAtom]) -> 
     candidates: list[PromotionCandidate] = []
     for claim in claims:
         index = len(candidates) + 1
-        target_page = _target_page_for_claim(claim)
+        intent = WikiPageIntent.from_claim(claim)
         candidates.append(
             PromotionCandidate(
                 candidate_id=f"{packet_id}-candidate-{index}",
                 packet_id=packet_id,
                 kind="wiki_update",
-                target_page=target_page,
+                target_page=intent.target_page,
                 reason=f"Claim atom {claim.atom_id} may update durable wiki knowledge.",
                 evidence=[f"claim:{claim.atom_id}", *claim.source_refs],
                 proposed_change=claim.text,
-                proposed_action="update_existing" if target_page else "review_required",
+                proposed_action="update_existing" if intent.target_page else "review_required",
                 confidence=claim.confidence,
                 status="pending",
+                category=intent.category,
+                language=intent.language,
+                page_type=intent.page_type,
+                placement_reason=intent.placement_reason,
             )
         )
     return candidates
@@ -115,10 +130,6 @@ def render_promotion_candidates_markdown(*, packet_id: str, candidates: list[Pro
             lines.append(f"  - `{evidence}`")
         lines.append("")
     return "\n".join(lines)
-
-
-def _target_page_for_claim(claim: ClaimAtom) -> str:
-    return claim.subjects[0] if claim.subjects else ""
 
 
 def _optional_string(value: Any) -> str | None:

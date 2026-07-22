@@ -100,25 +100,21 @@ data/wiki_decisions/<packet_id>.json
 
 The ledger records the wiki automation mode and the write decision. A previous legacy `full` run is not incorrectly reused for a later `packet-only` request.
 
+A live wiki apply is not a page-first sequence of unrelated writes. ACS treats target pages, `index.md`, `log.md`, promotion status, and `applied.jsonl` as one recoverable transaction. Ordinary failures roll back from snapshots; a `prepared` manifest left by process termination is restored before the next apply.
+
 ## 5. Obsidian wiki structure
 
-Recommended vault layout:
+New vaults do not create a fixed folder taxonomy. The default skeleton is:
 
 ```text
 LLM Wiki/
-  Home.md
-  index.md              # compatibility catalog for harness lint
-  SCHEMA.md
+  index.md              # dynamically maintained MOC
   log.md
-  01 지식/
-  02 내 아이디어/
-  03 인물과 조직/
-  04 프로젝트/
-  05 계획/
-  06 원천 자료/
-  90 보관/
   _system/
     config.yaml
+    guides/
+      wiki-principles.md
+      ontology-seeds.md
     templates/
       ko/
       en/
@@ -126,7 +122,18 @@ LLM Wiki/
       llm-wiki.css
 ```
 
-The folder names can stay Korean because they are part of the human-facing wiki convention. Machine-readable classification is handled by Markdown frontmatter.
+The default `placement_policy` is `emergent-root`. Automatic flexible writes create `<Title>.md` at the vault root; frontmatter and the link graph carry meaning.
+
+| Element | Role |
+| --- | --- |
+| `type` | Broad page shape; defaults to `knowledge` |
+| `category` | Optional semantic grouping with open vocabulary |
+| `sources` | Claim and page provenance |
+| wikilinks | Graph edges between real durable pages |
+| `index.md` | Human-facing MOC grouped dynamically by category |
+| `review_needed` | Signals follow-up without blocking the write |
+
+Pages without a category appear under `Unclassified / Review Needed`. Existing category registries and folder mappings are used only when a vault explicitly sets `placement_policy: registry-folder`.
 
 ## 6. Language settings
 
@@ -142,6 +149,7 @@ wiki:
   filename_language: ko
   template_language: ko
   source_language_preserve: true
+  placement_policy: emergent-root
 ```
 
 | Field | Meaning |
@@ -151,19 +159,19 @@ wiki:
 | `filename_language` | Naming convention for generated or template-based page filenames |
 | `template_language` | Default template language |
 | `source_language_preserve` | Whether source material should preserve its original language |
+| `placement_policy` | Automatic placement policy; new vaults use `emergent-root` |
 
 ### 6.2 Page frontmatter
 
-Every active human-facing page should include `lang`.
+Generated pages prefer the candidate language and fall back to the vault default when language cannot be inferred. Manual pages should also include `lang`.
 
 ```yaml
 ---
 title: Context Packet
 lang: en
 type: knowledge
-category: knowledge
 status: active
-tags: [context, hermes, recovery]
+sources: ["claim:packet-1-claim-1"]
 ---
 ```
 
@@ -195,7 +203,7 @@ When creating a new page manually:
 1. choose a page type, such as `knowledge`, `idea`, `source`, `project`, `spec`, `plan`, or `decision`;
 2. choose `ko` or `en`;
 3. optionally copy a matching template as a starting point;
-4. fill in `title`, `lang`, `type`, `category`, `status`, and `tags`.
+4. fill in `title`, `lang`, `type`, `status`, and `sources`; add `category` and `tags` only when useful.
 
 ### 6.4 Language lint
 
@@ -317,7 +325,9 @@ Windows Codex app users should start with the [Windows setup guide](./WINDOWS_CO
 
 `setup-codex` copies the plugin asset, personal marketplace entry, and Codex plugin cache, then registers `agent-context-substrate@personal` with `codex plugin add` when a usable Codex CLI is available. File placement and Codex registry registration are separate; `doctor-codex` reports `codex_plugin_registered` and will tell you to run `codex plugin add agent-context-substrate@personal --json` if the app still lists the plugin as not installed. The plugin may appear under `Personal` or `Created by you`.
 
-The installed `project_root` is the ACS artifact root, not a requirement that every Codex thread run inside the ACS checkout. New installs set `allowed_workspace_roots` to `%USERPROFILE%\Documents\Codex` so ordinary Codex workspaces finalize on Stop while artifacts stay under `<PROJECT_ROOT>\data\...`. `doctor-codex` reports `codex_hook_recent_workspace_skips` when recent hook events show this guard is still skipping workspaces.
+The installed Stop hook is a thin bootstrap into core `codex_hook.py`. Core changes in the editable Python package normally take effect without uninstalling or reinstalling. Run `setup-codex --yes` again only when bundled hook, skill, plugin metadata, or marketplace/cache assets change, then review the hook again if Codex requests it.
+
+The installed `project_root` is the ACS artifact root, not a requirement that every Codex thread run inside the ACS checkout. New installs use `workspace_scope="all"`, so any active Codex workspace can finalize on Stop while artifacts stay under `<PROJECT_ROOT>\data\...`. Use `workspace_scope="restricted"` with explicit `allowed_workspace_roots` only when an installation needs an allowlist boundary.
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
@@ -662,7 +672,7 @@ Agent Context Substrate works with local private data.
 - write-judge score threshold and review-required fallback
 - promotion/wiki patch semantic lint
 - read-only retrieval by default
-- dry-run wiki patches by default
+- dry-run manual patches plus judge and mechanical gates for automatic writes
 
 ## 16. Troubleshooting
 

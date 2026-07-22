@@ -64,19 +64,13 @@ def test_stop_hook_decision_builds_codex_finalize_command_for_project_thread(tmp
     assert decision.cwd == project_root
 
 
-def test_stop_hook_decision_allows_default_codex_workspace_outside_artifact_root(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_stop_hook_decision_allows_any_workspace_by_default(tmp_path: Path) -> None:
     plugin_root = tmp_path / "plugin"
     project_root = tmp_path / "acs-install"
     wiki_root = tmp_path / "wiki"
     codex_home = tmp_path / "codex"
-    home = tmp_path / "home"
-    workspace = home / "Documents" / "Codex" / "2026-06-21" / "ordinary-workspace"
+    workspace = tmp_path / "external-drive" / "ordinary-workspace"
     _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
-    monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.setenv("HOME", str(home))
 
     decision = build_codex_stop_finalize_decision(
         payload={
@@ -210,6 +204,10 @@ def test_stop_hook_decision_skips_cwd_outside_allowed_workspace_roots(tmp_path: 
     wiki_root = tmp_path / "wiki"
     codex_home = tmp_path / "codex"
     _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
+    config_path = plugin_root / "local_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config.update({"workspace_scope": "restricted", "allowed_workspace_roots": [str(project_root)]})
+    config_path.write_text(json.dumps(config), encoding="utf-8")
 
     decision = build_codex_stop_finalize_decision(
         payload={
@@ -392,7 +390,19 @@ def test_stop_hook_success_marks_timestamp_rollout_suffix_as_processed(tmp_path:
     rollout_path = codex_home / "sessions" / "2026" / "06" / "14" / f"rollout-2026-06-14T201500Z-{thread_id}.jsonl"
     rollout_path.parent.mkdir(parents=True)
     rollout_path.write_text('{"payload":{"type":"user_message","message":"hello"}}\n', encoding="utf-8")
-    _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "workspace_scope": "restricted",
+                "allowed_workspace_roots": [str(project_root)],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     def runner(command: list[str], *, cwd: Path, timeout_seconds: int) -> CodexHookCommandRunnerResult:
         return CodexHookCommandRunnerResult(returncode=0, stdout="", stderr="")

@@ -1,272 +1,165 @@
 # Agent Context Substrate 운영 가이드
 
-이 문서는 `agent-context-substrate`를 실제로 돌릴 때 필요한 운영 기준과 런북입니다.
+이 문서는 설치가 끝난 ACS를 검증하고 운영하며 장애를 복구하는 canonical runbook입니다. 아키텍처는 [PIPELINE.md](./PIPELINE.md), 설치는 [WINDOWS_CODEX_APP_SETUP.ko.md](./WINDOWS_CODEX_APP_SETUP.ko.md)를 참고하세요.
 
 ## 1. 운영 목표
 
-현재 운영 목표는 다음입니다.
+운영자는 다음 상태를 보장합니다.
 
-> Hermes session은 재현 가능한 packet/recovery/retrieval artifact로 정리하고, Codex stopped thread는 judge-gated `apply-flexible` 경로로 LLM Wiki를 키운다.
+1. Hermes/Codex 원본 session store는 read-only로 취급한다.
+2. Machine artifact는 `<PROJECT_ROOT>/data`, human-facing knowledge는 resolved `<WIKI_ROOT>`에 분리한다.
+3. Codex Stop finalize는 summary, judge, apply 결과를 ledger와 event log에 남긴다.
+4. 승인된 candidate만 transaction으로 적용한다.
+5. 최종 blocking lint는 0으로 유지하고 advisory는 사후 품질 backlog로 관리한다.
 
-운영자가 보장해야 할 것:
+## 2. 현재 기준선
 
-1. 입력 경로가 올바르다. (`HERMES_HOME/state.db`, Codex `~/.codex/state_5.sqlite`, Codex rollout JSONL, `WIKI_PATH`, `--project-root`)
-2. Hermes/standalone `packet-only` 기본 정책과 Codex `apply-flexible` + write judge 기본 정책이 각각 유지된다.
-3. artifact가 `data/exports/`, `data/wiki_patches/`, `data/wiki_decisions/`, ledger에 남는다.
-4. 실제 Obsidian active graph는 judge-approved patch와 lint 기준을 통과한다.
-5. 언어 설정(`lang: ko|en`)이 active page에 적용된다.
-
-## 2. 실행 전 체크리스트
-
-### 필수 준비물
-
-- Python 3.11+
-- Hermes 세션 DB (`HERMES_HOME/state.db`) 또는 Codex 로컬 세션 source (`~/.codex/state_5.sqlite`, `~/.codex/sessions/**/rollout-*.jsonl`)
-- Agent Context Substrate project root
-- Obsidian LLM Wiki vault
-
-### 권장 초기화
-
-```bash
-cd '<PROJECT_ROOT>'
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-python -m pytest -q
-```
-
-### packaged integration install
-
-기존 live Hermes 환경에 설치할 때는 먼저 설정과 plugin/context-engine directory를 백업한 뒤 packaged installer를 실행합니다.
-
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-
-.venv/bin/agent-context-substrate init-wiki \
-  --wiki-root '<WIKI_ROOT>'
-
-.venv/bin/agent-context-substrate install-plugin \
-  --hermes-home ~/.hermes \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --overwrite
-
-.venv/bin/agent-context-substrate install-context-engine \
-  --hermes-agent-root '<HERMES_AGENT_ROOT>' \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --overwrite
-
-.venv/bin/agent-context-substrate doctor \
-  --hermes-home ~/.hermes \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --hermes-agent-root '<HERMES_AGENT_ROOT>' \
-  --fail-on-issues
-```
-
-설치 후 Hermes에서 `agent-context-substrate` plugin을 enable하고 `context.engine: agent_context_substrate`를 선택합니다. 이미 실행 중인 Telegram gateway는 module cache 때문에 restart가 필요할 수 있습니다.
-
-### fresh install smoke
-
-배포 검증은 temp root로 먼저 수행합니다.
-
-```bash
-TMP_PROJECT=$(mktemp -d)
-TMP_WIKI=$(mktemp -d)
-TMP_AGENT=$(mktemp -d)
-
-.venv/bin/agent-context-substrate fresh-install-smoke \
-  --session-id '<SESSION_ID>' \
-  --hermes-home ~/.hermes \
-  --project-root "$TMP_PROJECT" \
-  --wiki-root "$TMP_WIKI" \
-  --hermes-agent-root "$TMP_AGENT"
-```
-
-성공 기준:
+2026-07-21, v0.2.0 workspace 기준:
 
 ```text
-fresh-install-smoke ok=True
-lint_issue_count=0
-retrieval_hit_count>0
-expanded_content_length>0
+python -m pytest -q  -> 408 passed, 12 skipped
+python -m ruff check . -> All checks passed
+Codex live E2E -> summary_mode=codex-cli
+Codex live E2E -> wiki_write_decision=apply_flexible, score=0.95
+Codex live E2E -> wiki_apply_applied_count=1, lint_issue_count=0
 ```
 
-### 환경 변수 확인
+이 숫자는 release evidence이지 영구 상수가 아닙니다. behavior 변경 후에는 `CHANGELOG.md`와 release checklist의 최신 검증 결과를 함께 갱신합니다.
 
-```bash
-echo "$HERMES_HOME"
-echo "$WIKI_PATH"
-echo "$AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE"
-```
+## 3. 핵심 경로
 
-기본값:
-
-```text
-HERMES_HOME=~/.hermes
-WIKI_PATH=~/wiki
-AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only
-```
-
-
-## 2.1 현재 검증된 기준선
-
-v0.2.0 로컬 release candidate 기준으로 확인된 운영 기준선입니다.
-
-| 항목 | 결과 |
+| Purpose | Path or resolver |
 | --- | --- |
-| GitHub remote | `origin/main` → `jjuck/agent-context-substrate` |
-| Project tests | `305 passed, 12 skipped` |
-| Fresh install smoke | `ok=True`, `retrieval_hit_count=1`, `expanded_content_length=14195`, `lint_issue_count=0` |
-| Real wiki lint | `checked_pages=15`, `missing_provenance=0`, `orphan_pages=0`, `missing_from_index=0`, `broken_wikilinks=0` |
-| Live Codex attachment | plugin `agent-context-substrate`, Stop hook installed, watcher fallback available |
-| Live runtime | plugin `agent-context-substrate`, context engine `agent_context_substrate`, gateway running |
+| Hermes source | `HERMES_HOME/state.db` |
+| Codex metadata | `%USERPROFILE%\.codex\state_5.sqlite` |
+| Codex rollout | `%USERPROFILE%\.codex\sessions\**\rollout-*.jsonl` |
+| ACS artifacts | `<PROJECT_ROOT>/data` |
+| LLM Wiki | runtime-resolved `<WIKI_ROOT>` |
+| Hook events | `<PROJECT_ROOT>/data/index/codex_hook_events.jsonl` |
+| Watcher state | `<PROJECT_ROOT>/data/index/codex_watcher_state.json` |
+| Session ledger | `<PROJECT_ROOT>/data/index/session_ledger.json` |
+| Wiki transaction manifests | `<PROJECT_ROOT>/data/wiki_patches/transactions/` |
 
-이 표는 운영 기준선입니다. installer, context-engine, plugin, lint, retrieval을 바꾸면 다시 갱신하세요.
+Wiki root precedence:
 
-## 3. 경로 기준
+1. `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT`
+2. `WIKI_PATH`
+3. installed `local_config.json["wiki_root"]`
+4. `%USERPROFILE%\Documents\LLM Wiki`
 
-### 입력
+`config-codex paths`는 configured template과 effective path를 구분해서 보여줍니다.
 
-```text
-Hermes DB: HERMES_HOME/state.db
-Codex DB: ~/.codex/state_5.sqlite
-Codex rollout: ~/.codex/sessions/**/rollout-*.jsonl
-session_id/thread_id: CLI 인자 또는 hook에서 전달
-```
-
-Windows Codex 앱 사용자에게는 `~/.codex` 대신 `%USERPROFILE%\.codex`로 안내합니다.
-
-### Harness 출력
-
-```text
-data/exports/<session_id>.json
-data/exports/context_packets/<packet_id>.json
-data/exports/context_packets/<packet_id>.md
-data/exports/lint/<report_id>.json
-data/exports/lint/<report_id>.md
-data/exports/recovery/<session_id>.json
-data/index/session_ledger.json
-```
-
-### Obsidian vault
-
-현재 사용자 vault:
-
-```text
-<WIKI_ROOT>
-```
-
-권장 active structure:
-
-```text
-Home.md
-index.md
-SCHEMA.md
-log.md
-01 지식/
-02 내 아이디어/
-03 인물과 조직/
-04 프로젝트/
-05 계획/
-06 원천 자료/
-90 보관/
-_system/
-```
-
-## 4. 표준 운영 모드
-
-### 4.1 Raw export만 필요한 경우
+## 4. 시작 전 점검
 
 ```bash
-agent-context-substrate extract-session \
-  --session-id <session_id> \
-  --project-root .
+python -m agent_context_substrate.cli --help
+python -m agent_context_substrate.cli lint-wiki --help
+python -m pytest -q
+python -m ruff check .
+git diff --check
 ```
 
-확인:
+Windows Codex:
 
-- `data/exports/<session_id>.json` 생성
-- JSON 안에 `session`, `messages`, `slice`, `message_count` 존재
+```powershell
+.\.venv\Scripts\agent-context-substrate.exe codex-status
+.\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
+.\.venv\Scripts\agent-context-substrate.exe config-codex show
+.\.venv\Scripts\agent-context-substrate.exe config-codex paths
+```
 
-### 4.2 Context packet까지만 만드는 경우
+정상 기본값:
+
+```text
+hook_support=supported
+hook_primary=installed
+watcher_fallback=available
+summary_mode=auto
+wiki_auto_mode=apply-flexible
+wiki_write_judge_mode=auto
+wiki_auto_min_score=0.85
+workspace_scope=all
+```
+
+`doctor-codex --summary-smoke`는 signed-in `codex exec`를 실제로 호출하므로 필요할 때 명시적으로 실행합니다.
+
+## 5. 표준 운영 모드
+
+### 5.1 Hermes Or Standalone Packet Only
 
 ```bash
 agent-context-substrate build-context-packet \
-  --session-id <session_id> \
-  --packet-id <packet_id> \
-  --task-title "<task title>" \
-  --macro-context "<macro context>" \
-  --unit-title "<unit title>" \
-  --goal "<goal>" \
-  --project-root .
+  --session-id '<SESSION_ID>' \
+  --packet-id '<PACKET_ID>' \
+  --task-title '<TASK_TITLE>' \
+  --macro-context '<MACRO_CONTEXT>' \
+  --unit-title '<UNIT_TITLE>' \
+  --goal '<GOAL>' \
+  --project-root '<PROJECT_ROOT>'
 ```
 
-확인:
+V2 summary가 필요하면 `--summary-mode heuristic|custom-command|codex-cli|auto`를 추가합니다. Hermes/standalone finalize는 명시하지 않는 한 wiki full promotion을 실행하지 않습니다.
 
-- raw export JSON 생성
-- packet JSON/Markdown 생성
-- stdout에 `micro_summaries=...`, `unit_summaries=...`, `critical_files=...` 출력
+### 5.2 Codex Finalize
 
-### 4.3 Session finalize 기본 운영
+```powershell
+agent-context-substrate codex-finalize `
+  --thread-id '<THREAD_ID>' `
+  --codex-home "$HOME\.codex" `
+  --project-root '<PROJECT_ROOT>' `
+  --wiki-root '<WIKI_ROOT>' `
+  --summary-mode auto `
+  --wiki-auto-mode apply-flexible `
+  --wiki-write-judge-mode auto `
+  --wiki-auto-min-score 0.85
+```
 
-Hermes plugin의 `/new` 또는 `/packet <session_id>` 경로는 기본적으로 `packet-only`를 사용합니다.
+성공 확인:
 
-생성:
+- `data/exports/context_packets/<thread_id>.json`
+- `data/exports/summaries/<thread_id>-micro-v2.json`
+- `data/wiki_decisions/<thread_id>.json`
+- `data/wiki_patches/<thread_id>.json`
+- ledger의 `status=completed`
+- `wiki_apply_dry_run=False`인 경우 `wiki_apply_applied_count>0`
+- `lint_issue_count=0`
 
-- raw export
-- context packet
-- lint report
-- recovery brief
-- ledger record
+Judge가 `review_required`, `propose_only`, `skip`을 반환하거나 score가 기준보다 낮으면 `wiki_apply_dry_run=True` 또는 적용 0건이 정상입니다.
 
-생성하지 않음:
+### 5.3 Watcher Fallback
 
-- `queries/`
-- `concepts/`
-- `plans/`
-- `architectures/`
+```powershell
+agent-context-substrate codex-watch `
+  --codex-home "$HOME\.codex" `
+  --project-root '<PROJECT_ROOT>' `
+  --wiki-root '<WIKI_ROOT>' `
+  --once
+```
 
-Codex plugin Stop hook 경로는 기본적으로 `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`를 사용합니다. 이 경로는 Codex CLI summary, atom, promotion, flexible wiki patch, wiki decision artifact를 만들고, write judge가 승인하고 safety check를 통과한 patch만 LLM Wiki에 적용합니다.
+Plugin Stop hook이 정상 동작하면 watcher를 상시 중복 실행할 필요가 없습니다. Hook 미신뢰, 구형 runtime, 누락 event 복구에 사용합니다.
 
-### 4.4 Legacy full promotion이 필요한 경우
+### 5.4 Legacy Full Promotion
 
-실제 human-facing vault가 아니라 임시 wiki에서 먼저 실행하세요.
+Legacy 네 페이지 promotion은 임시 wiki에서 먼저 검증합니다.
 
 ```bash
 TMP_WIKI=$(mktemp -d)
-export WIKI_PATH="$TMP_WIKI"
-
-agent-context-substrate run-e2e-pipeline \
-  --session-id <session_id> \
-  --packet-id <packet_id> \
-  --task-title "<task title>" \
-  --macro-context "<macro context>" \
-  --unit-title "<unit title>" \
-  --goal "<goal>" \
-  --report-id <report_id> \
-  --project-root .
+WIKI_PATH="$TMP_WIKI" agent-context-substrate run-e2e-pipeline \
+  --session-id '<SESSION_ID>' \
+  --packet-id '<PACKET_ID>' \
+  --task-title '<TASK_TITLE>' \
+  --macro-context '<MACRO_CONTEXT>' \
+  --unit-title '<UNIT_TITLE>' \
+  --goal '<GOAL>' \
+  --report-id legacy-smoke \
+  --project-root '<PROJECT_ROOT>'
 ```
 
-주의:
+이 경로만 `queries/`, `concepts/`, `plans/`, `architectures/`를 사용합니다.
 
-- `run-e2e-pipeline`은 legacy query/concept/plan/architecture page를 생성합니다.
-- live Codex vault 운영에는 judge-gated `apply-flexible`이 기본입니다. judge 실패, 낮은 confidence, hash mismatch는 review-required artifact로 남기고 vault write를 건너뜁니다.
+## 6. Wiki 운영
 
-## 5. 언어 설정 운영법
-
-### 5.1 Vault config 확인
-
-```bash
-python - <<'PY'
-from pathlib import Path
-print(Path('<WIKI_ROOT>/_system/config.yaml').read_text(encoding='utf-8'))
-PY
-```
-
-기대값:
+새 vault의 기본 config:
 
 ```yaml
 wiki:
@@ -275,227 +168,150 @@ wiki:
   filename_language: ko
   template_language: ko
   source_language_preserve: true
+  placement_policy: emergent-root
 ```
 
-### 5.2 Active page 작성 기준
+운영 원칙:
 
-모든 active human-facing page에 아래 중 하나를 둡니다.
+- 새 flexible page는 기본적으로 vault root에 생성합니다.
+- `category`는 optional metadata이며 write permission이 아닙니다.
+- 새 category를 발견해도 자동 write를 막지 않습니다.
+- category 없는 page는 index의 `Unclassified / Review Needed`에 등록합니다.
+- `review_needed: true`는 실패가 아니라 사후 검토 신호입니다.
+- 실제 durable target이 있을 때만 wikilink를 추가합니다.
 
-```yaml
-lang: ko
-```
-
-또는:
-
-```yaml
-lang: en
-```
-
-### 5.3 Template 사용 기준
-
-```text
-_system/templates/ko/<type>.md
-_system/templates/en/<type>.md
-```
-
-새 page를 만들 때 `template_language`를 우선 사용하고, 원천 자료가 영어이면 source card에는 `lang: en`을 사용할 수 있습니다.
-
-### 5.4 언어 lint
+## 7. Lint 해석
 
 ```bash
-agent-context-substrate lint-wiki \
-  --project-root . \
-  --report-id language-check
+WIKI_PATH='<WIKI_ROOT>' agent-context-substrate lint-wiki \
+  --project-root '<PROJECT_ROOT>' \
+  --report-id operations-check \
+  --fail-on-issues
 ```
 
-문제 항목:
+`lint-wiki`는 별도 `--wiki-root` 옵션 대신 공통 resolver를 사용합니다. 설치 config를 쓰지 않는 수동 점검에서는 위처럼 `WIKI_PATH`를 해당 프로세스에만 지정합니다.
+
+### Blocking
+
+자동화 성공을 무효화하는 문제입니다.
+
+- `missing_provenance_pages`
+- `orphan_pages`
+- `pages_missing_from_index`
+- `broken_wikilinks`
+- internal packet/summary reference failures
+- transient, smoke, session-ID page naming 같은 durable-page 위반
+
+`index.md`의 wikilink도 discoverability inbound로 인정합니다.
+
+### Advisory
+
+작업은 성공시키되 검토 backlog로 남깁니다.
 
 - `missing_lang_pages`
 - `unsupported_lang_pages`
+- `missing_required_sections_pages`
+- `thin_content_pages`
+- `unexplained_english_terms_pages`
+- `insufficient_related_links_pages`
+- strict/registry mode의 `unregistered_category_pages`
 
-## 6. Lint 해석 기준
+Emergent-root mode에서는 새로운 category를 advisory로도 보고하지 않습니다.
 
-### Structural graph
+## 8. Wiki Transaction 점검
 
-| 항목 | 의미 | 기준 |
-| --- | --- | --- |
-| `missing_provenance_pages` | provenance 누락 | active page는 provenance 또는 sources를 가져야 함 |
-| `orphan_pages` | inbound link 없음 | 가능하면 0 |
-| `pages_missing_from_index` | `index.md` 누락 | 현재 harness lint 호환을 위해 0 유지 |
-| `broken_wikilinks` | 존재하지 않는 target | 반드시 0 |
+정상 apply manifest는 `committed`로 끝납니다. `rolled_back`은 적용 중 오류가 있었지만 snapshot 복구가 완료됐다는 뜻입니다.
 
-### Human-facing quality
+`prepared`가 남아 있으면 이전 프로세스가 commit 또는 rollback 전에 종료된 것입니다. 다음 동일 proposal apply가 자동 복구를 먼저 수행합니다. 수동으로 page/index/log 중 일부만 고치지 말고 proposal을 다시 apply해 복구 경계를 통과시키세요.
 
-| 항목 | 의미 | 기준 |
-| --- | --- | --- |
-| `numeric_slug_pages` | `7.md` 같은 page | active graph에서 금지 |
-| `session_id_slug_pages` | session id page | active graph에서 금지 |
-| `generated_summary_only_pages` | 자동 요약만 있는 page | active graph에서 금지 |
-| `smoke_or_test_pages` | 검증/임시 page | active graph에서 금지 |
-| `missing_lang_pages` | 언어 누락 | active graph에서 금지 |
-| `unsupported_lang_pages` | `ko/en` 외 언어 | active graph에서 금지 |
-
-### Internal artifact graph
-
-- `micro_summaries_missing_parent_unit`
-- `micro_summaries_with_unknown_parent_unit`
-- `unit_summaries_with_missing_micro_references`
-- `packet_micro_summaries_unreferenced`
-- `packets_missing_raw_pointers`
-
-## 7. 표준 검증 명령
-
-### Harness full suite
-
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-python -m pytest -q
-```
-
-### Real wiki lint
-
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-.venv/bin/agent-context-substrate lint-wiki \
-  --project-root '<PROJECT_ROOT>' \
-  --report-id real-wiki-smoke
-```
-
-기대값:
+점검 대상:
 
 ```text
-missing_provenance=0
-orphan_pages=0
-missing_from_index=0
-broken_wikilinks=0
-Human-facing quality issues=0
-Internal graph issues=0
+data/wiki_patches/transactions/<proposal_id>.json
+data/wiki_patches/transactions/<proposal_id>.snapshots/
+data/wiki_patches/applied.jsonl
+data/promotions/<packet_id>.json
+<WIKI_ROOT>/index.md
+<WIKI_ROOT>/log.md
 ```
 
-### Retrieval smoke
+## 9. 장애 대응
 
-Hermes tool이 활성화되어 있으면:
+### 9.1 Stop Hook이 실행되지 않음
 
-```text
-wiki_knowledge_search("Agent Context Substrate Context Packet")
+1. Codex 앱을 재시작합니다.
+2. Settings -> Hooks에서 ACS Stop hook을 trust/enable합니다.
+3. `codex-status`에서 `hook_primary=installed`를 확인합니다.
+4. `data/index/codex_hook_events.jsonl`의 최근 `skipped` 또는 `failed` detail을 확인합니다.
+5. 필요하면 `codex-watch --once`로 fallback을 검증합니다.
+
+### 9.2 Workspace가 Skip됨
+
+기본 `workspace_scope=all`에서는 workspace guard skip이 없어야 합니다. Restricted 설치라면 `allowed_workspace_roots`에 현재 `cwd`의 상위 root가 있는지 확인합니다.
+
+### 9.3 Codex Summary가 Heuristic으로 Fallback
+
+Summary JSON metadata의 `fallback_reason`을 확인합니다.
+
+- `codex_cli_unavailable`: direct Codex CLI 경로 확인
+- `command_failed`: 로그인 상태, timeout, service tier 확인
+- `invalid_json`: worker output/schema 회귀 확인
+- `lint:*`: evidence ID와 summary invariant 확인
+
+진단:
+
+```powershell
+agent-context-substrate doctor-codex --summary-smoke
+agent-context-substrate diagnose-codex
 ```
 
-기대:
+PATH의 `codex`가 npm shim이면 doctor가 찾은 direct app CLI를 `codex_cli_command`로 사용합니다.
 
-- `04 프로젝트/Agent Context Substrate.md` 같은 human-facing wiki hit
-- context packet artifact hit
+### 9.4 Judge는 승인했지만 Apply 0건
 
-## 8. privacy / release 운영 기준
+확인 순서:
 
-배포 또는 commit 전에는 아래를 확인합니다.
+1. decision의 `candidate_ids`가 실제 pending candidate와 일치하는가
+2. proposal operation의 `candidate_ids`가 선택 집합 안에 있는가
+3. page base hash가 현재 page와 일치하는가
+4. target이 wiki root 내부인가
+5. promotion candidate가 이미 applied/rejected 상태인가
 
-- `data/exports/`, `data/index/session_ledger.json`, temp wiki directory는 private/generated artifact로 취급합니다.
-- raw `state.db` export에는 전체 메시지와 tool output이 포함될 수 있습니다.
-- lint/recovery/context packet markdown도 민감한 요약이나 파일 경로를 포함할 수 있습니다.
-- API key, token, password, connection string, `.env`는 절대 commit하지 않습니다.
-- `.gitignore`가 generated artifact를 제외하는지 확인하고 `git status --short`를 검토합니다.
-- public release 전에는 `docs/RELEASE_CHECKLIST.md`를 따라 `doctor`, `fresh-install-smoke`, real wiki lint를 모두 통과시킵니다.
+### 9.5 Lint가 실패함
 
-## 9. 장애 대응 런북
+- provenance 누락: frontmatter `sources` 또는 본문 evidence를 추가합니다.
+- index 누락: 자동 registration 실패 여부와 transaction manifest를 확인합니다.
+- orphan: index 또는 실제 durable page에서 링크합니다.
+- broken link: 존재하는 target으로 수정하거나 불필요한 link를 제거합니다.
 
-### 9.1 `Unknown session_id`
+가짜 related page를 만들어 lint 숫자만 맞추지 않습니다.
 
-원인:
+### 9.6 Unknown Session Or Thread
 
-- session id 오타
-- 잘못된 `HERMES_HOME`
-- 다른 Hermes profile의 DB를 보고 있음
+- Hermes: `HERMES_HOME`과 `state.db` profile을 확인합니다.
+- Codex: `codex-status`가 표시하는 thread ID와 rollout path를 확인합니다.
+- Codex worker가 만든 내부 summary/judge thread는 ingestion 대상에서 제외될 수 있습니다.
 
-대응:
+## 10. Privacy And Release
 
-```bash
-echo "$HERMES_HOME"
-test -f "$HERMES_HOME/state.db" && echo ok || echo missing
-```
+- `data/exports`, SQLite, rollout JSONL, recovery, packet, lint report를 private data로 취급합니다.
+- API key, OAuth token, password, `.env`, connection string을 commit하지 않습니다.
+- Public release 전에 `git status --short --untracked-files=all`을 확인합니다.
+- 실제 사용자 wiki를 E2E fixture로 사용하지 않습니다. Temp project와 temp wiki에서 먼저 검증합니다.
+- 설치본 검증 시 source, active plugin, marketplace cache의 핵심 asset hash를 비교합니다.
+- Hook script 변경 후 plugin을 재설치합니다. Editable Python runtime 변경은 같은 project `src`를 가리키는 설치에서 즉시 반영됩니다.
 
-### 9.2 CLI 명령을 찾지 못함
+## 11. 보존과 정리
 
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-pip install -e '.[dev]'
-.venv/bin/agent-context-substrate --help
-```
+| Data | Policy |
+| --- | --- |
+| raw exports | private, 목적 달성 후 삭제 가능 |
+| context packets | recovery/retrieval에 필요하면 보존 |
+| summary/evidence | judge와 provenance audit 기간 동안 보존 |
+| promotion/decision/patch | write 감사 기록으로 보존 |
+| transaction snapshots | committed/rolled_back 확인 후 retention 정책으로 정리 가능 |
+| session ledger | 재실행/idempotency를 위해 보존 |
+| hook event log | size-based rotation 가능 |
+| watcher state | rollout fingerprint 재처리를 막기 위해 보존 |
 
-### 9.3 `/harness`가 `degraded`
-
-확인:
-
-- `project_root exists`
-- `wiki_root exists`
-- `harness_importable`
-- `harness_import_error`
-
-대응:
-
-- `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT`가 실제 project root인지 확인
-- `src/agent_context_substrate`가 존재하는지 확인
-- gateway 재시작 필요 여부 확인
-
-### 9.4 언어 lint 실패
-
-증상:
-
-```text
-Missing language
-Unsupported language
-```
-
-대응:
-
-1. report에서 page path 확인
-2. frontmatter에 `lang: ko` 또는 `lang: en` 추가
-3. 다시 `lint-wiki` 실행
-
-### 9.5 broken wikilink
-
-대응:
-
-- link target page를 생성하거나
-- wikilink를 실제 page title/stem에 맞게 수정하거나
-- legacy/generated page link라면 active page에서 제거하고 archive로 이동
-
-### 9.6 WSL + 한글 Windows 경로 문제
-
-권장 패턴:
-
-```bash
-cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
-```
-
-`terminal(workdir=...)`에 `/mnt/<drive>/Users/<windows-user>/...`를 넣는 방식은 피합니다.
-
-## 10. 보존 / 정리 기준
-
-보존 가치 높음:
-
-- `data/exports/context_packets/*.json`
-- `data/exports/recovery/*.json`
-- `data/index/session_ledger.json`
-- 실제 Obsidian curated pages
-
-정리 가능:
-
-- 오래된 temp wiki smoke directory
-- 중복 lint report
-- `data/exports/tmp-*-wiki/`
-
-단, 디버깅 중이면 관련 lint report와 packet JSON은 함께 보존하세요.
-
-## 11. 운영자용 최소 체크리스트
-
-- [ ] 원하는 `session_id`를 읽었는가
-- [ ] `promotion_mode`가 의도대로인가 (`packet-only` 권장)
-- [ ] raw export와 packet artifact가 생성됐는가
-- [ ] recovery JSON이 생성됐는가
-- [ ] ledger가 completed 상태인가
-- [ ] real wiki lint가 깨끗한가
-- [ ] active page에 `lang`이 있는가
-- [ ] generated/session-id/numeric page가 active graph에 없는가
+`Unclassified / Review Needed`가 커지면 category 정리를 수동으로 하거나 향후 Janitor/notification pipeline을 붙일 수 있습니다. Category 증가 자체는 운영 장애가 아닙니다.

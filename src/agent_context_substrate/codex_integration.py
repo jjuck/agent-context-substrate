@@ -21,17 +21,15 @@ from .codex_source import (
     export_codex_session_bundle,
     resolve_codex_home,
 )
-from .context_packet import build_context_packet, export_context_packet
-from .integration import IntegrationResult, _lint_issue_count, _summary_artifact_paths
+from .finalize_artifacts import FinalizeArtifactOptions, build_finalize_artifacts, summary_artifact_paths
+from .integration import IntegrationResult
 from .ledger import SessionLedger
-from .lint import export_lint_report, lint_wiki
-from .naming import derive_goal, derive_task_title, derive_unit_title
+from .lint import count_lint_issues, export_lint_report, lint_wiki
+from .llm_runtime import AgentLLMRouter, LLMInputSafetyOptions
 from .paths import HarnessPaths
 from .recovery import build_recovery_brief
 from .safe_paths import safe_artifact_stem, safe_child_path
-from .summarizer import build_micro_summary, build_unit_summary
-from .summarizer_backends import AgentLLMRouter, LLMInputSafetyOptions
-from .summary_pipeline import SummaryArtifactResult, SummaryOptions, build_v2_summary_artifacts
+from .summary_pipeline import SummaryArtifactResult
 from .wiki_patches import (
     WikiPatchApplyResult,
     WikiPatchProposal,
@@ -165,58 +163,34 @@ def run_codex_thread_finalize_pipeline(
                 max_tool_output_chars=max_tool_output_chars,
             )
             raw_export_path = export_codex_session_bundle(bundle=session_bundle, project_root=paths.project_root)
-            resolved_task_title = task_title or derive_task_title(session_bundle=session_bundle, session_id=thread_id)
-            resolved_unit_title = unit_title or derive_unit_title(
+            finalize_artifacts = build_finalize_artifacts(
                 session_bundle=session_bundle,
-                task_title=resolved_task_title,
-            )
-            unit_id = f"{packet_id}-unit-1"
-            micro_summary = build_micro_summary(
-                session_bundle=session_bundle,
-                micro_id=f"{packet_id}-micro-1",
-                parent_unit_id=unit_id,
-            )
-            resolved_goal = goal or derive_goal(resolved_task_title, micro_summary)
-            unit_summary = build_unit_summary(
-                unit_id=unit_id,
-                session_id=thread_id,
-                title=resolved_unit_title,
-                goal=resolved_goal,
-                micro_summaries=[micro_summary],
-                related_pages=related_pages,
-            )
-            packet = build_context_packet(
-                packet_id=packet_id,
-                task_title=resolved_task_title,
-                macro_context=f"Recover Codex thread {thread_id} without replaying the full raw transcript.",
-                unit_summary=unit_summary,
-                micro_summaries=[micro_summary],
-            )
-            packet_json_path, packet_markdown_path = export_context_packet(packet=packet, paths=paths)
-            summary_artifacts: SummaryArtifactResult | None = None
-            if summary_mode:
-                summary_artifacts = build_v2_summary_artifacts(
-                    session_bundle=session_bundle,
-                    paths=paths,
-                    options=SummaryOptions(
-                        session_id=thread_id,
-                        packet_id=packet_id,
-                        unit_title=resolved_unit_title,
-                        goal=resolved_goal,
-                        related_pages=related_pages,
-                        summary_mode=summary_mode,
-                        summarizer_command=summarizer_command,
-                        routing_hints=_build_codex_summary_routing_hints(
-                            summary_model=summary_model,
-                            summary_budget=summary_budget,
-                            codex_cli_command=codex_cli_command,
-                            codex_project_root=paths.project_root,
-                            codex_timeout_seconds=codex_timeout_seconds,
-                        ),
-                        summary_cache=summary_cache,
-                        llm_safety=llm_safety or LLMInputSafetyOptions(),
+                raw_export_path=raw_export_path,
+                paths=paths,
+                options=FinalizeArtifactOptions(
+                    session_id=thread_id,
+                    packet_id=packet_id,
+                    task_title=task_title,
+                    unit_title=unit_title,
+                    goal=goal,
+                    macro_context=f"Recover Codex thread {thread_id} without replaying the full raw transcript.",
+                    related_pages=tuple(related_pages),
+                    summary_mode=summary_mode,
+                    summarizer_command=summarizer_command,
+                    summary_routing_hints=_build_codex_summary_routing_hints(
+                        summary_model=summary_model,
+                        summary_budget=summary_budget,
+                        codex_cli_command=codex_cli_command,
+                        codex_project_root=paths.project_root,
+                        codex_timeout_seconds=codex_timeout_seconds,
                     ),
-                )
+                    summary_cache=summary_cache,
+                    llm_safety=llm_safety,
+                ),
+            )
+            packet_json_path = finalize_artifacts.packet_json_path
+            packet_markdown_path = finalize_artifacts.packet_markdown_path
+            summary_artifacts: SummaryArtifactResult | None = finalize_artifacts.summary_artifacts
             wiki_auto_result: CodexWikiAutoResult | None = None
             if wiki_auto_mode != "off" and summary_artifacts is not None:
                 wiki_auto_result = _run_codex_wiki_auto(
@@ -251,10 +225,10 @@ def run_codex_thread_finalize_pipeline(
                 "lint_json_path": str(lint_json_path),
                 "lint_markdown_path": str(lint_markdown_path),
             }
-            artifact_paths.update(_summary_artifact_paths(summary_artifacts))
+            artifact_paths.update(summary_artifact_paths(summary_artifacts))
             artifact_paths.update(_wiki_auto_artifact_paths(wiki_auto_result))
             partial_artifact_paths = dict(artifact_paths)
-            lint_issue_count = _lint_issue_count(lint_report)
+            lint_issue_count = count_lint_issues(lint_report)
             ledger.mark_completed(
                 session_id=thread_id,
                 pipeline="session_finalize",
@@ -355,9 +329,13 @@ def _run_codex_wiki_auto(
             apply_result=None,
         )
     should_apply = decision.approved_for_auto_apply(wiki_auto_mode)
+    selected_candidates = candidates
+    if should_apply:
+        selected_ids = set(decision.candidate_ids)
+        selected_candidates = [candidate for candidate in candidates if candidate.candidate_id in selected_ids]
     final_proposal = plan_wiki_patch_proposal(
         packet_id=packet_id,
-        candidates=candidates,
+        candidates=selected_candidates,
         wiki_root=wiki_root,
         write_mode=write_mode,
         judge_mode=wiki_write_judge_mode,

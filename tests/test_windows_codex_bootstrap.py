@@ -22,7 +22,7 @@ def test_windows_codex_bootstrap_script_documents_single_command_flow() -> None:
     assert "agent-context-substrate@personal" in script
     assert "codex_plugin_registered" in script
     assert "allowed_workspace_roots" in script
-    assert "%USERPROFILE%\\Documents\\Codex" in script
+    assert "workspace_scope is all" in script
     assert "Codex app -> Settings -> Hooks" in script
     assert "CLI /hooks is the alternate" in script
     assert "--user-hook-fallback" not in script

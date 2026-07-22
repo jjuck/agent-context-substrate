@@ -191,7 +191,7 @@ try {
 
   Write-Step "setup-codex pins a detected direct codex.exe path into local_config.json as codex_cli_command when available."
   Write-Step "setup-codex registers agent-context-substrate@personal with Codex via 'codex plugin add' when Codex CLI is available; doctor-codex reports codex_plugin_registered."
-  Write-Step "Default allowed_workspace_roots includes %USERPROFILE%\Documents\Codex so ordinary Codex workspaces can finalize while ACS artifacts stay under ProjectRoot\data."
+  Write-Step "Default workspace_scope is all, so any Codex workspace can finalize while ACS artifacts stay under ProjectRoot\data; restricted installs can configure allowed_workspace_roots."
   Write-Step "Default local_config enables summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85."
   Write-Step "Restart Codex, open Codex app -> Settings -> Hooks, and trust the agent-context-substrate Stop hook. CLI /hooks is the alternate path. If a 'Hooks need review' modal appears, review the ACS hook command before choosing Trust all and continue."
   Write-Step "Default setup installs the plugin Stop hook only. Use the documented user hook fallback only if plugin hooks are unavailable, to avoid duplicate Stop hooks."
