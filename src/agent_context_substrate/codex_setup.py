@@ -14,6 +14,7 @@ from .codex_cli import (
     default_local_app_data,
     default_windows_apps_dir,
     detect_codex_cli,
+    resolve_codex_command,
 )
 from .codex_exec import CodexExecRuntime
 from .codex_source import (
@@ -375,9 +376,13 @@ def doctor_codex(
     codex_cli = detect_codex_cli()
     checks["codex_cli_available"] = codex_cli.status
     configured_codex_cli = str(local_config.get("codex_cli_command") or "").strip()
-    selected_codex_cli = configured_codex_cli or (str(codex_cli.recommended_path) if codex_cli.recommended_path is not None else "")
+    detected_codex_cli = str(codex_cli.recommended_path) if codex_cli.recommended_path is not None else ""
+    effective_codex_cli = resolve_codex_command(configured_codex_cli or None) or ""
+    selected_codex_cli = effective_codex_cli or configured_codex_cli
     selected_codex_cli_kind = _selected_codex_cli_kind(selected_codex_cli)
-    plugin_registry = _inspect_codex_plugin_registry(selected_codex_cli=selected_codex_cli)
+    plugin_registry = _inspect_codex_plugin_registry(
+        selected_codex_cli=effective_codex_cli or detected_codex_cli,
+    )
     checks["codex_plugin_registered"] = plugin_registry.status
     workspace_skips = _inspect_recent_workspace_guard_skips(
         project_root=project_root_path,
@@ -386,7 +391,8 @@ def doctor_codex(
     checks["codex_hook_recent_workspace_skips"] = workspace_skips.status
     checks["codex_summary_cli_config"] = _summary_cli_config_status(
         summary_mode=summary_mode,
-        selected_codex_cli=selected_codex_cli,
+        configured_codex_cli=configured_codex_cli,
+        effective_codex_cli=effective_codex_cli,
     )
     checks["codex_summary_cli_direct"] = _summary_cli_direct_status(
         summary_mode=summary_mode,
@@ -394,7 +400,7 @@ def doctor_codex(
     )
     checks["codex_summary_smoke"] = _codex_summary_smoke_status(
         summary_mode=summary_mode,
-        selected_codex_cli=selected_codex_cli,
+        selected_codex_cli=effective_codex_cli,
         project_root=project_root_path,
         enabled=summary_smoke,
     )
@@ -414,6 +420,8 @@ def doctor_codex(
         report_paths["codex_recommended_cli"] = codex_cli.recommended_path
     if configured_codex_cli:
         report_paths["codex_configured_cli"] = Path(configured_codex_cli)
+    if effective_codex_cli:
+        report_paths["codex_effective_cli"] = Path(effective_codex_cli)
     return CodexDoctorReport(
         ok=ok,
         checks=checks,
@@ -423,6 +431,10 @@ def doctor_codex(
             + _wiki_root_messages(resolution=wiki_root_resolution)
             + plugin_registry.messages
             + workspace_skips.messages
+            + _codex_cli_recovery_messages(
+                configured_codex_cli=configured_codex_cli,
+                effective_codex_cli=effective_codex_cli,
+            )
             + _summary_messages(
                 summary_mode=summary_mode,
                 selected_codex_cli=selected_codex_cli,
@@ -569,12 +581,17 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _summary_cli_config_status(*, summary_mode: str, selected_codex_cli: str) -> str:
+def _summary_cli_config_status(
+    *,
+    summary_mode: str,
+    configured_codex_cli: str,
+    effective_codex_cli: str,
+) -> str:
     if summary_mode not in {"auto", "codex-cli", "codex-exec"}:
         return STATUS_SKIPPED
-    if not selected_codex_cli:
+    if configured_codex_cli and not _command_exists(configured_codex_cli):
         return STATUS_WARN
-    return STATUS_OK if _command_exists(selected_codex_cli) else STATUS_WARN
+    return STATUS_OK if effective_codex_cli and _command_exists(effective_codex_cli) else STATUS_WARN
 
 
 def _summary_cli_direct_status(*, summary_mode: str, selected_codex_cli_kind: str) -> str:
@@ -901,6 +918,22 @@ def _wiki_root_messages(*, resolution: CodexWikiRootResolution) -> list[str]:
         f"LLM Wiki root source: {resolution.source}",
         f"LLM Wiki root configured value: {resolution.raw_value}",
         f"LLM Wiki effective root: {resolution.path}" if resolution.path is not None else "LLM Wiki effective root: unresolved",
+    ]
+
+
+def _codex_cli_recovery_messages(*, configured_codex_cli: str, effective_codex_cli: str) -> list[str]:
+    if (
+        not configured_codex_cli
+        or not effective_codex_cli
+        or _command_exists(configured_codex_cli)
+        or Path(configured_codex_cli) == Path(effective_codex_cli)
+    ):
+        return []
+    return [
+        (
+            f"Configured Codex CLI is stale: {configured_codex_cli}. "
+            f"Runtime recovered with the current Codex app CLI: {effective_codex_cli}"
+        )
     ]
 
 

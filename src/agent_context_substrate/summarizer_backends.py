@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
 
-from .codex_cli import codex_command_available, resolve_codex_command
+from .codex_cli import resolve_codex_command
 from .codex_exec import CodexExecRuntime
 from .llm_runtime import (
     AgentLLMRouter,
@@ -768,9 +768,7 @@ def _codex_summary_prompt(*, kind: str, request_json: str) -> str:
 
 
 def _codex_cli_available(command: str | None = None) -> bool:
-    if command:
-        return codex_command_available(command)
-    return resolve_codex_command() is not None
+    return resolve_codex_command(command) is not None
 
 
 def _codex_cli_command_hint(routing_hints: dict[str, object]) -> str | None:

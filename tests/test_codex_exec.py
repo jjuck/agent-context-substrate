@@ -7,6 +7,8 @@ from agent_context_substrate.codex_exec import CodexExecRuntime
 
 def test_codex_exec_runtime_owns_isolated_structured_execution(tmp_path: Path) -> None:
     calls: list[tuple[list[str], dict[str, object]]] = []
+    fake_codex = tmp_path / "codex.exe"
+    fake_codex.write_text("", encoding="utf-8")
 
     def runner(command: list[str], **kwargs):
         calls.append((command, kwargs))
@@ -21,7 +23,7 @@ def test_codex_exec_runtime_owns_isolated_structured_execution(tmp_path: Path) -
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     runtime = CodexExecRuntime(
-        codex_command=str(tmp_path / "codex.exe"),
+        codex_command=str(fake_codex),
         project_root=tmp_path,
         timeout_seconds=17,
         model="gpt-test",
@@ -37,7 +39,7 @@ def test_codex_exec_runtime_owns_isolated_structured_execution(tmp_path: Path) -
 
     command, kwargs = calls[0]
     assert payload == {"decision": "approved"}
-    assert command[:2] == [str(tmp_path / "codex.exe"), "exec"]
+    assert command[:2] == [str(fake_codex), "exec"]
     assert "--ephemeral" in command
     assert "--ignore-user-config" in command
     assert "--ignore-rules" in command
@@ -53,11 +55,14 @@ def test_codex_exec_runtime_owns_isolated_structured_execution(tmp_path: Path) -
 
 
 def test_codex_exec_runtime_reports_nonzero_exit_with_worker_label(tmp_path: Path) -> None:
+    fake_codex = tmp_path / "codex.exe"
+    fake_codex.write_text("", encoding="utf-8")
+
     def runner(command: list[str], **_kwargs):
         return subprocess.CompletedProcess(command, 9, stdout="", stderr="not logged in")
 
     runtime = CodexExecRuntime(
-        codex_command=str(tmp_path / "codex.exe"),
+        codex_command=str(fake_codex),
         project_root=tmp_path,
         runner=runner,
     )
@@ -73,3 +78,27 @@ def test_codex_exec_runtime_reports_nonzero_exit_with_worker_label(tmp_path: Pat
         assert str(exc) == "summary worker failed with exit_code=9: not logged in"
     else:
         raise AssertionError("Expected CodexExecRuntime to raise RuntimeError")
+
+
+def test_codex_exec_runtime_recovers_rotated_desktop_cli_path(tmp_path: Path, monkeypatch) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    codex_bin = local_app_data / "OpenAI" / "Codex" / "bin"
+    stale_codex = codex_bin / "old-build" / "codex.exe"
+    current_codex = codex_bin / "current-build" / "codex.exe"
+    current_codex.parent.mkdir(parents=True)
+    current_codex.write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="recovered", stderr="")
+
+    runtime = CodexExecRuntime(
+        codex_command=str(stale_codex),
+        project_root=tmp_path / "project",
+        runner=runner,
+    )
+
+    assert runtime.run_text(prompt="test", error_label="worker") == "recovered"
+    assert calls[0][0] == str(current_codex)

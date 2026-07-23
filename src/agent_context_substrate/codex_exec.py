@@ -115,9 +115,7 @@ class CodexExecRuntime:
         return result
 
     def _command_for_execution(self) -> str:
-        if self.codex_command:
-            return self.codex_command
-        command = resolve_codex_command()
+        command = resolve_codex_command(self.codex_command)
         if command:
             return command
         raise RuntimeError("codex worker unavailable: codex command was not found")

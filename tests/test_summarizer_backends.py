@@ -110,8 +110,10 @@ def test_codex_cli_summarizer_invokes_codex_exec_with_safety_flags_and_parses_js
     monkeypatch.setattr(subprocess, "run", fake_run)
     project_root = tmp_path / "project"
     project_root.mkdir()
+    fake_codex = tmp_path / "codex.exe"
+    fake_codex.write_text("", encoding="utf-8")
     backend = CodexCliSummarizerBackend(
-        codex_command=str(tmp_path / "codex.exe"),
+        codex_command=str(fake_codex),
         project_root=project_root,
         timeout_seconds=7,
     )
@@ -119,7 +121,7 @@ def test_codex_cli_summarizer_invokes_codex_exec_with_safety_flags_and_parses_js
     summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
 
     command = calls[0]["command"]
-    assert command[:2] == [str(tmp_path / "codex.exe"), "exec"]
+    assert command[:2] == [str(fake_codex), "exec"]
     assert "-C" in command
     assert str(tmp_path / "project") in command
     assert "--sandbox" in command
@@ -158,8 +160,10 @@ def test_codex_cli_summarizer_falls_back_to_heuristic_when_exec_fails(monkeypatc
     monkeypatch.setattr(subprocess, "run", fake_run)
     project_root = tmp_path / "project"
     project_root.mkdir()
+    fake_codex = tmp_path / "codex.exe"
+    fake_codex.write_text("", encoding="utf-8")
     backend = CodexCliSummarizerBackend(
-        codex_command=str(tmp_path / "codex.exe"),
+        codex_command=str(fake_codex),
         project_root=project_root,
     )
 
@@ -211,8 +215,10 @@ def test_codex_cli_summarizer_falls_back_when_jsonl_output_is_not_summary_json(
     monkeypatch.setattr(subprocess, "run", fake_run)
     project_root = tmp_path / "project"
     project_root.mkdir()
+    fake_codex = tmp_path / "codex.exe"
+    fake_codex.write_text("", encoding="utf-8")
     backend = CodexCliSummarizerBackend(
-        codex_command=str(tmp_path / "codex.exe"),
+        codex_command=str(fake_codex),
         project_root=project_root,
     )
 

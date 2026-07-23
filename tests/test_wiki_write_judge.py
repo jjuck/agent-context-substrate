@@ -118,6 +118,8 @@ def test_wiki_write_judge_degrades_to_review_required_without_llm() -> None:
 
 def test_codex_cli_wiki_judge_runs_ephemeral_and_ignores_user_config(monkeypatch, tmp_path: Path) -> None:
     calls: list[list[str]] = []
+    fake_codex = tmp_path / "codex.exe"
+    fake_codex.write_text("", encoding="utf-8")
 
     def fake_run(command, **_kwargs):
         calls.append(command)
@@ -137,7 +139,7 @@ def test_codex_cli_wiki_judge_runs_ephemeral_and_ignores_user_config(monkeypatch
 
     monkeypatch.setattr("agent_context_substrate.codex_exec.subprocess.run", fake_run)
     router = CodexCliWikiWriteJudgeRouter(
-        codex_command=str(tmp_path / "codex.exe"),
+        codex_command=str(fake_codex),
         project_root=tmp_path,
     )
 

@@ -351,6 +351,35 @@ def test_stop_hook_runner_never_blocks_codex_on_finalize_failure(tmp_path: Path)
     assert "systemMessage" in output
 
 
+def test_stop_hook_subprocess_protocol_is_utf8(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
+
+    def fake_run(command, **kwargs):
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        assert kwargs["env"]["PYTHONUTF8"] == "1"
+        assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
+        return subprocess.CompletedProcess(command, 0, stdout="정리 완료", stderr="")
+
+    monkeypatch.setattr("agent_context_substrate.codex_hook.subprocess.run", fake_run)
+
+    output = run_codex_stop_finalize_hook(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-utf8-output",
+            "cwd": str(project_root),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+    )
+
+    assert output == {"continue": True}
+
+
 def test_stop_hook_success_marks_watcher_state_processed(tmp_path: Path) -> None:
     plugin_root = tmp_path / "plugin"
     project_root = tmp_path / "project"

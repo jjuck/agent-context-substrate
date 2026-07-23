@@ -565,6 +565,50 @@ def test_doctor_codex_classifies_configured_direct_summary_cli(tmp_path: Path, m
     assert "Codex summary CLI kind: direct-app-cli" in "\n".join(report.messages)
 
 
+def test_doctor_codex_recovers_stale_versioned_app_cli(tmp_path: Path, monkeypatch) -> None:
+    local_app_data = tmp_path / "LocalAppData"
+    codex_bin = local_app_data / "OpenAI" / "Codex" / "bin"
+    stale_codex = codex_bin / "old-build" / "codex.exe"
+    current_codex = codex_bin / "current-build" / "codex.exe"
+    current_codex.parent.mkdir(parents=True)
+    current_codex.write_text("", encoding="utf-8")
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=tmp_path / "marketplace",
+        overwrite=True,
+    )
+    update_codex_local_config(
+        codex_home / "plugins" / "agent-context-substrate",
+        {"summary_mode": "auto", "codex_cli_command": str(stale_codex)},
+    )
+
+    def fake_run(command, **_kwargs):
+        assert command[0] == str(current_codex)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="agent-context-substrate@personal  installed, enabled  0.2.0\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("agent_context_substrate.codex_setup.subprocess.run", fake_run)
+
+    report = doctor_codex(codex_home=codex_home, project_root=project_root, wiki_root=wiki_root)
+
+    assert report.checks["codex_plugin_registered"] == "ok"
+    assert report.checks["codex_summary_cli_config"] == "warn"
+    assert report.checks["codex_summary_cli_direct"] == "ok"
+    assert report.paths["codex_configured_cli"] == stale_codex
+    assert report.paths["codex_effective_cli"] == current_codex
+    assert "Runtime recovered with the current Codex app CLI" in "\n".join(report.messages)
+
+
 def test_doctor_codex_summary_smoke_is_opt_in(tmp_path: Path, monkeypatch) -> None:
     codex_home = tmp_path / "codex-home"
     project_root = tmp_path / "project"

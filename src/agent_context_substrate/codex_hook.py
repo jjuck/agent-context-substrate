@@ -174,6 +174,8 @@ def _run_command(
         cwd=str(cwd),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=env,
         timeout=timeout_seconds,
         check=False,
@@ -195,6 +197,8 @@ def _load_config(plugin_root: Path) -> dict[str, Any]:
 
 def _subprocess_environment(config: dict[str, Any], *, project_root: Path) -> dict[str, str]:
     env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     entries: list[str] = []
     configured_entries = config.get("python_path_entries")
     if isinstance(configured_entries, list):

@@ -107,9 +107,19 @@ def detect_codex_cli(
 
 
 def resolve_codex_command(configured: str | None = None) -> str | None:
-    requested = str(configured or os.environ.get("AGENT_CONTEXT_SUBSTRATE_CODEX_CLI") or "").strip()
-    if requested:
-        return requested if codex_command_available(requested) else None
+    configured_command = str(configured or "").strip()
+    if configured_command:
+        if codex_command_available(configured_command):
+            return configured_command
+        if _is_rotating_codex_app_command(configured_command):
+            detection = detect_codex_cli()
+            if detection.recommended_path is not None:
+                return str(detection.recommended_path)
+        return None
+
+    environment_command = str(os.environ.get("AGENT_CONTEXT_SUBSTRATE_CODEX_CLI") or "").strip()
+    if environment_command:
+        return environment_command if codex_command_available(environment_command) else None
     detection = detect_codex_cli()
     return str(detection.recommended_path) if detection.recommended_path is not None else None
 
@@ -129,6 +139,18 @@ def default_local_app_data() -> Path | None:
 def default_windows_apps_dir() -> Path | None:
     local_app_data = default_local_app_data()
     return local_app_data / "Microsoft" / "WindowsApps" if local_app_data is not None else None
+
+
+def _is_rotating_codex_app_command(command: str) -> bool:
+    command_path = Path(command).expanduser()
+    if not command_path.is_absolute() and command_path.parent == Path("."):
+        return False
+    path_kind = classify_codex_cli_path(
+        command_path,
+        local_app_data=default_local_app_data(),
+        windows_apps=default_windows_apps_dir(),
+    )
+    return path_kind in {"versioned-app-cli", "windowsapps-app-bundle"}
 
 
 def classify_codex_cli_path(path: Path | None, *, local_app_data: Path | None, windows_apps: Path | None) -> str:
