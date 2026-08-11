@@ -4,7 +4,7 @@
 
 This guide is for Windows Codex app users who want Agent Context Substrate (ACS) installed from the GitHub repo. The target flow is simple: give a fresh Codex thread the repo URL and ask it to install ACS.
 
-ACS reads Codex session files **read-only**, writes audit artifacts under the cloned project `data\...` directory, and lets the installed Stop hook grow the LLM Wiki through judge-approved `apply-flexible` patches.
+ACS reads Codex session files **read-only**, writes audit artifacts under the cloned project `data\...` directory, and lets the installed Stop hook enqueue judge-gated LLM Wiki work without holding the Codex UI open for the full finalize run.
 
 ## 1. Paths users should know
 
@@ -16,6 +16,8 @@ ACS reads Codex session files **read-only**, writes audit artifacts under the cl
 | Ordinary Codex workspace example | `%USERPROFILE%\Documents\Codex` | A normal workspace location; it is not required to contain the ACS checkout |
 | ACS project root | cloned `agent-context-substrate` folder | Code plus generated `data\...` artifacts |
 | ACS artifacts | `<PROJECT_ROOT>\data\...` | Raw exports, packets, recovery, ledger, retrieval index, wiki proposals, judge decisions |
+| Durable Codex queue | `<PROJECT_ROOT>\data\index\codex_jobs.sqlite3` | New Stop-event jobs, leases, retries, and dead-letter state |
+| Worker status | `<PROJECT_ROOT>\data\index\codex_worker_status.json` | Last worker heartbeat, state, current job, and error |
 | LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` default template | Human-facing Obsidian wiki updated by judge-approved patches; setup stores the template unless `--wiki-root` is explicit |
 | Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | Installed ACS Codex plugin asset |
 | Codex plugin registry | `agent-context-substrate@personal` in `codex plugin list` | Codex app registration; may appear under `Personal` or `Created by you` |
@@ -108,6 +110,12 @@ The doctor output includes `codex_plugin_registered`. A missing registry entry m
 
 The doctor output also includes `codex_hook_recent_workspace_skips`. In restricted mode, a warning means recent Stop hooks were outside `allowed_workspace_roots`; review `workspace_scope` and the configured roots in the installed plugin `local_config.json`.
 
+`codex-status` reports the asynchronous runtime separately: `trigger_strategy`,
+`job_queue_path`, queue counts for `queued`, `leased`, `retry`, and
+`dead_letter`, oldest pending age, plus `worker_status`, heartbeat age, and the
+worker's last error. An `idle` worker status with zero pending jobs is normal;
+the opportunistic worker exits after draining the queue.
+
 User-facing paths:
 
 ```powershell
@@ -126,6 +134,7 @@ Codex LLM summaries and judge-gated wiki writes are on by default in new install
 
 ```json
 {
+  "trigger_strategy": "hook-enqueue",
   "workspace_scope": "all",
   "allowed_workspace_roots": [],
   "summary_mode": "auto",
@@ -135,12 +144,27 @@ Codex LLM summaries and judge-gated wiki writes are on by default in new install
 }
 ```
 
-With that config, the Stop hook accepts ordinary Codex workspaces under
-any active Codex workspace, tries isolated `codex exec` first, and falls back to
-heuristic summaries on CLI, timeout, JSON, or lint failure. For wiki writes, it
-plans a flexible patch and asks the write judge whether the LLM Wiki should be
-updated. If the judge path is unavailable or below the minimum score, ACS leaves
-a review-required proposal and decision artifact instead of writing the vault.
+With that config, the Stop hook accepts ordinary Codex workspaces (that is, any active Codex workspace), durably
+enqueues the rollout fingerprint in SQLite, starts an opportunistic singleton
+worker, and returns quickly. The worker drains only jobs created by new Stop
+events; installation does not silently backfill historical rollouts. It runs
+isolated `codex exec` and falls back to heuristic summaries on CLI, timeout,
+JSON, or lint failure. For wiki writes, it plans a flexible patch and asks the
+write judge whether the LLM Wiki should be updated. If the judge path is
+unavailable or below the minimum score, ACS leaves a review-required proposal
+and decision artifact instead of writing the vault.
+
+The queue uses latest-wins coalescing per thread, transactional leases, retry
+backoff, and dead-letter state. A global finalize/wiki lock prevents multiple
+hook, worker, watcher, or manual processes from applying concurrently. The
+worker verifies the captured rollout fingerprint before processing and again
+immediately before a wiki write; a changed rollout is re-enqueued as the newest
+generation instead of allowing a stale apply.
+
+The primary installed plugin `local_config.json` is the canonical runtime
+configuration. A hook or worker launched from a marketplace/cache copy resolves
+that primary config first, so copied cache defaults do not silently override the
+installed policy.
 
 The `auto` path runs `codex exec` with read-only sandboxing, `approval_policy=never`,
 `service_tier=fast`, low reasoning effort, hooks disabled, and inline bounded JSON
@@ -218,7 +242,7 @@ Trust or allow the hook that mentions:
 ```text
 agent-context-substrate
 codex_stop_finalize.py
-Finalizing Codex thread into Agent Context Substrate
+Queueing Codex finalize job for Agent Context Substrate
 ```
 
 If Codex shows a startup modal like:
@@ -251,37 +275,50 @@ If Obsidian is installed, open Obsidian, choose `Open folder as vault`, and sele
 %USERPROFILE%\Documents\LLM Wiki
 ```
 
-The default automatic mode is `apply-flexible` with `wiki_write_judge_mode=auto`. New flexible pages use root-level `<Title>.md` placement; optional category/type metadata, sources, links, and the dynamic index carry meaning. Codex thread finalization writes context packets, recovery, ledger, retrieval artifacts, wiki proposals, and judge decisions under `<PROJECT_ROOT>\data\...`; it updates the page, index, log, promotion state, and applied record in one recoverable transaction only when the write judge approves and patch safety checks pass.
+The default automatic mode is `trigger_strategy=hook-enqueue`, `apply-flexible` with `wiki_write_judge_mode=auto`. The Stop hook acknowledges the durable enqueue quickly; artifact and wiki updates arrive asynchronously. New flexible pages use root-level `<Title>.md` placement; optional category/type metadata, sources, links, and the dynamic index carry meaning. Codex thread finalization writes context packets, recovery, ledger, retrieval artifacts, wiki proposals, and judge decisions under `<PROJECT_ROOT>\data\...`; it updates the page, index, log, promotion state, and applied record in one recoverable transaction only when the write judge approves, the rollout fingerprint is still current, and patch safety checks pass.
 
 ## 7. Real Stop hook smoke test
 
-After hook trust, run a short interactive Codex thread and end the turn. A
-successful hook run shows:
+After hook trust, run a short interactive Codex thread and end the turn. The
+one-shot hook should start and stop quickly. This confirms enqueue, not that the
+background finalize pipeline has already completed; the worker may continue
+after the hook UI closes.
 
-```text
-Running Stop hook: Finalizing Codex thread into Agent Context Substrate
-```
+Depending on the Codex app build, the brief UI label may still read
+`Running Stop hook: Finalizing Codex thread into Agent Context Substrate`; under
+`hook-enqueue`, that label covers the enqueue handoff rather than the full worker run.
 
-Then inspect the new ACS artifacts:
+Inspect queue/event state, then wait for the worker to finish and inspect the
+new ACS artifacts:
 
 ```powershell
 Get-Content .\data\index\codex_hook_events.jsonl -Tail 5
+.\.venv\Scripts\agent-context-substrate.exe codex-status
 Get-ChildItem .\data\exports\raw\codex -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
-Get-ChildItem .\data\context_packets -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
-Get-ChildItem .\data\recovery -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
+Get-ChildItem .\data\exports\context_packets -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
+Get-ChildItem .\data\exports\recovery -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
 Get-ChildItem .\data\exports\summaries -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
 .\.venv\Scripts\agent-context-substrate.exe search-knowledge --query "<unique smoke text>" --mode recovery
 ```
 
-The hook event should include `status=finalized`, and `search-knowledge` should
-return the recovery packet for the smoke thread. The summary JSON metadata
-should show either `mode=codex-cli` or a heuristic `fallback_from` /
+The hook event log should first record `enqueued` and later `finalized`. Queue
+health should return to zero pending jobs; `search-knowledge` should then return
+the smoke thread's recovery packet. The summary JSON
+metadata should show either `mode=codex-cli` or a heuristic `fallback_from` /
 `fallback_reason`. The wiki decision artifact should show whether the judge
-approved an `apply_flexible` write or left the proposal for review.
+approved an `apply_flexible` write or left the proposal for review. A `retry`
+or `dead_letter` job is not a successful smoke result; inspect its last error.
+Use `agent-context-substrate codex-jobs list --status dead_letter` to inspect it.
+After fixing the cause, run `agent-context-substrate codex-jobs retry --job-id <ID>`,
+then drain with the `next_command` printed by that command.
 
 ## 8. Fallback verification
 
-If the hook has not been trusted yet, or if a Stop event is missed, `codex-watch` remains available as fallback.
+If the hook has not been trusted yet, or if a Stop event is missed,
+`codex-watch` remains available as an explicit scan/backfill tool. It is not the
+durable queue worker: it scans rollout history and, with ordinary defaults, can
+select a large backlog of old threads. Do not start it blindly as a permanent
+service.
 
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe codex-watch `
@@ -295,7 +332,10 @@ If the hook has not been trusted yet, or if a Stop event is missed, `codex-watch
   --idle-seconds 999999
 ```
 
-`processed=0` is fine. The command uses a large idle window to avoid unexpectedly processing old threads.
+`processed=0` is fine. The command uses a large idle window to avoid
+unexpectedly processing old threads. Before intentional backfill, inspect the
+reported candidates, back up the wiki/artifact root, and narrow the idle window
+deliberately. Normal Stop processing needs no `codex-watch` process.
 
 ## 9. Prompt for a fresh Codex install
 
@@ -313,14 +353,15 @@ Requirements:
 - Tell me that ACS artifacts are written under the cloned agent-context-substrate project data\... directory.
 - Explain that project_root is the ACS artifact root, while workspace_scope defaults to all so any Codex workspace can finalize on Stop.
 - Use scripts/setup-codex-windows.ps1 as the default install path.
-- Explain that new installs default to summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85.
+- Explain that new installs default to trigger_strategy=hook-enqueue, summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, and wiki_auto_min_score=0.85.
+- Explain that the Stop hook durably enqueues and returns quickly, while a singleton worker performs latest-wins finalize jobs with retries, fingerprint guards, and global serialization.
 - Explain that LLM Wiki content is added when the write judge approves evidence-backed flexible patches, not only when the user explicitly asks for each wiki write.
 - If plain codex resolves to an npm shim, prefer the direct codex.exe path reported by setup-codex or doctor-codex for CLI/TUI hook review.
 - If tools are missing, mention Python.Python.3.13, Git.Git, and Obsidian.Obsidian winget package IDs, then ask before installing them.
 - After install, explain doctor-codex, config-codex paths, and diagnose-codex.
 - Do not bypass non-managed hook trust. Ask me before reviewing/trusting the hook, then prefer `Codex app -> Settings -> Hooks` to review and trust the agent-context-substrate Stop hook. Use CLI /hooks or the Hooks need review modal only as alternate review paths.
 - Do not install ~/.codex/hooks.json by default. Mention --user-hook-fallback only if plugin hooks are unavailable.
-- For final validation, run a real interactive Stop hook smoke test and confirm Running Stop hook: Finalizing Codex thread into Agent Context Substrate, codex_hook_events.jsonl status=finalized, generated data\... artifacts, summary metadata, wiki decision artifact, and a search-knowledge recovery hit.
+- For final validation, run a real interactive Stop hook smoke test and confirm a quick enqueue, eventual queue completion, generated data\... artifacts, summary metadata, wiki decision artifact, and a search-knowledge recovery hit.
 ```
 
 ## 10. Common confusion
@@ -331,4 +372,5 @@ Requirements:
 - `project_root` is the ACS artifact root. It should not be treated as a workspace boundary; use restricted `workspace_scope` and `allowed_workspace_roots` only when an explicit allowlist is desired.
 - `doctor-codex` checks setup health; `diagnose-codex --fix` repairs only safe ACS local files.
 - `--user-hook-fallback` is optional and should not be used together with a working plugin hook unless you are intentionally testing duplicate-hook behavior.
+- `codex-watch` scans history for explicit recovery/backfill. It is not the normal queue worker and should not be run blindly with default scope.
 - Obsidian is optional. ACS creates the LLM Wiki folder, but the user must open it as a vault in Obsidian.

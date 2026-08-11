@@ -130,6 +130,19 @@ Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback
 
 For Codex LLM summary and wiki-write smoke, confirm `local_config.json` has the default `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`, plus a direct `codex_cli_command` when one is detected. Run `doctor-codex --summary-smoke`, then run a Stop-hook E2E against temporary project and wiki roots. Verify summary artifacts under `data/exports/summaries/`, wiki proposals under `data/wiki_patches/`, decisions under `data/wiki_decisions/`, and transaction manifests under `data/wiki_patches/transactions/`. The summary metadata should show either `mode=codex-cli` or heuristic fallback fields such as `fallback_from=auto` / `fallback_reason=codex_cli_unavailable`; ledger artifact paths should include the requested modes and decision. An approved apply must create a root-level page, update `index.md`/`log.md`, mark every selected candidate applied, commit the transaction, and finish with blocking `lint_issue_count=0`. If `doctor-codex` reports `service_tier="default"`, remove that Codex config value or set a supported tier before treating Codex summaries as healthy.
 
+Durable Codex Stop queue acceptance:
+
+- [ ] The canonical installed `local_config.json` reports `trigger_strategy=hook-enqueue`.
+- [ ] A controlled Stop returns quickly and records `enqueued`, followed later by `finalized`, for the same thread.
+- [ ] `codex-status` reports `queue_status=ready`, `queue_pending_count=0` after drain, and a recent worker heartbeat/status without `last_error`.
+- [ ] The worker processes only the explicitly enqueued thread; installation does not import or finalize historical rollout backlog.
+- [ ] Rapid repeated Stops for one thread supersede an older pending generation rather than applying stale output.
+- [ ] A transient failure enters `retry`, then succeeds without stopping the worker loop; an exhausted synthetic failure enters `dead_letter` and is visible through `codex-jobs list`.
+- [ ] Finalize-lock contention defers the job without consuming its attempt budget, then succeeds after the lock is released.
+- [ ] `codex-jobs retry --job-id <id>` requeues only the selected dead-letter job, and a manual `codex-worker` drain completes it.
+- [ ] A crash after ledger/artifact commit but before queue acknowledgement is recovered through the completion receipt without repeating wiki side effects.
+- [ ] Two worker launches leave one singleton processor, and wiki writes remain serialized across projects sharing the same vault.
+
 Windows one-shot bootstrap smoke:
 
 ```powershell

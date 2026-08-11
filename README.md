@@ -23,6 +23,7 @@ Packaged adapters currently support Hermes Agent and the Windows Codex app. The 
 New Codex installs use:
 
 ```text
+trigger_strategy=hook-enqueue
 summary_mode=auto
 wiki_auto_mode=apply-flexible
 wiki_write_judge_mode=auto
@@ -30,10 +31,15 @@ wiki_auto_min_score=0.85
 workspace_scope=all
 ```
 
-When an eligible Codex thread stops, ACS:
+When an eligible Codex thread stops, the hook records a durable job in
+`data/index/codex_jobs.sqlite3`, starts an opportunistic singleton worker, and
+returns quickly. The worker, rather than the hook process, runs the expensive
+finalize pipeline:
 
 ```text
-Codex rollout
+Stop event -> durable SQLite queue -> singleton worker
+                                      |
+Codex rollout <-----------------------+
   -> typed SessionBundle
   -> context packet + evidence-backed summary
   -> atoms + promotion candidates
@@ -42,6 +48,12 @@ Codex rollout
   -> guarded transaction or review artifact
   -> lint + recovery + ledger
 ```
+
+Queued jobs are latest-wins per thread. The worker serializes finalization and
+wiki apply across processes, verifies the rollout fingerprint before processing
+and again before writing, and retries transient failures with backoff before
+moving exhausted jobs to dead-letter state. The queue contains only new Stop
+events; it does not backfill historical rollouts automatically.
 
 The judge decides whether the evidence is durable enough to write and selects exact candidate IDs. Mechanical policy still checks evidence, safe paths, operation type, and current-page hashes. A failed or low-confidence judge run does not write the vault.
 
@@ -131,6 +143,7 @@ Expected integration mode:
 hook_support=supported
 hook_primary=installed
 watcher_fallback=available
+trigger_strategy=hook-enqueue
 ```
 
 `project_root` is the ACS artifact root, not a workspace boundary. New installs use `workspace_scope="all"`. Use `workspace_scope="restricted"` with explicit `allowed_workspace_roots` only when an allowlist is required.
@@ -217,6 +230,8 @@ data/
   wiki_decisions/
   wiki_patches/
   index/
+    codex_jobs.sqlite3
+    codex_worker_status.json
 ```
 
 Wiki writes update the separate resolved vault root. Non-dry-run page, index, log, promotion status, and applied-log changes run inside a recoverable transaction. An interrupted `prepared` transaction is restored before the next apply.
@@ -231,10 +246,16 @@ Language, recommended prose sections, thin content, related-link quality, and re
 
 - Hermes `state.db`, Codex SQLite/rollouts, and `data/exports` can contain private messages, tool output, and local paths.
 - ACS reads source session stores read-only.
+- The Stop hook persists work before returning; a singleton worker drains the durable queue without blocking the Codex UI.
+- Rollout fingerprint guards and global serialization prevent stale or concurrent wiki writes.
 - Codex workers run with a read-only sandbox, `approval_policy=never`, fast service tier, low reasoning effort, and hooks disabled.
 - LLM-bound payloads are bounded and can redact secrets, email addresses, paths, and code blocks.
 - Never commit credentials, private exports, or generated local artifacts.
 - Review `git status --short` before release.
+
+`codex-watch` is an explicit recovery/backfill tool, not the normal background
+worker. It scans rollout history and can process many old eligible threads, so
+inspect the scope and use a conservative idle window before running it.
 
 ## Documentation
 

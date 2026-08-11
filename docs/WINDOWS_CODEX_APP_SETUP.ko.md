@@ -4,7 +4,7 @@
 
 이 문서는 Windows Codex 앱 사용자가 Agent Context Substrate(ACS)를 GitHub repo에서 바로 설치할 때 필요한 절차를 설명합니다. 목표는 “Codex에게 repo URL을 주고 설치해 달라고 요청하면 스스로 진행할 수 있는” 흐름입니다.
 
-ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 artifact를 ACS 프로젝트의 `data\...` 아래에 씁니다. 설치된 Stop hook은 write judge가 승인한 `apply-flexible` patch로 LLM Wiki를 키웁니다.
+ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 artifact를 ACS 프로젝트의 `data\...` 아래에 씁니다. 설치된 Stop hook은 전체 finalize 동안 Codex UI를 붙잡지 않고 judge-gated LLM Wiki 작업을 durable queue에 넣습니다.
 
 ## 1. 먼저 인지해야 할 경로
 
@@ -16,6 +16,8 @@ ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 감사 가능한 a
 | 일반 Codex workspace 예시 | `%USERPROFILE%\Documents\Codex` | 보통의 작업 폴더 예시. ACS checkout을 포함할 필요는 없음 |
 | ACS project root | clone한 `agent-context-substrate` 폴더 | ACS 코드와 `data\...` artifact 저장 위치 |
 | ACS artifacts | `<PROJECT_ROOT>\data\...` | raw export, packet, recovery, ledger, retrieval index, wiki proposal, judge decision |
+| Durable Codex queue | `<PROJECT_ROOT>\data\index\codex_jobs.sqlite3` | 새 Stop-event job, lease, retry, dead-letter 상태 |
+| Worker status | `<PROJECT_ROOT>\data\index\codex_worker_status.json` | 마지막 worker heartbeat, 상태, current job, error |
 | LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` default template | judge-approved patch가 반영되는 Obsidian LLM Wiki. `--wiki-root`를 명시하지 않으면 사용자별 절대 경로 대신 이 portable template을 저장합니다. |
 | Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | ACS Codex plugin asset |
 | Codex plugin registry | `codex plugin list`의 `agent-context-substrate@personal` | Codex 앱 등록 상태. UI에서는 `Personal` 또는 `Created by you` 아래에 보일 수 있음 |
@@ -99,6 +101,8 @@ doctor 출력에는 `codex_plugin_registered`가 포함됩니다. 이 값이 mis
 
 doctor 출력에는 `codex_hook_recent_workspace_skips`도 포함됩니다. restricted 모드에서 warning이 뜨면 최근 Stop hook의 cwd가 `allowed_workspace_roots` 밖이었다는 뜻입니다. 설치된 plugin `local_config.json`의 `workspace_scope`와 roots를 확인하세요.
 
+`codex-status`는 async runtime을 별도로 표시합니다. `trigger_strategy`, `job_queue_path`, `queued`, `leased`, `retry`, `dead_letter` queue count, oldest pending age, `worker_status`, heartbeat age, worker last error를 확인할 수 있습니다. Pending job이 0일 때 `worker_status=idle`인 것은 정상입니다. Opportunistic worker는 queue를 비운 뒤 종료합니다.
+
 사용자-facing 경로 확인:
 
 ```powershell
@@ -115,6 +119,7 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 
 ```json
 {
+  "trigger_strategy": "hook-enqueue",
   "workspace_scope": "all",
   "allowed_workspace_roots": [],
   "summary_mode": "auto",
@@ -124,7 +129,11 @@ Codex LLM summary와 judge-gated wiki write는 새 설치에서 기본으로 켜
 }
 ```
 
-이 설정에서 Stop hook은 어느 active Codex workspace에서든 동작하고, 격리된 `codex exec`를 먼저 시도하며, CLI/timeout/JSON/lint 실패 시 heuristic summary로 fallback합니다. wiki write는 flexible patch를 계획한 뒤 write judge에게 LLM Wiki 반영 여부를 맡깁니다. judge 경로를 사용할 수 없거나 점수가 낮으면 Obsidian을 쓰지 않고 review-required proposal과 decision artifact를 남깁니다.
+이 설정에서 Stop hook은 어느 active Codex workspace에서든 동작하고, rollout fingerprint를 SQLite에 durable enqueue하고, opportunistic singleton worker를 시작한 뒤 빠르게 반환합니다. Worker는 새 Stop event가 만든 job만 drain하며 설치 시 과거 rollout을 몰래 backfill하지 않습니다. Worker는 격리된 `codex exec`를 먼저 시도하고 CLI/timeout/JSON/lint 실패 시 heuristic summary로 fallback합니다. wiki write는 flexible patch를 계획한 뒤 write judge에게 LLM Wiki 반영 여부를 맡깁니다. judge 경로를 사용할 수 없거나 점수가 낮으면 Obsidian을 쓰지 않고 review-required proposal과 decision artifact를 남깁니다.
+
+Queue는 thread별 latest-wins coalescing, transactional lease, retry backoff, dead-letter 상태를 사용합니다. Global finalize/wiki lock은 hook, worker, watcher, manual process가 동시에 apply하지 못하게 합니다. Worker는 처리 전과 wiki write 직전에 저장된 rollout fingerprint를 재확인하고, rollout이 바뀌었으면 stale apply 대신 최신 generation을 다시 enqueue합니다.
+
+Primary 설치 plugin의 `local_config.json`이 canonical runtime config입니다. Marketplace/cache copy에서 실행된 hook이나 worker도 이 primary config를 먼저 resolve하므로 cache에 복사된 default가 설치 정책을 조용히 덮어쓰지 않습니다.
 
 `auto` 경로는 `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, hooks-disabled, inline bounded JSON input으로 실행한 뒤 반환된 strict JSON을 검증합니다.
 
@@ -196,7 +205,7 @@ Codex CLI 입력창에서:
 ```text
 agent-context-substrate
 codex_stop_finalize.py
-Finalizing Codex thread into Agent Context Substrate
+Queueing Codex finalize job for Agent Context Substrate
 ```
 
 시작 시 다음과 같은 modal이 뜰 수도 있습니다.
@@ -225,32 +234,29 @@ Obsidian을 설치했다면 Obsidian에서 `Open folder as vault`를 선택하�
 %USERPROFILE%\Documents\LLM Wiki
 ```
 
-기본 자동 처리는 `apply-flexible` + `wiki_write_judge_mode=auto`입니다. 새 flexible page는 root-level `<Title>.md`에 두고 optional category/type metadata, sources, link, dynamic index로 의미를 구성합니다. Codex thread 종료 때 `<PROJECT_ROOT>\data\...` 아래에 context packet, recovery, ledger, retrieval artifact, wiki proposal, judge decision을 남기며, write judge 승인과 patch safety check를 통과한 경우에만 page, index, log, promotion state, applied record를 하나의 복구 가능한 transaction으로 갱신합니다.
+기본 자동 처리는 `trigger_strategy=hook-enqueue`, `apply-flexible` + `wiki_write_judge_mode=auto`입니다. Stop hook은 durable enqueue만 빠르게 확인하고 artifact와 wiki update는 비동기로 도착합니다. 새 flexible page는 root-level `<Title>.md`에 두고 optional category/type metadata, sources, link, dynamic index로 의미를 구성합니다. Codex thread 종료 때 `<PROJECT_ROOT>\data\...` 아래에 context packet, recovery, ledger, retrieval artifact, wiki proposal, judge decision을 남기며, write judge 승인, 최신 rollout fingerprint, patch safety check를 모두 통과한 경우에만 page, index, log, promotion state, applied record를 하나의 복구 가능한 transaction으로 갱신합니다.
 
 ## 7. 실제 Stop hook smoke test
 
-Hook trust 후 짧은 Codex thread를 하나 실행하고 turn을 종료합니다. 성공하면 다음 문구가 보입니다.
+Hook trust 후 짧은 Codex thread를 하나 실행하고 turn을 종료합니다. One-shot hook은 빠르게 시작하고 종료되는 것이 정상입니다. 이는 enqueue 성공을 뜻하며 background finalize가 이미 끝났다는 뜻은 아닙니다. Hook UI가 닫힌 뒤에도 worker가 계속 실행될 수 있습니다.
 
-```text
-Running Stop hook: Finalizing Codex thread into Agent Context Substrate
-```
-
-그 다음 아래를 확인합니다.
+Queue/event 상태를 먼저 확인하고 worker 완료 후 artifact를 확인합니다.
 
 ```powershell
 Get-Content .\data\index\codex_hook_events.jsonl -Tail 5
+.\.venv\Scripts\agent-context-substrate.exe codex-status
 Get-ChildItem .\data\exports\raw\codex -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
-Get-ChildItem .\data\context_packets -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
-Get-ChildItem .\data\recovery -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
+Get-ChildItem .\data\exports\context_packets -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
+Get-ChildItem .\data\exports\recovery -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
 Get-ChildItem .\data\exports\summaries -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3
 .\.venv\Scripts\agent-context-substrate.exe search-knowledge --query "<unique smoke text>" --mode recovery
 ```
 
-hook event에는 `status=finalized`가 있어야 하고, `search-knowledge`는 방금 생성된 recovery packet을 찾아야 합니다. summary JSON metadata에는 `mode=codex-cli` 또는 heuristic `fallback_from` / `fallback_reason`이 남아야 합니다. wiki decision artifact에는 judge가 `apply_flexible`을 승인했는지, 아니면 review-required로 남겼는지가 기록됩니다.
+Hook event log에는 먼저 `enqueued`, 나중에 `finalized`가 기록되어야 합니다. Queue health는 최종적으로 pending job 0으로 돌아와야 하며, 그 뒤 `search-knowledge`가 방금 생성된 recovery packet을 찾아야 합니다. Summary JSON metadata에는 `mode=codex-cli` 또는 heuristic `fallback_from` / `fallback_reason`이 남아야 합니다. Wiki decision artifact에는 judge가 `apply_flexible`을 승인했는지, 아니면 review-required로 남겼는지가 기록됩니다. `retry` 또는 `dead_letter`이면 smoke 성공이 아니므로 `agent-context-substrate codex-jobs list --status dead_letter`로 last error를 확인합니다. 원인을 고친 뒤 `agent-context-substrate codex-jobs retry --job-id <ID>`를 실행하고 출력된 `next_command`로 drain합니다.
 
 ## 8. Fallback 확인
 
-Hook이 아직 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`를 fallback으로 실행할 수 있습니다.
+Hook이 아직 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`를 명시적인 scan/backfill 도구로 실행할 수 있습니다. 이는 durable queue worker가 아닙니다. Rollout history를 scan하므로 일반 기본값으로는 오래된 thread backlog를 대량 선택할 수 있습니다. Permanent service처럼 무심코 실행하지 마세요.
 
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe codex-watch `
@@ -264,7 +270,7 @@ Hook이 아직 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch
   --idle-seconds 999999
 ```
 
-`processed=0`이어도 정상입니다. 위 명령은 오래된 thread를 갑자기 처리하지 않도록 큰 idle window를 사용합니다.
+`processed=0`이어도 정상입니다. 위 명령은 오래된 thread를 갑자기 처리하지 않도록 큰 idle window를 사용합니다. 의도적인 backfill 전에는 candidate 범위를 확인하고 wiki/artifact root를 백업한 뒤 idle window를 명시적으로 좁히세요. 일반 Stop 처리에는 `codex-watch` process가 필요하지 않습니다.
 
 ## 9. 순정 Codex에게 맡기는 프롬프트
 
@@ -282,14 +288,15 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - ACS artifact는 clone한 agent-context-substrate 프로젝트의 data\... 아래에 저장된다고 알려줘.
 - project_root는 ACS artifact root이고, workspace_scope 기본값은 all이라서 어느 Codex workspace에서든 Stop finalize가 가능하다고 설명해.
 - scripts/setup-codex-windows.ps1를 기본 설치 경로로 사용해.
-- 새 설치 기본값은 summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, wiki_auto_min_score=0.85라고 설명해.
+- 새 설치 기본값은 trigger_strategy=hook-enqueue, summary_mode=auto, wiki_auto_mode=apply-flexible, wiki_write_judge_mode=auto, wiki_auto_min_score=0.85라고 설명해.
+- Stop hook은 durable enqueue 후 빠르게 반환하고 singleton worker가 latest-wins job을 retry, fingerprint guard, global serialization과 함께 처리한다고 설명해.
 - LLM Wiki 내용은 사용자가 매번 wiki write를 요청할 때만 쌓이는 것이 아니라, write judge가 evidence-backed flexible patch를 승인할 때 반영된다고 설명해.
 - plain codex가 npm shim이면 CLI/TUI hook review에는 setup-codex 또는 doctor-codex가 표시한 direct codex.exe 경로를 우선 사용해.
 - 누락 도구가 있으면 Python.Python.3.13, Git.Git, Obsidian.Obsidian winget ID를 알려주고, 설치 전 사용자에게 확인해.
 - 설치 후 doctor-codex, config-codex paths, diagnose-codex 명령을 안내해.
 - non-managed hook trust는 자동 우회하지 말고, 사용자에게 승인 질문을 한 뒤 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 agent-context-substrate Stop hook을 먼저 review/trust 해. CLI /hooks 또는 Hooks need review modal은 대체 review 경로로만 사용해.
 - 기본 설치에서는 ~/.codex/hooks.json fallback을 만들지 마. plugin hook을 쓸 수 없을 때만 --user-hook-fallback을 설명해.
-- 마지막에는 실제 interactive Stop hook smoke test로 Running Stop hook: Finalizing Codex thread into Agent Context Substrate, codex_hook_events.jsonl status=finalized, data\... artifact 생성, summary metadata, wiki decision artifact, search-knowledge recovery hit까지 확인해.
+- 마지막에는 실제 interactive Stop hook smoke test로 빠른 enqueue, 최종 queue 완료, data\... artifact 생성, summary metadata, wiki decision artifact, search-knowledge recovery hit까지 확인해.
 ```
 
 ## 10. 자주 헷갈리는 점
@@ -300,4 +307,5 @@ Repo: https://github.com/jjuck/agent-context-substrate
 - `project_root`는 ACS artifact root입니다. workspace 경계로 취급하지 말고, 명시적인 제한이 필요한 경우에만 restricted `workspace_scope`와 `allowed_workspace_roots`를 사용하세요.
 - `doctor-codex`는 설치 상태를 점검하고, `diagnose-codex --fix`는 안전한 ACS 로컬 파일만 복구합니다.
 - `--user-hook-fallback`은 선택 경로입니다. plugin hook이 정상 동작하는 환경에서는 같이 켜지 않는 것이 중복 Stop hook을 피하는 기본값입니다.
+- `codex-watch`는 명시적인 history 복구/backfill 도구입니다. 기본 queue worker가 아니며 범위를 확인하지 않고 실행하면 안 됩니다.
 - Obsidian은 선택 의존성입니다. ACS는 LLM Wiki 폴더를 만들지만 Obsidian 앱/vault 등록은 사용자가 직접 확인해야 합니다.

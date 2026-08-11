@@ -2,7 +2,7 @@
 
 This guide explains `agent-context-substrate` from a user point of view: what it does, when it helps, where data is stored, how to install it into Hermes Agent or the Windows Codex app, and how to use the CLI and Telegram commands.
 
-The current release packages **Hermes Agent integration** and a **non-MCP Codex local session source**. The project name reflects the longer-term goal of supporting additional agent adapters; Claude Code/OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
+The current release packages **Hermes Agent integration** and a **non-MCP Codex local session source**. Codex sources are read-only; the plugin Stop hook is the primary trigger and writes jobs to a durable local SQLite queue. `codex-watch` is retained for explicit history recovery/backfill. The project name reflects the longer-term goal of supporting additional agent adapters; Claude Code/OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
 
 [한국어 사용자 가이드](./USER_GUIDE.md) · [Windows Codex App Setup](./WINDOWS_CODEX_APP_SETUP.md) · [English README](../README.md) · [한국어 README](../README.ko.md)
 
@@ -15,7 +15,12 @@ Instead of relying only on the live chat context, it can export a Hermes session
 For packaged Codex installs, the default policy is **`apply-flexible` with a write judge**:
 
 ```text
-Hermes state.db or Codex rollout JSONL
+Codex Stop event -> durable SQLite queue -> singleton worker
+                                             |
+                                    Codex rollout JSONL
+                                             |
+Hermes state.db -------------------- source adapters
+                                             |
   -> raw session export
   -> evidence-backed Codex CLI summary
   -> context packet
@@ -28,7 +33,7 @@ Hermes state.db or Codex rollout JSONL
   -> ledger
 ```
 
-This means LLM Wiki content is not accumulated only when the user explicitly requests a write. Each eligible Codex thread can be evaluated by the Stop hook; the judge decides whether the evidence supports a wiki update. If the judge path is unavailable, confidence is too low, or patch safety checks fail, ACS keeps review-required artifacts under `data/...` and does not write the vault.
+This means LLM Wiki content is not accumulated only when the user explicitly requests a write. For each eligible Codex thread, the Stop hook durably enqueues work and returns quickly. A singleton worker builds the evidence asynchronously, and the judge decides whether it supports a wiki update. If the judge path is unavailable, confidence is too low, or patch safety checks fail, ACS keeps review-required artifacts under `data/...` and does not write the vault.
 
 Standalone/Hermes packet building remains `packet-only` unless explicitly configured otherwise.
 
@@ -53,7 +58,7 @@ This project is useful when:
 | Harness promotions | `data/promotions/` | JSON / Markdown | Review queue for possible wiki updates |
 | Harness wiki patches | `data/wiki_patches/` | JSON / Markdown / JSONL | Reviewable patch proposals and applied patch log |
 | Harness wiki decisions | `data/wiki_decisions/` | JSON | Write-judge decisions for automatic Codex wiki growth |
-| Harness ledger/index | `data/index/` | JSON / Markdown | Processing status, topic maps, artifact paths, retry/idempotency records |
+| Harness ledger/index | `data/index/` | JSON / Markdown / SQLite | Processing status, durable Codex job queue, topic maps, artifact paths, retry/idempotency records |
 | Obsidian LLM Wiki | `WIKI_PATH` | Markdown | Human-facing semantic wiki updated by judge-approved patches |
 
 For Windows Codex app users, call out these concrete paths before installing:
@@ -84,6 +89,8 @@ data/exports/lint/<session_id>-lint.json
 data/exports/lint/<session_id>-lint.md
 data/exports/recovery/<session_id>.json
 data/index/session_ledger.json
+data/index/codex_jobs.sqlite3
+data/index/codex_worker_status.json
 
 # Extra files when --summary-mode is used
 data/exports/evidence/<session_id>/<micro_id>.json
@@ -319,7 +326,11 @@ hermes gateway restart
 
 ## 8. Install and enable Codex integration
 
-Codex integration is hook-primary with watcher fallback. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through `Codex app -> Settings -> Hooks`, the Stop hook finalizes the current thread, builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. CLI/TUI users can use `/hooks` as the alternate trust path. `codex-watch` remains the fallback for untrusted hooks, older runtimes, or missed Stop events.
+Codex integration defaults to `trigger_strategy=hook-enqueue`. The packaged plugin keeps `.codex-plugin/plugin.json` free of MCP servers and manifest `hooks`, and ships the default Codex hook file at `hooks/hooks.json`. When the plugin hook is installed and trusted through `Codex app -> Settings -> Hooks`, it durably records the current rollout fingerprint in `data/index/codex_jobs.sqlite3`, starts an opportunistic singleton worker, and returns quickly. The worker asynchronously builds Codex CLI summaries, plans a flexible wiki patch, and lets the write judge decide whether to apply it. CLI/TUI users can use `/hooks` as the alternate trust path.
+
+The queue coalesces generations latest-wins per thread, uses transactional leases and retry backoff, and preserves exhausted work in dead-letter state. A process-wide finalize/wiki lock serializes hook, worker, watcher, and manual entry points. Fingerprint checks before processing and immediately before wiki write prevent a stale generation from applying; the newest generation is enqueued instead. New installs enqueue only new Stop events and never silently backfill historical rollouts.
+
+`codex-status` reports queue counts plus worker heartbeat and last error. To verify automatic spawning manually, run `agent-context-substrate codex-worker --plugin-root <INSTALLED_PLUGIN_ROOT> --max-jobs 1`. This command uses the same singleton worker lock and exits when its drain is complete.
 
 Windows Codex app users should start with the [Windows setup guide](./WINDOWS_CODEX_APP_SETUP.md). The distribution PowerShell path is the one-shot bootstrap script:
 
@@ -353,7 +364,7 @@ Use `setup-codex-wizard` for an interactive path review. `diagnose-codex --fix` 
 
 Codex still requires hook review/trust before non-managed hooks run. Restart the Codex app, open `Codex app -> Settings -> Hooks`, review the ACS Stop hook command/path, then trust or enable it. If you are using Codex CLI/TUI, use `/hooks` as the alternate review path. Hook trust is separate from Full Access, approval mode, sandbox settings, auto-review, and plugin installation state.
 
-After hook review, you can run the watcher fallback with the same wiki automation policy:
+`codex-watch` is an explicit scan/backfill tool, not the hook queue worker. It scans rollout history and can select a large backlog under ordinary defaults. The large idle window below is suitable for a conservative no-work fallback check; do not run the watcher blindly as a permanent service.
 
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe codex-watch `
@@ -382,7 +393,7 @@ Manual finalize:
 
 Codex raw exports are written under `data/exports/raw/codex/<thread_id>.json`; packet, lint, recovery, ledger, retrieval, atoms, promotions, wiki patch, and wiki decision artifacts then use the same artifact layout as Hermes sessions.
 
-New Codex installs default to `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`. The `auto` path detects a usable Codex CLI, runs `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, `features.hooks=false`, and inline bounded JSON input, then validates the returned strict JSON before trusting it. Timeout, CLI failure, invalid JSON, or lint failure degrades to heuristic summaries and records `fallback_from` / `fallback_reason` in summary metadata and the finalize ledger. Wiki write judge failure or low score degrades to a review-required decision artifact. Run `doctor-codex --summary-smoke` when you want an explicit signed-in `codex exec` smoke. If doctor reports `service_tier="default"` in Codex `config.toml`, remove that value or set a supported tier such as `fast` or `flex`.
+New Codex installs default to `trigger_strategy=hook-enqueue`, `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, and `wiki_auto_min_score=0.85`. The `auto` path detects a usable Codex CLI, runs `codex exec` with read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, `features.hooks=false`, and inline bounded JSON input, then validates the returned strict JSON before trusting it. Timeout, CLI failure, invalid JSON, or lint failure degrades to heuristic summaries and records `fallback_from` / `fallback_reason` in summary metadata and the finalize ledger. Wiki write judge failure or low score degrades to a review-required decision artifact. Run `doctor-codex --summary-smoke` when you want an explicit signed-in `codex exec` smoke. If doctor reports `service_tier="default"` in Codex `config.toml`, remove that value or set a supported tier such as `fast` or `flex`.
 
 Credential choices:
 
@@ -523,8 +534,13 @@ agent-context-substrate codex-watch \
   --codex-home ~/.codex \
   --project-root . \
   --wiki-root '<WIKI_ROOT>' \
-  --once
+  --once \
+  --idle-seconds 999999
 ```
+
+The watcher command scans rollout history. Use it only for intentional recovery
+or backfill, review its scope first, and do not substitute it for the durable
+Stop queue worker.
 
 ### Search and expand knowledge
 
@@ -627,7 +643,7 @@ Flexible proposals are proposal-only unless their metadata includes an approved 
 
 ## 13. What is automatic
 
-Packaged Codex installs automatically process eligible stopped threads through summaries, atoms, promotions, flexible wiki proposals, and write-judge decisions. They apply the LLM Wiki patch only when the judge approves and safety checks pass.
+Packaged Codex installs first persist each new eligible Stop event and let the hook return quickly. An opportunistic singleton worker coalesces multiple generations latest-wins per thread and processes summaries, atoms, promotions, flexible wiki proposals, and write-judge decisions. It applies the LLM Wiki patch only when the judge approves, the rollout fingerprint is still current, and safety checks pass.
 
 Codex automation still skips:
 
@@ -664,6 +680,11 @@ Agent Context Substrate works with local private data.
 - failed record retry budget
 - retry exhaustion stop condition
 - partial artifact preservation after late failures
+- durable SQLite Stop queue and transactional job leases
+- latest-wins per-thread coalescing, retry backoff, and dead-letter preservation
+- cross-process finalize/wiki serialization
+- rollout fingerprint guards before processing and immediately before wiki write
+- no automatic historical backfill; only new Stop events are enqueued
 - Codex judge-gated `apply-flexible` default
 - standalone/Hermes `packet-only` default
 - gateway source excluded by default
@@ -683,6 +704,8 @@ Agent Context Substrate works with local private data.
 | `/wiki-lint` reports broken links | wikilink targets | Fix link or create target page |
 | `/packet` only says `reused` | ledger completed record | Usually normal; different promotion modes reprocess separately |
 | New settings do not appear in Telegram | gateway process cache | Restart the gateway |
+| Hook closes quickly but artifacts are not ready | `codex-status` queue health and job last error | Wait for `queued`/`leased` work; investigate `retry`/`dead_letter` jobs |
+| `codex-watch` selects many threads | idle window and watcher state | Stop and review scope; this command performs history backfill and is not the normal queue worker |
 | Auto-finalize does not run | source, message count, policy | Check `allowed_sources`, `min_message_count`, and session source |
 
 ## 17. Generic path example

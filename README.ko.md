@@ -23,6 +23,7 @@ ACS는 로컬 agent session 저장소를 수정하지 않고 읽어서 다음 co
 새 Codex 설치의 기본값:
 
 ```text
+trigger_strategy=hook-enqueue
 summary_mode=auto
 wiki_auto_mode=apply-flexible
 wiki_write_judge_mode=auto
@@ -30,10 +31,15 @@ wiki_auto_min_score=0.85
 workspace_scope=all
 ```
 
-eligible Codex thread가 종료되면 ACS는 다음 흐름을 실행합니다.
+eligible Codex thread가 종료되면 Stop hook은
+`data/index/codex_jobs.sqlite3`에 durable job을 기록하고 opportunistic singleton
+worker를 시작한 뒤 빠르게 반환합니다. 시간이 오래 걸리는 finalize pipeline은
+hook process가 아니라 worker가 실행합니다.
 
 ```text
-Codex rollout
+Stop event -> durable SQLite queue -> singleton worker
+                                      |
+Codex rollout <-----------------------+
   -> typed SessionBundle
   -> context packet + evidence-backed summary
   -> atoms + promotion candidates
@@ -42,6 +48,12 @@ Codex rollout
   -> guarded transaction 또는 review artifact
   -> lint + recovery + ledger
 ```
+
+같은 thread의 queued job은 latest-wins로 합쳐집니다. Worker는 finalize와 wiki
+apply를 process 간 직렬화하고, 처리 전과 write 직전에 rollout fingerprint를
+재확인하며, 일시적 실패는 backoff 후 재시도합니다. 재시도 한도를 넘긴 job은
+dead-letter 상태로 남습니다. Queue에는 새 Stop event만 들어가며 과거 rollout을
+자동 backfill하지 않습니다.
 
 Judge는 지식이 durable한지 판단하고 적용할 정확한 candidate ID를 선택합니다. 실제 write 단계는 evidence, safe path, operation type, 현재 page hash를 다시 확인합니다. Judge 실패나 낮은 점수는 vault write로 이어지지 않습니다.
 
@@ -131,6 +143,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 hook_support=supported
 hook_primary=installed
 watcher_fallback=available
+trigger_strategy=hook-enqueue
 ```
 
 `project_root`는 ACS artifact root이지 workspace boundary가 아닙니다. 새 설치는 `workspace_scope="all"`을 사용합니다. 명시적인 제한이 필요한 경우에만 `workspace_scope="restricted"`와 `allowed_workspace_roots`를 설정하세요.
@@ -217,6 +230,8 @@ data/
   wiki_decisions/
   wiki_patches/
   index/
+    codex_jobs.sqlite3
+    codex_worker_status.json
 ```
 
 Wiki write는 별도로 resolve된 vault root에 반영됩니다. Non-dry-run에서는 page, index, log, promotion status, applied log를 복구 가능한 transaction으로 함께 처리합니다. `prepared` 상태에서 중단된 transaction은 다음 apply 전에 복구합니다.
@@ -231,10 +246,16 @@ Blocking issue는 provenance와 graph integrity를 보호합니다. 예: missing
 
 - Hermes `state.db`, Codex SQLite/rollout, `data/exports`에는 private message, tool output, local path가 들어갈 수 있습니다.
 - ACS는 원본 session store를 read-only로 읽습니다.
+- Stop hook은 작업을 durable queue에 저장한 뒤 반환하며 singleton worker가 Codex UI를 막지 않고 처리합니다.
+- rollout fingerprint guard와 global serialization으로 stale/concurrent wiki write를 막습니다.
 - Codex worker는 read-only sandbox, `approval_policy=never`, fast service tier, low reasoning effort, hooks-disabled로 실행됩니다.
 - LLM input은 길이를 제한하며 secret, email, path, code block을 redact할 수 있습니다.
 - credential, private export, local generated artifact를 commit하지 마세요.
 - release 전에 `git status --short`를 확인하세요.
+
+`codex-watch`는 기본 background worker가 아니라 명시적인 복구/backfill 도구입니다.
+rollout history를 scan해서 오래된 eligible thread를 대량 처리할 수 있으므로, 실행
+전에 범위와 idle window를 확인하고 보수적인 값으로 시작하세요.
 
 ## 문서
 

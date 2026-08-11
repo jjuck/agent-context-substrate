@@ -5,11 +5,17 @@
 ## 1. Architecture At A Glance
 
 ```text
-Hermes state.db                 Codex state_5.sqlite + rollout JSONL
-       |                                      |
-       +------------ source adapters --------+
-                              |
-                       typed SessionBundle
+Hermes state.db -----------------------------------------------+
+                                                               |
+Codex Stop event                                               |
+  -> durable SQLite job                                        |
+  -> singleton drain worker                                    |
+  -> fingerprint guard + global lock                           |
+  -> state_5.sqlite + rollout JSONL ----------------------------+
+                                                               |
+                                                        source adapters
+                                                               |
+                                                        typed SessionBundle
                               |
                   build_finalize_artifacts(...)
                      /                    \
@@ -53,6 +59,7 @@ raw export
 새 Codex 설치 기본값:
 
 ```text
+trigger_strategy=hook-enqueue
 summary_mode=auto
 wiki_auto_mode=apply-flexible
 wiki_write_judge_mode=auto
@@ -60,17 +67,24 @@ wiki_auto_min_score=0.85
 workspace_scope=all
 ```
 
-Stop hook은 현재 thread를 finalize하고, Codex CLI summary와 promotion 후보를 만든 뒤 write judge가 wiki 반영 여부와 정확한 candidate ID 집합을 결정하게 합니다. 선택되지 않은 candidate는 `pending` 상태를 유지합니다.
+Stop hook은 현재 thread의 rollout fingerprint와 config digest를 SQLite queue에 commit하고 opportunistic singleton worker를 시작한 뒤 빠르게 반환합니다. Worker가 Codex CLI summary와 promotion 후보를 만든 뒤 write judge가 wiki 반영 여부와 정확한 candidate ID 집합을 결정하게 합니다. 선택되지 않은 candidate는 `pending` 상태를 유지합니다.
 
 Judge 실패, 낮은 점수, 빈 선택 집합, unsafe target, stale page hash는 vault write로 이어지지 않습니다. proposal, decision, lint, ledger artifact는 사후 분석을 위해 남습니다.
 
-### 2.3 Hook And Watcher
+### 2.3 Hook Queue, Worker, And Watcher
 
-Codex integration은 hook-primary, watcher-fallback 구조입니다.
+Codex integration의 기본은 `hook-enqueue`이고, watcher는 명시적인 history recovery/backfill 경로입니다.
 
 - 설치 hook script는 import path와 stdin payload만 준비하는 얇은 bootstrap입니다.
-- workspace 정책, wiki-root resolution, command 구성, event log, watcher state는 core `codex_hook.py`가 소유합니다.
-- plugin hook이 신뢰되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 같은 finalize pipeline을 실행합니다.
+- workspace 정책, wiki-root resolution, job snapshot, event log는 core `codex_hook.py`가 소유합니다.
+- Hook은 새 Stop event만 `data/index/codex_jobs.sqlite3`에 durable enqueue하고 full finalize 완료를 기다리지 않습니다.
+- Queue는 thread별 latest-wins coalescing, transactional lease, retry backoff, dead-letter 상태를 가집니다.
+- Opportunistic worker는 singleton drain loop로 실행되며 queue가 비면 종료합니다. Worker crash 뒤에는 expired lease를 다음 worker가 reclaim합니다.
+- Finalize/wiki global process lock은 hook worker, manual finalize, watcher가 동시에 mutation boundary에 진입하지 못하게 합니다.
+- Finalize lock 경합은 attempt budget을 소모하지 않는 deferred retry이며, `worker_lock_contention_retry_seconds`가 재시도 간격을 제어합니다.
+- Session ledger read-modify-write는 전용 process lock과 atomic replace를 사용합니다. Codex와 Hermes의 wiki mutation은 project-local lock에 더해 wiki-root 기반 shared vault lock을 사용해 adapter와 project 경계를 넘어 직렬화됩니다.
+- Captured rollout fingerprint를 처리 전과 wiki write 직전에 재검증합니다. 변경된 generation은 stale apply를 하지 않고 최신 generation을 enqueue합니다.
+- plugin hook이 신뢰되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 같은 finalize pipeline을 명시적으로 실행할 수 있습니다. Watcher는 rollout history를 scan하므로 자동 worker나 migration backfill로 사용하지 않습니다.
 - plugin hook과 user-level `hooks.json` fallback을 기본으로 동시에 켜지 않습니다.
 
 ## 3. Domain Boundaries
@@ -86,7 +100,8 @@ Codex integration은 hook-primary, watcher-fallback 구조입니다.
 | Write decision | `wiki_write_judge.py` | semantic apply/propose/review/skip 판단과 candidate selection |
 | Write transaction | `wiki_apply_transaction.py`, `artifact_pipeline.py`, `wiki_registration.py` | page와 bookkeeping artifact의 원자적 적용 및 복구 |
 | Quality and retrieval | `lint.py`, `semantic_lint.py`, `retrieval*.py`, `topic_map.py` | graph integrity, advisory quality, read-only search/expand |
-| Orchestration | `integration.py`, `codex_integration.py`, `codex_hook.py` | host policy, ledger, recovery, hook/watch entry points |
+| Durable jobs and locks | `codex_jobs.py`, `process_lock.py` | SQLite enqueue/lease/retry/dead-letter와 process 간 serialization |
+| Orchestration | `integration.py`, `codex_integration.py`, `codex_hook.py` | host policy, ledger, recovery, hook/worker/watch entry points |
 
 모듈 간 순환 의존은 허용하지 않습니다. 새 adapter는 source 경계에서 `SessionBundle`을 만들고 공통 finalize service를 호출해야 합니다.
 
@@ -228,6 +243,8 @@ data/
   wiki_patches/transactions/
   index/session_ledger.json
   index/codex_hook_events.jsonl
+  index/codex_jobs.sqlite3
+  index/codex_worker_status.json
   index/codex_watcher_state.json
 ```
 
@@ -255,6 +272,8 @@ Resolver는 `%VAR%`, `$VAR`, `${VAR}`, `~`, relative path를 처리하고 effect
 5. 새로운 category/type은 emergent mode에서 차단 조건이 아닙니다.
 6. 새 blocking lint는 데이터 손상, provenance, discoverability, unsafe path처럼 자동화 성공을 실제로 무효화하는 경우에만 추가합니다.
 7. CLI와 hook/watch entry point는 domain 규칙을 복제하지 않고 application service에 위임합니다.
+8. 비동기 trigger는 side effect 전에 durable enqueue하고, 모든 write 경계에서 captured fingerprint가 여전히 최신인지 확인합니다.
+9. History scan과 새 Stop-event queue는 별도 개념입니다. 설치/upgrade가 과거 rollout을 자동 enqueue하지 않습니다.
 
 ## 11. Compatibility Surfaces
 

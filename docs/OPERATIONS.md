@@ -8,9 +8,10 @@
 
 1. Hermes/Codex 원본 session store는 read-only로 취급한다.
 2. Machine artifact는 `<PROJECT_ROOT>/data`, human-facing knowledge는 resolved `<WIKI_ROOT>`에 분리한다.
-3. Codex Stop finalize는 summary, judge, apply 결과를 ledger와 event log에 남긴다.
-4. 승인된 candidate만 transaction으로 적용한다.
-5. 최종 blocking lint는 0으로 유지하고 advisory는 사후 품질 backlog로 관리한다.
+3. Codex Stop hook은 finalize job을 먼저 durable queue에 남기고 빠르게 반환한다.
+4. Singleton worker는 summary, judge, apply 결과를 ledger, queue, event log에 남긴다.
+5. 승인된 candidate만 transaction으로 적용한다.
+6. 최종 blocking lint는 0으로 유지하고 advisory는 사후 품질 backlog로 관리한다.
 
 ## 2. 현재 기준선
 
@@ -36,6 +37,8 @@ Codex live E2E -> wiki_apply_applied_count=1, lint_issue_count=0
 | ACS artifacts | `<PROJECT_ROOT>/data` |
 | LLM Wiki | runtime-resolved `<WIKI_ROOT>` |
 | Hook events | `<PROJECT_ROOT>/data/index/codex_hook_events.jsonl` |
+| Durable Codex queue | `<PROJECT_ROOT>/data/index/codex_jobs.sqlite3` |
+| Worker heartbeat/status | `<PROJECT_ROOT>/data/index/codex_worker_status.json` |
 | Watcher state | `<PROJECT_ROOT>/data/index/codex_watcher_state.json` |
 | Session ledger | `<PROJECT_ROOT>/data/index/session_ledger.json` |
 | Wiki transaction manifests | `<PROJECT_ROOT>/data/wiki_patches/transactions/` |
@@ -74,6 +77,7 @@ Windows Codex:
 hook_support=supported
 hook_primary=installed
 watcher_fallback=available
+trigger_strategy=hook-enqueue
 summary_mode=auto
 wiki_auto_mode=apply-flexible
 wiki_write_judge_mode=auto
@@ -100,7 +104,7 @@ agent-context-substrate build-context-packet \
 
 V2 summary가 필요하면 `--summary-mode heuristic|custom-command|codex-cli|auto`를 추가합니다. Hermes/standalone finalize는 명시하지 않는 한 wiki full promotion을 실행하지 않습니다.
 
-### 5.2 Codex Finalize
+### 5.2 Manual Codex Finalize
 
 ```powershell
 agent-context-substrate codex-finalize `
@@ -126,7 +130,50 @@ agent-context-substrate codex-finalize `
 
 Judge가 `review_required`, `propose_only`, `skip`을 반환하거나 score가 기준보다 낮으면 `wiki_apply_dry_run=True` 또는 적용 0건이 정상입니다.
 
-### 5.3 Watcher Fallback
+### 5.3 Durable Stop Queue
+
+기본 Stop 경로는 다음과 같습니다.
+
+```text
+Stop hook
+  -> rollout fingerprint와 config digest를 SQLite에 commit
+  -> opportunistic singleton worker 시작
+  -> 즉시 반환
+
+worker
+  -> newest runnable job lease
+  -> fingerprint 확인
+  -> global finalize/wiki lock 아래 pipeline 실행
+  -> wiki write 직전 fingerprint 재확인
+  -> complete 또는 backoff retry/dead-letter
+  -> queue가 비면 종료
+```
+
+같은 thread에서 Stop event가 연속으로 오면 queued generation은 latest-wins로 합쳐집니다. 실행 중 rollout이 변경되면 stale job이 wiki를 쓰지 않고 최신 fingerprint job을 다시 enqueue합니다. Worker가 비정상 종료되어도 lease 만료 뒤 다음 Stop worker가 job을 회수할 수 있습니다. 설치 시점의 과거 rollout은 queue에 넣지 않으므로 migration 직후 대량 backfill이 발생하지 않습니다.
+
+다른 finalize가 global lock을 점유 중이면 worker는 이를 transient failure로 세지 않고 job을 `retry` 상태로 defer합니다. 이때 attempt budget은 소비하지 않으며, 재시도 간격은 `worker_lock_contention_retry_seconds`로 제어합니다(기본 60초, 유효 범위 5~300초).
+
+Artifact ledger의 read-modify-write와 wiki vault mutation은 각각 process lock으로 직렬화됩니다. 특히 같은 wiki root를 공유하는 Codex와 Hermes 경로는 동일한 vault lock을 사용하므로 서로 다른 project나 adapter가 `index.md`, `log.md`, transaction manifest를 동시에 갱신하지 않습니다.
+
+주요 lock 경로는 project의 `data/index/codex_worker.lock`, `data/index/codex_finalize.lock`, `data/index/wiki_writer.lock`, `data/index/session_ledger.json.lock`과 OS 임시 디렉터리의 wiki-root 해시 lock입니다. Lock 파일은 해제 후에도 재사용을 위해 남으므로 파일 존재만으로 점유 또는 장애를 판단하지 마세요. `codex-status`의 worker/queue 상태와 실제 lock 획득 결과를 함께 확인합니다.
+
+운영 확인은 `codex-status`와 `data/index/codex_jobs.sqlite3`의 queue health를 기준으로 합니다. `queued`는 대기, `leased`는 처리 중, `retry`는 backoff 대기, `dead_letter`는 retry budget 소진입니다. `codex-jobs list --status dead_letter`로 last error를 확인하고, 원인을 해결한 뒤 `codex-jobs retry --job-id <ID>`로 명시적으로 재처리하세요. SQLite 파일을 직접 수정하거나 삭제해서 상태를 숨기지 않습니다.
+
+`codex-status`는 `trigger_strategy`, `job_queue_path`, `queue_pending_count`, `queued`, `leased`, `retry`, `dead_letter`, oldest pending age와 함께 `worker_status`, heartbeat age, last error를 출력합니다. Queue가 비었고 worker status가 `idle`이면 정상입니다. Worker를 계속 떠 있는 service로 해석하지 마세요.
+
+자동 spawn이 실패했거나 수정 후 drain을 수동 검증해야 할 때만 설치 plugin root를 지정해 worker를 실행합니다.
+
+```powershell
+agent-context-substrate codex-worker `
+  --plugin-root "$HOME\.codex\plugins\agent-context-substrate" `
+  --max-jobs 1
+```
+
+`--max-jobs`를 생략하면 현재 runnable queue를 drain합니다. 이 명령도 singleton worker lock을 사용하므로 이미 worker가 실행 중이면 중복 consumer가 되지 않습니다. Primary 설치 plugin의 `local_config.json`이 canonical config이며 cache 경로에서 시작된 worker도 이를 우선 resolve합니다.
+
+Hook event log에서 `enqueued`는 durable commit, `refreshed`는 rollout/config snapshot 교체, `retry`는 backoff 예약, `dead-letter`는 retry budget 소진, `finalized`는 worker pipeline 완료를 뜻합니다.
+
+### 5.4 Watcher Recovery And Backfill
 
 ```powershell
 agent-context-substrate codex-watch `
@@ -136,9 +183,11 @@ agent-context-substrate codex-watch `
   --once
 ```
 
-Plugin Stop hook이 정상 동작하면 watcher를 상시 중복 실행할 필요가 없습니다. Hook 미신뢰, 구형 runtime, 누락 event 복구에 사용합니다.
+`codex-watch`는 queue worker가 아니라 rollout history scanner입니다. Plugin Stop hook이 정상 동작하면 상시 실행하지 않습니다. Hook 미신뢰, 구형 runtime, 누락 event의 명시적인 복구/backfill에만 사용합니다.
 
-### 5.4 Legacy Full Promotion
+기본 idle window로 무심코 실행하면 오래된 eligible thread를 대량 처리할 수 있습니다. 첫 연결 확인에는 `--once --idle-seconds 999999`처럼 보수적인 window를 사용하세요. 실제 backfill 전에는 candidate 범위와 watcher state를 확인하고, wiki와 artifact root를 백업한 뒤 처리 window를 의도적으로 정합니다. Queue와 watcher를 동시에 돌려도 global lock이 apply를 직렬화하지만, 중복 작업 비용까지 없애 주지는 않습니다.
+
+### 5.5 Legacy Full Promotion
 
 Legacy 네 페이지 promotion은 임시 wiki에서 먼저 검증합니다.
 
@@ -242,14 +291,25 @@ data/promotions/<packet_id>.json
 1. Codex 앱을 재시작합니다.
 2. Settings -> Hooks에서 ACS Stop hook을 trust/enable합니다.
 3. `codex-status`에서 `hook_primary=installed`를 확인합니다.
-4. `data/index/codex_hook_events.jsonl`의 최근 `skipped` 또는 `failed` detail을 확인합니다.
-5. 필요하면 `codex-watch --once`로 fallback을 검증합니다.
+4. `trigger_strategy=hook-enqueue`인지 확인합니다.
+5. `data/index/codex_hook_events.jsonl`의 최근 `skipped` 또는 `failed` detail을 확인합니다.
+6. 누락 event를 복구해야 할 때만 보수적인 idle window로 `codex-watch --once`를 실행합니다.
 
-### 9.2 Workspace가 Skip됨
+### 9.2 Hook은 끝났지만 Finalize가 아직 완료되지 않음
+
+One-shot Stop hook이 빠르게 끝나는 것은 정상입니다. 이는 finalize 완료가 아니라 durable enqueue 완료를 뜻합니다.
+
+1. `codex-status`에서 queue depth와 상태를 확인합니다.
+2. `queued`/`leased`이면 background worker 완료를 기다립니다.
+3. `retry`이면 `available_at`과 last error를 확인합니다.
+4. `dead_letter`이면 반복 실패 원인을 먼저 해결하고 명시적으로 재처리합니다.
+5. `leased` 상태가 비정상적으로 오래되면 다음 worker가 lease expiry 후 reclaim하는지 확인합니다.
+
+### 9.3 Workspace가 Skip됨
 
 기본 `workspace_scope=all`에서는 workspace guard skip이 없어야 합니다. Restricted 설치라면 `allowed_workspace_roots`에 현재 `cwd`의 상위 root가 있는지 확인합니다.
 
-### 9.3 Codex Summary가 Heuristic으로 Fallback
+### 9.4 Codex Summary가 Heuristic으로 Fallback
 
 Summary JSON metadata의 `fallback_reason`을 확인합니다.
 
@@ -267,7 +327,7 @@ agent-context-substrate diagnose-codex
 
 PATH의 `codex`가 npm shim이면 doctor가 찾은 direct app CLI를 `codex_cli_command`로 사용합니다.
 
-### 9.4 Judge는 승인했지만 Apply 0건
+### 9.5 Judge는 승인했지만 Apply 0건
 
 확인 순서:
 
@@ -277,7 +337,7 @@ PATH의 `codex`가 npm shim이면 doctor가 찾은 direct app CLI를 `codex_cli_
 4. target이 wiki root 내부인가
 5. promotion candidate가 이미 applied/rejected 상태인가
 
-### 9.5 Lint가 실패함
+### 9.6 Lint가 실패함
 
 - provenance 누락: frontmatter `sources` 또는 본문 evidence를 추가합니다.
 - index 누락: 자동 registration 실패 여부와 transaction manifest를 확인합니다.
@@ -286,7 +346,7 @@ PATH의 `codex`가 npm shim이면 doctor가 찾은 direct app CLI를 `codex_cli_
 
 가짜 related page를 만들어 lint 숫자만 맞추지 않습니다.
 
-### 9.6 Unknown Session Or Thread
+### 9.7 Unknown Session Or Thread
 
 - Hermes: `HERMES_HOME`과 `state.db` profile을 확인합니다.
 - Codex: `codex-status`가 표시하는 thread ID와 rollout path를 확인합니다.
@@ -312,6 +372,7 @@ PATH의 `codex`가 npm shim이면 doctor가 찾은 direct app CLI를 `codex_cli_
 | transaction snapshots | committed/rolled_back 확인 후 retention 정책으로 정리 가능 |
 | session ledger | 재실행/idempotency를 위해 보존 |
 | hook event log | size-based rotation 가능 |
+| Codex job queue | completed/dead-letter audit와 crash recovery에 필요. 운영 중 파일 직접 삭제 금지 |
 | watcher state | rollout fingerprint 재처리를 막기 위해 보존 |
 
 `Unclassified / Review Needed`가 커지면 category 정리를 수동으로 하거나 향후 Janitor/notification pipeline을 붙일 수 있습니다. Category 증가 자체는 운영 장애가 아닙니다.

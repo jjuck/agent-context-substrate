@@ -4,7 +4,7 @@
 
 이 문서는 `agent-context-substrate`를 실제 사용자 관점에서 설명합니다. 핵심은 **무엇이 어디에 저장되는지**, **Obsidian과 어떻게 분리되는지**, **언어 설정을 어떻게 쓰는지**, **Hermes에서 어떻게 켜고 끄는지**입니다.
 
-현재 릴리스에서 packaged integration은 **Hermes Agent**와 **비-MCP Codex 로컬 세션 source**를 포함합니다. Codex 경로는 `~/.codex/state_5.sqlite`와 `~/.codex/sessions/**/rollout-*.jsonl`을 read-only로 읽고, plugin Stop hook을 primary trigger로 사용하며 `codex-watch` fallback을 유지합니다. 이전 프로젝트 이름은 `hermes-llm-wiki-harness`입니다.
+현재 릴리스에서 packaged integration은 **Hermes Agent**와 **비-MCP Codex 로컬 세션 source**를 포함합니다. Codex 경로는 `~/.codex/state_5.sqlite`와 `~/.codex/sessions/**/rollout-*.jsonl`을 read-only로 읽고, plugin Stop hook은 durable SQLite queue에 작업을 넣는 primary trigger입니다. `codex-watch`는 명시적인 history 복구/backfill용으로 유지합니다. 이전 프로젝트 이름은 `hermes-llm-wiki-harness`입니다.
 
 ## 1. 무엇을 해주는가
 
@@ -13,7 +13,12 @@
 packaged Codex 설치의 기본 정책은 **write judge가 붙은 `apply-flexible`**입니다.
 
 ```text
-Hermes state.db 또는 Codex rollout JSONL
+Codex Stop event -> durable SQLite queue -> singleton worker
+                                             |
+                                    Codex rollout JSONL
+                                             |
+Hermes state.db -------------------- source adapters
+                                             |
   -> raw session export
   -> evidence-backed Codex CLI summary
   -> context packet
@@ -26,7 +31,7 @@ Hermes state.db 또는 Codex rollout JSONL
   -> ledger
 ```
 
-즉, LLM Wiki 내용은 사용자가 매번 명시적으로 요청할 때만 쌓이는 것이 아닙니다. eligible Codex thread가 종료되면 Stop hook이 evidence를 만들고 write judge가 wiki 반영 여부를 판단합니다. judge 경로가 불가능하거나 confidence가 낮거나 patch safety check가 실패하면 ACS는 Obsidian을 쓰지 않고 `data/...` 아래 review-required artifact를 남깁니다.
+즉, LLM Wiki 내용은 사용자가 매번 명시적으로 요청할 때만 쌓이는 것이 아닙니다. eligible Codex thread가 종료되면 Stop hook은 작업을 durable enqueue하고 빠르게 반환합니다. Singleton worker가 비동기로 evidence를 만들고 write judge가 wiki 반영 여부를 판단합니다. judge 경로가 불가능하거나 confidence가 낮거나 patch safety check가 실패하면 ACS는 Obsidian을 쓰지 않고 `data/...` 아래 review-required artifact를 남깁니다.
 
 standalone/Hermes packet build는 명시 설정이 없으면 여전히 `packet-only`입니다.
 
@@ -41,7 +46,7 @@ standalone/Hermes packet build는 명시 설정이 없으면 여전히 `packet-o
 | Harness promotions | `data/promotions/` | JSON/Markdown | wiki 반영 후보 queue |
 | Harness wiki patches | `data/wiki_patches/` | JSON/Markdown/JSONL | reviewable patch proposal과 apply log |
 | Harness wiki decisions | `data/wiki_decisions/` | JSON | Codex 자동 wiki growth의 write-judge decision |
-| Harness ledger/index | `data/index/` | JSON/Markdown | 처리 상태, topic map, artifact 경로, retry/idempotency 기록 |
+| Harness ledger/index | `data/index/` | JSON/Markdown/SQLite | 처리 상태, durable Codex job queue, topic map, artifact 경로, retry/idempotency 기록 |
 | Obsidian LLM Wiki | `WIKI_PATH` | Markdown | judge-approved patch가 반영되는 semantic LLM Wiki |
 
 Windows Codex 앱 사용자에게는 아래 실제 경로를 먼저 알려주는 것이 좋습니다.
@@ -72,6 +77,8 @@ data/exports/lint/<session_id>-lint.json
 data/exports/lint/<session_id>-lint.md
 data/exports/recovery/<session_id>.json
 data/index/session_ledger.json
+data/index/codex_jobs.sqlite3
+data/index/codex_worker_status.json
 
 # --summary-mode 사용 시 추가
 data/exports/evidence/<session_id>/<micro_id>.json
@@ -305,7 +312,11 @@ Telegram gateway가 이미 실행 중이면 plugin/config 변경을 바로 반�
 
 ## 7. Codex 연동 설치와 활성화
 
-Codex 연동의 기본 전략은 hook-primary, watcher fallback입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 hook을 trust하면 Stop hook이 thread를 finalize하고, Codex CLI summary를 만들고, flexible wiki patch를 계획한 뒤 write judge에게 적용 여부를 맡깁니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다. 두 경로 모두 Codex 원본 파일을 read-only로 읽습니다.
+Codex 연동의 기본 전략은 `trigger_strategy=hook-enqueue`입니다. Packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 hook을 trust하면 Stop hook은 thread rollout fingerprint를 `data/index/codex_jobs.sqlite3`에 durable enqueue하고 opportunistic singleton worker를 시작한 뒤 빠르게 반환합니다. Worker가 Codex CLI summary, flexible wiki patch, write-judge 판단을 비동기로 수행합니다. Codex CLI/TUI 사용자는 `/hooks`를 대체 trust 경로로 사용할 수 있습니다. 두 경로 모두 Codex 원본 파일을 read-only로 읽습니다.
+
+Queue는 같은 thread를 latest-wins로 합치고, transactional lease와 retry backoff를 사용하며, retry 한도를 넘긴 job은 dead-letter로 보존합니다. Finalize와 wiki apply는 process 간 global lock으로 직렬화됩니다. Worker는 처리 전과 wiki write 직전에 fingerprint를 확인하므로, 실행 중 rollout이 바뀌면 stale generation을 적용하지 않고 최신 generation을 다시 enqueue합니다. 새 설치는 오직 새 Stop event만 enqueue하며 과거 rollout을 자동 backfill하지 않습니다.
+
+`codex-status`는 queue count와 worker heartbeat/last error를 보여줍니다. 자동 spawn을 수동 검증해야 할 때는 `agent-context-substrate codex-worker --plugin-root <INSTALLED_PLUGIN_ROOT> --max-jobs 1`을 사용할 수 있습니다. 이 worker도 singleton lock을 사용하며 queue가 비면 종료합니다.
 
 Windows Codex 앱 사용자는 [Windows 상세 가이드](./WINDOWS_CODEX_APP_SETUP.ko.md)를 우선 보세요. 배포용 PowerShell 설치 흐름은 단일 bootstrap script를 기준으로 합니다.
 
@@ -339,7 +350,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -Inst
 
 Codex의 non-managed hook 정책상 실제 실행 전 hook review/trust는 여전히 필요합니다. Codex 앱을 재시작한 뒤 `Codex app -> Settings -> Hooks`(Codex 앱 -> 설정 -> 훅)에서 ACS Stop hook command/path를 확인하고 trust/enable하세요. Codex CLI/TUI를 쓰는 경우에는 `/hooks`를 대체 review 경로로 사용하세요. Hook trust는 `전체권한`, approval mode, sandbox settings, auto-review, plugin 설치/enabled 상태와 별개입니다.
 
-Hook 승인 확인 뒤 같은 wiki automation 정책으로 watcher fallback도 실행할 수 있습니다.
+`codex-watch`는 hook worker가 아니라 명시적인 scan/backfill 도구입니다. Rollout history 전체에서 eligible thread를 찾으므로, 일반 기본값으로 상시 실행하면 오래된 backlog를 대량 처리할 수 있습니다. 아래 큰 idle window 명령은 처리 없이 fallback 연결만 보수적으로 확인할 때 사용합니다.
 
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe codex-watch `
@@ -368,7 +379,7 @@ Hook 승인 확인 뒤 같은 wiki automation 정책으로 watcher fallback도 �
 
 Codex raw export는 `data/exports/raw/codex/<thread_id>.json`에 저장됩니다. 이후 context packet, recovery, retrieval, atoms, promotions, wiki patch, wiki decision artifact는 Hermes session artifact와 같은 layout을 사용합니다.
 
-새 Codex 설치의 기본값은 `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, `wiki_auto_min_score=0.85`입니다. `auto` 경로는 사용 가능한 Codex CLI를 감지한 뒤 `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, `features.hooks=false`, inline bounded JSON input으로 실행하고 strict JSON을 ACS schema/lint로 검증합니다. timeout, CLI 실패, invalid JSON, lint 실패 시 heuristic summary로 degrade하고 summary metadata와 finalize ledger에 `fallback_from` / `fallback_reason`을 남깁니다. wiki write judge 실패나 낮은 점수는 review-required decision artifact로 degrade합니다. 명시적 로그인 smoke가 필요하면 `doctor-codex --summary-smoke`를 실행하세요. doctor가 Codex `config.toml`의 `service_tier="default"`를 경고하면 해당 값을 제거하거나 `fast`/`flex`처럼 지원되는 tier로 바꾸세요.
+새 Codex 설치의 기본값은 `trigger_strategy=hook-enqueue`, `summary_mode=auto`, `wiki_auto_mode=apply-flexible`, `wiki_write_judge_mode=auto`, `wiki_auto_min_score=0.85`입니다. `auto` 경로는 사용 가능한 Codex CLI를 감지한 뒤 `codex exec`를 read-only sandbox, `approval_policy=never`, `service_tier=fast`, low reasoning effort, `features.hooks=false`, inline bounded JSON input으로 실행하고 strict JSON을 ACS schema/lint로 검증합니다. timeout, CLI 실패, invalid JSON, lint 실패 시 heuristic summary로 degrade하고 summary metadata와 finalize ledger에 `fallback_from` / `fallback_reason`을 남깁니다. wiki write judge 실패나 낮은 점수는 review-required decision artifact로 degrade합니다. 명시적 로그인 smoke가 필요하면 `doctor-codex --summary-smoke`를 실행하세요. doctor가 Codex `config.toml`의 `service_tier="default"`를 경고하면 해당 값을 제거하거나 `fast`/`flex`처럼 지원되는 tier로 바꾸세요.
 
 | 선택지 | 사용 시점 | 주의점 |
 | --- | --- | --- |
@@ -577,7 +588,7 @@ agent-context-substrate apply-wiki-patch \
 
 ## 12. 자동 처리되는 것
 
-packaged Codex 설치는 eligible stopped thread를 summary, atom, promotion, flexible wiki proposal, write-judge decision까지 자동 처리합니다. judge가 승인하고 safety check를 통과할 때만 LLM Wiki patch를 적용합니다.
+packaged Codex 설치는 새 eligible Stop event를 먼저 durable queue에 저장하고 hook을 빠르게 종료합니다. Opportunistic singleton worker가 같은 thread의 여러 generation을 latest-wins로 합쳐 summary, atom, promotion, flexible wiki proposal, write-judge decision까지 자동 처리합니다. Judge 승인, 최신 rollout fingerprint, safety check를 모두 통과할 때만 LLM Wiki patch를 적용합니다.
 
 Codex 자동화에서도 건너뛰는 대상:
 
@@ -614,6 +625,11 @@ standalone/Hermes packet workflow는 명시적으로 설정하지 않으면 Obsi
 - failed record retry budget 관리
 - retry exhausted 시 중단
 - late failure 발생 시 partial artifact 경로 보존
+- SQLite durable Stop queue와 transactional job lease
+- thread별 latest-wins coalescing, retry backoff, dead-letter 보존
+- process 간 finalize/wiki global serialization
+- 처리 전과 wiki write 직전 rollout fingerprint guard
+- 새 Stop event만 자동 enqueue하며 historical rollout은 자동 backfill하지 않음
 - Codex judge-gated `apply-flexible` 기본값
 - standalone/Hermes `packet-only` 기본값
 - gateway source 기본 제외
@@ -634,6 +650,8 @@ standalone/Hermes packet workflow는 명시적으로 설정하지 않으면 Obsi
 | `/packet`이 `reused`만 표시 | ledger completed record | 정상일 수 있음. 다른 promotion mode면 재처리됨 |
 | 새 설정이 Telegram에 안 보임 | gateway process cache | gateway 재시작 필요 가능성 |
 | 자동 처리 안 됨 | source, message count, policy | `allowed_sources`, `min_message_count`, session source 확인 |
+| Hook은 빨리 끝났지만 artifact가 아직 없음 | `codex-status` queue health, job last error | `queued`/`leased`이면 기다리고 `retry`/`dead_letter`이면 오류 원인 확인 |
+| `codex-watch`가 많은 thread를 선택함 | idle window와 watcher state | 즉시 중지하고 범위를 검토. 이 명령은 history backfill이며 기본 queue worker가 아님 |
 
 ## 16. 일반 경로 예시
 
