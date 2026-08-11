@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -85,6 +85,7 @@ def build_v2_summary_artifacts(
 
     if options.summary_cache and cache_path.exists():
         micro_summary, unit_summary = _load_summary_cache(cache_path)
+        micro_summary = _close_micro_summary_evidence_ids(micro_summary)
         _validate_micro_summary(
             session_bundle=session_bundle,
             micro_summary=micro_summary,
@@ -121,6 +122,7 @@ def build_v2_summary_artifacts(
 
     backend = _build_backend(options=options, backend_factory=backend_factory)
     micro_summary = backend.summarize_micro(evidence, schema_version="micro_summary_v2")
+    micro_summary = _close_micro_summary_evidence_ids(micro_summary)
     _validate_micro_summary(
         session_bundle=session_bundle,
         micro_summary=micro_summary,
@@ -178,6 +180,19 @@ def _raise_for_lint_issues(*, artifact: str, report: SummaryLintReport) -> None:
         return
     codes = ",".join(issue.code for issue in report.issues)
     raise SummaryPipelineInvariantError(f"{artifact} failed summary lint: {codes}")
+
+
+def _close_micro_summary_evidence_ids(summary: MicroSummaryV2) -> MicroSummaryV2:
+    cited_ids = [
+        message_id
+        for items in (summary.decisions, summary.claims, summary.action_items)
+        for item in items
+        for message_id in item.evidence_message_ids
+    ]
+    closed_ids = sorted({*summary.message_ids, *cited_ids})
+    if closed_ids == summary.message_ids:
+        return summary
+    return replace(summary, message_ids=closed_ids)
 
 
 def _summary_artifact_ids(*, options: SummaryOptions) -> _SummaryArtifactIds:

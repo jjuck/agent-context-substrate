@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import shutil
@@ -82,6 +83,44 @@ class CountingBackend:
                 created_at="2026-05-08T00:00:00+00:00",
             ),
         )
+
+
+class IncompleteMicroEvidenceBackend(CountingBackend):
+    def summarize_micro(self, evidence, *, schema_version: str) -> MicroSummaryV2:
+        summary = super().summarize_micro(evidence, schema_version=schema_version)
+        return replace(
+            summary,
+            message_ids=[1],
+            decisions=[
+                EvidenceBackedText(
+                    text="The assistant committed to extracting the v2 flow.",
+                    evidence_message_ids=[2],
+                    confidence=0.9,
+                )
+            ],
+        )
+
+    def summarize_unit(
+        self,
+        *,
+        unit_id: str,
+        session_id: str,
+        title: str,
+        goal: str,
+        micro_summaries: list[MicroSummaryV2],
+        schema_version: str,
+        related_pages: list[str] | None = None,
+    ) -> UnitSummaryV2:
+        summary = super().summarize_unit(
+            unit_id=unit_id,
+            session_id=session_id,
+            title=title,
+            goal=goal,
+            micro_summaries=micro_summaries,
+            schema_version=schema_version,
+            related_pages=related_pages,
+        )
+        return replace(summary, decisions=list(micro_summaries[0].decisions))
 
 
 class InvalidMicroEvidenceBackend(CountingBackend):
@@ -277,6 +316,32 @@ def test_build_v2_summary_artifacts_accepts_typed_session_bundle(tmp_path: Path)
     assert evidence_payload["session_id"] == "session-1"
     assert result.micro_path.name == "packet-typed-micro-v2.json"
     assert result.unit_path.name == "packet-typed-unit-v2.json"
+
+
+def test_build_v2_summary_artifacts_closes_micro_evidence_ids_before_unit_summary(tmp_path: Path) -> None:
+    paths = HarnessPaths(project_root=tmp_path / "project")
+    calls: list[str] = []
+
+    result = build_v2_summary_artifacts(
+        raw_bundle=_raw_bundle(),
+        paths=paths,
+        options=SummaryOptions(
+            session_id="session-1",
+            packet_id="packet-evidence-closure",
+            unit_title="Evidence closure",
+            goal="Keep unit evidence grounded when a micro omits a cited id from message_ids.",
+            summary_mode="auto",
+        ),
+        backend_factory=lambda mode, command, router, routing_hints, llm_safety: IncompleteMicroEvidenceBackend(
+            calls
+        ),
+    )
+
+    micro_payload = json.loads(result.micro_path.read_text(encoding="utf-8"))
+    unit_payload = json.loads(result.unit_path.read_text(encoding="utf-8"))
+    assert calls == ["micro", "unit"]
+    assert micro_payload["message_ids"] == [1, 2]
+    assert unit_payload["decisions"][0]["evidence_message_ids"] == [2]
 
 
 def test_build_v2_summary_artifacts_lints_typed_session_without_raw_round_trip(tmp_path: Path) -> None:
