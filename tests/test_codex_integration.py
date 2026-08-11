@@ -5,11 +5,15 @@ import sqlite3
 from pathlib import Path
 
 import agent_context_substrate.codex_integration as codex_integration
+import pytest
 from agent_context_substrate.codex_integration import (
+    CodexConfigChangedError,
+    CodexThreadChangedError,
     CodexWatcherState,
     discover_due_codex_threads,
     run_codex_thread_finalize_pipeline,
 )
+from agent_context_substrate.codex_runtime_config import codex_config_digest
 from agent_context_substrate.promotions import PromotionCandidate
 from agent_context_substrate.retrieval import search_knowledge
 
@@ -325,6 +329,111 @@ def test_codex_finalize_applies_only_candidates_selected_by_judge(tmp_path: Path
     assert "Transient knowledge that the judge excluded." not in page_text
     promotion_payload = json.loads((project_root / "data" / "promotions" / "thread-wiki-subset.json").read_text(encoding="utf-8"))
     assert [candidate["status"] for candidate in promotion_payload] == ["applied", "pending"]
+
+
+def test_codex_finalize_blocks_wiki_apply_when_rollout_changes_during_judging(tmp_path: Path, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home.mkdir()
+    wiki_root.mkdir()
+    rollout_path = codex_home / "sessions" / "rollout-thread-stale.jsonl"
+    _write_codex_thread(codex_home, thread_id="thread-stale", rollout_path=rollout_path)
+    expected_fingerprint = next(
+        thread.fingerprint
+        for thread in codex_integration.discover_codex_threads(codex_home=codex_home, include_archived=True)
+        if thread.thread_id == "thread-stale"
+    )
+    candidate = PromotionCandidate(
+        candidate_id="thread-stale-candidate-1",
+        packet_id="thread-stale",
+        kind="wiki_update",
+        target_page="Stale Guard",
+        reason="This would be durable if the source snapshot were still current.",
+        evidence=["claim:thread-stale-claim-1"],
+        proposed_change="Never apply knowledge from a stale rollout snapshot.",
+        proposed_action="update_existing",
+        confidence=0.95,
+        status="pending",
+    )
+
+    def export_candidates(*, packet_id: str, paths):
+        promotion_dir = paths.project_root / "data" / "promotions"
+        promotion_dir.mkdir(parents=True, exist_ok=True)
+        json_path = promotion_dir / f"{packet_id}.json"
+        markdown_path = promotion_dir / f"{packet_id}.md"
+        json_path.write_text(json.dumps([candidate.to_dict()]), encoding="utf-8")
+        markdown_path.write_text("# Promotion Candidates\n", encoding="utf-8")
+        return json_path, markdown_path
+
+    monkeypatch.setattr(codex_integration, "export_promotion_candidates", export_candidates)
+
+    def judge_router(_request: dict[str, object]) -> dict[str, object]:
+        rollout_path.write_text(rollout_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        return {
+            "ok": True,
+            "score": 0.95,
+            "decision": "apply_flexible",
+            "candidate_ids": [candidate.candidate_id],
+            "issues": [],
+            "rationale": "The candidate is durable.",
+            "metadata": {},
+        }
+
+    with pytest.raises(CodexThreadChangedError):
+        run_codex_thread_finalize_pipeline(
+            thread_id="thread-stale",
+            codex_home=codex_home,
+            project_root=project_root,
+            wiki_root=wiki_root,
+            summary_mode="heuristic",
+            wiki_auto_mode="apply-flexible",
+            wiki_write_judge_mode="hybrid",
+            wiki_write_judge_router=judge_router,
+            expected_rollout_fingerprint=expected_fingerprint,
+        )
+
+    assert not (wiki_root / "Stale Guard.md").exists()
+
+
+def test_codex_finalize_stops_when_canonical_config_changes_during_summary(tmp_path: Path, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    plugin_root = tmp_path / "plugin"
+    codex_home.mkdir()
+    wiki_root.mkdir()
+    plugin_root.mkdir()
+    rollout_path = codex_home / "sessions" / "rollout-thread-config.jsonl"
+    _write_codex_thread(codex_home, thread_id="thread-config", rollout_path=rollout_path)
+    config = {
+        "project_root": str(project_root),
+        "wiki_root": str(wiki_root),
+        "codex_home": str(codex_home),
+        "summary_mode": "heuristic",
+    }
+    config_path = plugin_root / "local_config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    expected_digest = codex_config_digest(config)
+    original_build = codex_integration.build_finalize_artifacts
+
+    def build_then_change_config(**kwargs):
+        result = original_build(**kwargs)
+        config_path.write_text(json.dumps({**config, "wiki_auto_mode": "off"}), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(codex_integration, "build_finalize_artifacts", build_then_change_config)
+
+    with pytest.raises(CodexConfigChangedError):
+        run_codex_thread_finalize_pipeline(
+            thread_id="thread-config",
+            codex_home=codex_home,
+            project_root=project_root,
+            wiki_root=wiki_root,
+            summary_mode="heuristic",
+            expected_config_digest=expected_digest,
+            runtime_plugin_root=plugin_root,
+        )
 
 
 def test_codex_watcher_selects_idle_threads_once(tmp_path: Path) -> None:

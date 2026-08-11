@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from typing import Callable
 
 from .atoms import (
     ClaimAtom,
@@ -14,6 +15,7 @@ from .atoms import (
 )
 from .models import MicroSummaryV2
 from .paths import HarnessPaths
+from .process_lock import InterProcessFileLock, shared_wiki_writer_lock_path
 from .promotions import (
     PromotionCandidate,
     propose_promotion_candidates,
@@ -188,6 +190,7 @@ def apply_wiki_patch_file(
     paths: HarnessPaths,
     wiki_root: Path | None = None,
     dry_run: bool = True,
+    pre_apply_guard: Callable[[], None] | None = None,
 ) -> WikiPatchApplyResult:
     proposal = load_wiki_patch_proposal(patch_file)
     effective_wiki_root = wiki_root or paths.wiki_root
@@ -199,11 +202,16 @@ def apply_wiki_patch_file(
         )
 
     def apply_pages() -> WikiPatchApplyResult:
-        return apply_wiki_patch_proposal(
+        if pre_apply_guard is not None:
+            pre_apply_guard()
+        result = apply_wiki_patch_proposal(
             proposal=proposal,
             wiki_root=effective_wiki_root,
             dry_run=False,
         )
+        if pre_apply_guard is not None:
+            pre_apply_guard()
+        return result
 
     def commit_artifacts(result: WikiPatchApplyResult) -> None:
         append_applied_wiki_patch_log(paths=paths, proposal=proposal, result=result)
@@ -216,7 +224,11 @@ def apply_wiki_patch_file(
         )
 
     transaction = WikiApplyTransaction(paths=paths, wiki_root=Path(effective_wiki_root), proposal=proposal)
-    return transaction.execute(apply_pages=apply_pages, commit_artifacts=commit_artifacts)
+    with InterProcessFileLock(paths.index_dir / "wiki_writer.lock", timeout_seconds=30.0):
+        with InterProcessFileLock(shared_wiki_writer_lock_path(effective_wiki_root), timeout_seconds=30.0):
+            if pre_apply_guard is not None:
+                pre_apply_guard()
+            return transaction.execute(apply_pages=apply_pages, commit_artifacts=commit_artifacts)
 
 
 def append_applied_wiki_patch_log(

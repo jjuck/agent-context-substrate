@@ -219,6 +219,7 @@ def test_apply_wiki_patch_file_marks_merged_candidates_and_registers_page(tmp_pa
     result = apply_wiki_patch_file(patch_file=patch_path, paths=paths, dry_run=False)
 
     assert result.applied_patch_ids == ["packet-1-patch-1"]
+    assert (project_root / "data" / "index" / "wiki_writer.lock").exists()
     page_text = (wiki_root / "Agent Context Substrate.md").read_text(encoding="utf-8")
     assert "run_codex_watch_once finalizes due Codex threads." in page_text
     assert "codex-finalize writes approved flexible wiki patches." in page_text

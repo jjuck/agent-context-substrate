@@ -188,6 +188,7 @@ def test_install_codex_plugin_copies_non_mcp_asset_and_writes_local_config(tmp_p
     marketplace_path = marketplace_root / ".agents" / "plugins" / "marketplace.json"
     codex_user_hooks_path = codex_home / "hooks.json"
     manifest_text = (plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+    manifest = json.loads(manifest_text)
     local_config = json.loads((plugin_dir / "local_config.json").read_text(encoding="utf-8"))
     marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
     user_hooks = json.loads(codex_user_hooks_path.read_text(encoding="utf-8"))
@@ -200,11 +201,15 @@ def test_install_codex_plugin_copies_non_mcp_asset_and_writes_local_config(tmp_p
     assert result.paths["codex_user_hooks_path"] == codex_user_hooks_path
     assert '"mcpServers"' not in manifest_text
     assert '"hooks"' not in manifest_text
+    assert all("codex-watch" not in prompt for prompt in manifest["interface"]["defaultPrompt"])
+    assert "durable queue" in manifest["interface"]["longDescription"]
     assert Path(local_config["project_root"]) == project_root
     assert Path(local_config["wiki_root"]) == wiki_root
     assert local_config["python_path_entries"] == [str(project_root / "src")]
     assert Path(local_config["hook_event_log_path"]) == project_root / "data" / "index" / "codex_hook_events.jsonl"
-    assert local_config["trigger_strategy"] == "hook-primary"
+    assert local_config["trigger_strategy"] == "hook-enqueue"
+    assert local_config["worker_max_attempts"] == 3
+    assert local_config["worker_lock_contention_retry_seconds"] == 60
     assert marketplace["plugins"][0]["name"] == "agent-context-substrate"
     assert marketplace["plugins"][0]["source"]["path"] == "./plugins/agent-context-substrate"
     assert marketplace["plugins"][0]["policy"]["installation"] == "INSTALLED_BY_DEFAULT"
@@ -213,6 +218,50 @@ def test_install_codex_plugin_copies_non_mcp_asset_and_writes_local_config(tmp_p
         'agent-context-substrate/hooks/codex_stop_finalize.py"'
     )
     assert "mcpServers" not in user_hooks
+
+
+def test_reinstall_codex_plugin_preserves_policy_but_refreshes_install_paths(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    original_project = tmp_path / "old-project"
+    plugin_dir = codex_home / "plugins" / "agent-context-substrate"
+    install_codex_plugin(
+        codex_home=codex_home,
+        project_root=original_project,
+        wiki_root=tmp_path / "old-wiki",
+    )
+    config_path = plugin_dir / "local_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config.update(
+        {
+            "workspace_scope": "restricted",
+            "allowed_workspace_roots": [str(tmp_path / "allowed")],
+            "summary_mode": "heuristic",
+            "wiki_auto_mode": "propose",
+            "trigger_strategy": "hook-primary",
+        }
+    )
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    new_project = tmp_path / "new-project"
+    new_wiki = tmp_path / "new-wiki"
+
+    reinstall_result = install_codex_plugin(
+        codex_home=codex_home,
+        project_root=new_project,
+        wiki_root=new_wiki,
+        overwrite=True,
+    )
+
+    updated = json.loads(config_path.read_text(encoding="utf-8"))
+    assert updated["workspace_scope"] == "restricted"
+    assert updated["allowed_workspace_roots"] == [str(tmp_path / "allowed")]
+    assert updated["summary_mode"] == "heuristic"
+    assert updated["wiki_auto_mode"] == "propose"
+    assert updated["trigger_strategy"] == "hook-primary"
+    assert updated["project_root"] == str(new_project)
+    assert updated["wiki_root"] == str(new_wiki)
+    assert updated["python_path_entries"] == [str(new_project / "src")]
+    assert "legacy synchronous hook-primary" in "\n".join(reinstall_result.messages)
+    assert "durably enqueues" not in "\n".join(reinstall_result.messages)
 
 
 def test_install_codex_plugin_user_hook_accepts_existing_bom_json(tmp_path: Path) -> None:

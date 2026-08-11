@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 import json
+import os
+
+from .process_lock import InterProcessFileLock
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,7 @@ class LedgerRecord:
 class SessionLedger:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
+        self.lock_path = self.path.with_name(f"{self.path.name}.lock")
 
     def _read_all(self) -> dict[str, dict[str, dict[str, object]]]:
         if not self.path.exists():
@@ -58,13 +63,19 @@ class SessionLedger:
 
     def _write_all(self, payload: dict[str, dict[str, dict[str, object]]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        temporary = self.path.with_name(f".{self.path.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(temporary, self.path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def get_record(self, session_id: str, pipeline: str) -> LedgerRecord | None:
-        payload = self._read_all()
+        with InterProcessFileLock(self.lock_path):
+            payload = self._read_all()
         pipeline_entries = payload.get(pipeline, {})
         record = pipeline_entries.get(session_id)
         if not isinstance(record, dict):
@@ -80,20 +91,21 @@ class SessionLedger:
         issue_count: int = 0,
         attempt_count: int = 0,
     ) -> LedgerRecord:
-        payload = self._read_all()
-        pipeline_entries = payload.setdefault(pipeline, {})
-        record = LedgerRecord(
-            session_id=session_id,
-            pipeline=pipeline,
-            status="completed",
-            updated_at=datetime.now(timezone.utc).isoformat(),
-            artifact_paths=dict(artifact_paths),
-            issue_count=issue_count,
-            attempt_count=attempt_count,
-            last_error="",
-        )
-        pipeline_entries[session_id] = record.to_dict()
-        self._write_all(payload)
+        with InterProcessFileLock(self.lock_path):
+            payload = self._read_all()
+            pipeline_entries = payload.setdefault(pipeline, {})
+            record = LedgerRecord(
+                session_id=session_id,
+                pipeline=pipeline,
+                status="completed",
+                updated_at=datetime.now(timezone.utc).isoformat(),
+                artifact_paths=dict(artifact_paths),
+                issue_count=issue_count,
+                attempt_count=attempt_count,
+                last_error="",
+            )
+            pipeline_entries[session_id] = record.to_dict()
+            self._write_all(payload)
         return record
 
     def mark_failed(
@@ -104,22 +116,23 @@ class SessionLedger:
         error: str,
         artifact_paths: dict[str, str] | None = None,
     ) -> LedgerRecord:
-        payload = self._read_all()
-        pipeline_entries = payload.setdefault(pipeline, {})
-        existing_payload = pipeline_entries.get(session_id)
-        existing_attempts = 0
-        if isinstance(existing_payload, dict):
-            existing_attempts = int(existing_payload.get("attempt_count", 0))
-        record = LedgerRecord(
-            session_id=session_id,
-            pipeline=pipeline,
-            status="failed",
-            updated_at=datetime.now(timezone.utc).isoformat(),
-            artifact_paths=dict(artifact_paths or {}),
-            issue_count=0,
-            attempt_count=existing_attempts + 1,
-            last_error=error,
-        )
-        pipeline_entries[session_id] = record.to_dict()
-        self._write_all(payload)
+        with InterProcessFileLock(self.lock_path):
+            payload = self._read_all()
+            pipeline_entries = payload.setdefault(pipeline, {})
+            existing_payload = pipeline_entries.get(session_id)
+            existing_attempts = 0
+            if isinstance(existing_payload, dict):
+                existing_attempts = int(existing_payload.get("attempt_count", 0))
+            record = LedgerRecord(
+                session_id=session_id,
+                pipeline=pipeline,
+                status="failed",
+                updated_at=datetime.now(timezone.utc).isoformat(),
+                artifact_paths=dict(artifact_paths or {}),
+                issue_count=0,
+                attempt_count=existing_attempts + 1,
+                last_error=error,
+            )
+            pipeline_entries[session_id] = record.to_dict()
+            self._write_all(payload)
         return record

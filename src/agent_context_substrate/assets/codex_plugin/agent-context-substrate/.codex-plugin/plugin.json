@@ -16,7 +16,7 @@
   "interface": {
     "displayName": "Agent Context Substrate",
     "shortDescription": "Finalize Codex threads into local retrieval artifacts.",
-    "longDescription": "Adds Codex-native operating instructions for Agent Context Substrate. The plugin bundles a Stop hook as the primary finalize trigger and keeps codex-watch available as a fallback without MCP servers.",
+    "longDescription": "Adds Codex-native operating instructions for Agent Context Substrate. The Stop hook commits work to a durable queue and starts a singleton worker; codex-watch remains an explicit recovery tool.",
     "developerName": "Agent Context Substrate",
     "category": "Engineering",
     "capabilities": [
@@ -24,7 +24,7 @@
       "Local"
     ],
     "defaultPrompt": [
-      "Start ACS codex-watch for this workspace.",
+      "Check the ACS durable queue and worker health for this workspace.",
       "Finalize this Codex thread into ACS.",
       "Search ACS knowledge for this project."
     ],

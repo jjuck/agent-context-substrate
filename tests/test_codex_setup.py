@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from agent_context_substrate.codex_setup import (
+    _resolved_codex_plugin_cache_dir,
     codex_config_paths,
     default_codex_local_config,
     detect_codex_cli,
@@ -15,6 +16,20 @@ from agent_context_substrate.codex_setup import (
     setup_codex,
     update_codex_local_config,
 )
+from agent_context_substrate.codex_jobs import CodexJobQueue, default_codex_jobs_path
+
+
+def test_resolved_codex_plugin_cache_dir_uses_registered_manifest_version(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "installed-plugin"
+    manifest_path = plugin_dir / ".codex-plugin" / "plugin.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text('{"name":"agent-context-substrate","version":"0.2.0"}\n', encoding="utf-8")
+    staged_cache_dir = tmp_path / "cache" / "local"
+    staged_cache_dir.mkdir(parents=True)
+    registered_cache_dir = staged_cache_dir.parent / "0.2.0"
+    registered_cache_dir.mkdir(parents=True)
+
+    assert _resolved_codex_plugin_cache_dir(staged_cache_dir, plugin_dir=plugin_dir) == registered_cache_dir
 
 
 def test_setup_codex_installs_default_windows_codex_integration(tmp_path: Path) -> None:
@@ -68,6 +83,8 @@ def test_setup_codex_default_wiki_root_is_portable_template(tmp_path: Path, monk
     expected_effective = home / "Documents" / "LLM Wiki"
     monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+    monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT", raising=False)
     monkeypatch.delenv("WIKI_PATH", raising=False)
     (project_root / "src" / "agent_context_substrate").mkdir(parents=True)
@@ -112,6 +129,45 @@ def test_setup_codex_explicit_wiki_root_is_recorded_as_explicit(tmp_path: Path) 
     assert local_config["wiki_root_source"] == "explicit"
 
 
+def test_setup_codex_reinstall_without_wiki_argument_preserves_installed_custom_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+    monkeypatch.setenv("PATH", "")
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "custom-wiki"
+    marketplace_root = tmp_path / "marketplace"
+    (project_root / "src" / "agent_context_substrate").mkdir(parents=True)
+    setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=marketplace_root,
+        overwrite=True,
+    )
+    update_codex_local_config(
+        codex_home / "plugins" / "agent-context-substrate",
+        {"trigger_strategy": "hook-primary"},
+    )
+
+    result = setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=None,
+        personal_marketplace_root=marketplace_root,
+        overwrite=True,
+    )
+    config = read_codex_local_config(codex_home / "plugins" / "agent-context-substrate")
+
+    assert result.paths["wiki_root_effective"] == wiki_root.resolve(strict=False)
+    assert config["wiki_root"] == str(wiki_root)
+    assert config["wiki_root_source"] == "explicit"
+    assert config["trigger_strategy"] == "hook-primary"
+    assert "legacy synchronous hook-primary" in "\n".join(result.messages)
+    assert "trusted Stop hook only enqueues" not in "\n".join(result.messages)
+
+
 def test_codex_wiki_root_resolver_preserves_legacy_absolute_config(tmp_path: Path) -> None:
     legacy_root = tmp_path / "legacy-wiki"
 
@@ -147,6 +203,12 @@ def test_default_codex_local_config_does_not_persist_env_wiki_root(tmp_path: Pat
     assert config["wiki_root_source"] == "default-template"
     assert config["workspace_scope"] == "all"
     assert config["allowed_workspace_roots"] == []
+    assert config["trigger_strategy"] == "hook-enqueue"
+    assert config["worker_lease_seconds"] > config["worker_job_timeout_seconds"]
+    assert config["worker_lock_contention_retry_seconds"] == 60
+    assert config["canonical_config_path"] == str(
+        tmp_path / "codex-home" / "plugins" / "agent-context-substrate" / "local_config.json"
+    )
 
 
 def test_setup_codex_user_hook_fallback_is_explicit_opt_in(tmp_path: Path) -> None:
@@ -410,9 +472,67 @@ def test_setup_codex_pins_detected_direct_codex_cli(tmp_path: Path, monkeypatch)
     local_config = read_codex_local_config(codex_home / "plugins" / "agent-context-substrate")
     assert result.ok is True
     assert local_config["codex_cli_command"] == str(codex_cli)
+    for key in ["personal_marketplace_plugin_dir", "codex_plugin_cache_dir"]:
+        replica = json.loads((result.paths[key] / "local_config.json").read_text(encoding="utf-8"))
+        assert replica == local_config
     assert result.doctor_report is not None
     assert result.doctor_report.checks["codex_summary_cli_direct"] == "ok"
     assert "Codex summary CLI pinned" in "\n".join(result.messages)
+
+
+def test_doctor_codex_reports_async_queue_and_dead_letters(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    (project_root / "src" / "agent_context_substrate").mkdir(parents=True)
+    setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=tmp_path / "marketplace",
+        overwrite=True,
+    )
+    queue = CodexJobQueue(default_codex_jobs_path(project_root))
+    job = queue.enqueue(
+        thread_id="thread-dead",
+        rollout_fingerprint='{"mtime_ns":1,"rollout_path":"rollout.jsonl","size":2}',
+        config_digest="digest",
+    )
+    leased = queue.claim(worker_id="test", lease_seconds=30)
+    assert leased is not None and leased.id == job.id
+    assert queue.dead_letter(leased.id, leased.lease_token, error="boom") is True
+
+    report = doctor_codex(codex_home=codex_home, project_root=project_root, wiki_root=wiki_root)
+
+    assert report.checks["codex_trigger_strategy"] == "ok"
+    assert report.checks["codex_job_queue"] == "ok"
+    assert report.checks["codex_worker_heartbeat"] == "warn"
+    assert report.checks["codex_dead_letter_queue"] == "warn"
+
+
+def test_doctor_codex_warns_when_legacy_sync_hook_is_still_configured(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    (project_root / "src" / "agent_context_substrate").mkdir(parents=True)
+    setup_codex(
+        codex_home=codex_home,
+        project_root=project_root,
+        wiki_root=wiki_root,
+        personal_marketplace_root=tmp_path / "marketplace",
+        overwrite=True,
+    )
+    update_codex_local_config(
+        codex_home / "plugins" / "agent-context-substrate",
+        {"trigger_strategy": "hook-primary"},
+    )
+
+    report = doctor_codex(codex_home=codex_home, project_root=project_root, wiki_root=wiki_root)
+    report_text = "\n".join(report.messages)
+
+    assert report.checks["codex_trigger_strategy"] == "warn"
+    assert "legacy synchronous hook-primary" in report_text
+    assert "durably enqueues work" not in report_text
 
 
 def test_setup_codex_registers_personal_plugin_with_detected_codex_cli(tmp_path: Path, monkeypatch) -> None:
@@ -431,6 +551,7 @@ def test_setup_codex_registers_personal_plugin_with_detected_codex_cli(tmp_path:
 
     def fake_run(command, **kwargs):
         calls.append([str(part) for part in command])
+        assert kwargs["env"]["CODEX_HOME"] == str(codex_home)
         if command[1:3] == ["plugin", "add"]:
             assert command[3:] == ["agent-context-substrate@personal", "--json"]
             return subprocess.CompletedProcess(args=command, returncode=0, stdout='{"ok":true}\n', stderr="")

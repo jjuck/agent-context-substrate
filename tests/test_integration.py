@@ -21,6 +21,11 @@ from agent_context_substrate.naming import (  # noqa: E402
     derive_unit_title,
 )
 from agent_context_substrate.policy import should_process_bundle  # noqa: E402
+from agent_context_substrate.process_lock import (  # noqa: E402
+    InterProcessFileLock,
+    LockTimeoutError,
+    shared_wiki_writer_lock_path,
+)
 from agent_context_substrate.session_bundle import SessionBundle, SessionMessage  # noqa: E402
 from agent_context_substrate.summarizer import build_micro_summary  # noqa: E402
 
@@ -320,6 +325,51 @@ def test_run_session_finalize_pipeline_full_mode_writes_legacy_promotions(tmp_pa
     assert result.promoted_paths["concept"].exists()
     assert result.promoted_paths["plan"].exists()
     assert result.promoted_paths["architecture"].exists()
+
+
+def test_full_promotion_and_registration_hold_the_shared_wiki_writer_lock(tmp_path, monkeypatch) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    wiki_root = tmp_path / "wiki"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    _build_sample_state_db(hermes_home / "state.db")
+    shared_lock_path = shared_wiki_writer_lock_path(wiki_root)
+    observed_phases: list[str] = []
+    original_promote = integration_module._promote_default_artifacts
+    original_register = integration_module._register_default_promotions
+
+    def assert_lock_is_held(phase: str) -> None:
+        try:
+            with InterProcessFileLock(shared_lock_path, timeout_seconds=0):
+                pass
+        except LockTimeoutError:
+            observed_phases.append(phase)
+            return
+        raise AssertionError(f"shared wiki writer lock was not held during {phase}")
+
+    def promote_while_checking_lock(**kwargs):
+        assert_lock_is_held("promotion")
+        return original_promote(**kwargs)
+
+    def register_while_checking_lock(**kwargs):
+        assert_lock_is_held("registration")
+        return original_register(**kwargs)
+
+    monkeypatch.setattr(integration_module, "_promote_default_artifacts", promote_while_checking_lock)
+    monkeypatch.setattr(integration_module, "_register_default_promotions", register_while_checking_lock)
+
+    run_session_finalize_pipeline(
+        session_id="session-1",
+        project_root=project_root,
+        wiki_root=wiki_root,
+        promotion_mode="full",
+    )
+
+    assert observed_phases == ["promotion", "registration"]
 
 
 def test_default_promotion_plan_cross_links_all_generated_pages() -> None:

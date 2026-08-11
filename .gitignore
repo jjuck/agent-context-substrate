@@ -19,14 +19,22 @@ venv/
 data/exports/
 data/atoms/
 data/promotions/
+data/wiki_decisions/
 data/wiki_patches/
 data/lint/
 data/cache/
 data/index/session_ledger.json
+data/index/session_ledger.json.lock
 data/index/topic_map.json
 data/index/topic_map.md
 data/index/codex_hook_events.jsonl
 data/index/codex_watcher_state.json
+data/index/codex_watcher_state.json.lock
+data/index/codex_jobs.sqlite3*
+data/index/codex_worker.lock
+data/index/codex_worker_status.json
+data/index/codex_finalize.lock
+data/index/wiki_writer.lock
 data/logs/
 
 # Local Hermes session plans/cache

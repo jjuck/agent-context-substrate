@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 import json
+import os
+import sqlite3
 import subprocess
 import shutil
 import sys
@@ -17,6 +21,7 @@ from .codex_cli import (
     resolve_codex_command,
 )
 from .codex_exec import CodexExecRuntime
+from .codex_jobs import CodexJobQueue, default_codex_jobs_path
 from .codex_source import (
     codex_hook_support_status,
     codex_installed_hook_status,
@@ -27,6 +32,7 @@ from .codex_wiki_root import (
     CodexWikiRootResolution,
     resolve_codex_wiki_root,
 )
+from .codex_worker import default_codex_worker_status_path, read_codex_worker_status
 from .distribution import init_wiki, install_codex_plugin
 from .paths import HarnessPaths
 
@@ -200,7 +206,11 @@ def setup_codex(
 ) -> CodexSetupResult:
     codex_home_path = resolve_codex_home(codex_home)
     project_root_path = _resolve_user_path(project_root)
-    wiki_root_resolution = _wiki_root_resolution_for_argument(wiki_root)
+    installed_config = _read_json_object(codex_plugin_dir(codex_home_path) / "local_config.json")
+    if wiki_root is None and installed_config:
+        wiki_root_resolution = resolve_codex_wiki_root(installed_config, env={})
+    else:
+        wiki_root_resolution = _wiki_root_resolution_for_argument(wiki_root)
     wiki_root_path = _require_resolved_wiki_root(wiki_root_resolution)
     marketplace_root = _resolve_user_path(personal_marketplace_root) if personal_marketplace_root is not None else Path.home()
     paths = _paths_with_wiki_root_resolution(
@@ -234,7 +244,8 @@ def setup_codex(
 
     HarnessPaths(project_root=project_root_path).ensure_project_dirs()
     init_result = init_wiki(wiki_root_path)
-    wiki_root_config_value, wiki_root_config_source = _wiki_root_config_fields(wiki_root)
+    wiki_root_config_value = wiki_root_resolution.raw_value
+    wiki_root_config_source = wiki_root_resolution.source
     install_result = install_codex_plugin(
         codex_home=codex_home_path,
         project_root=project_root_path,
@@ -247,20 +258,32 @@ def setup_codex(
     )
     codex_cli = detect_codex_cli()
     if codex_cli.recommended_path is not None:
-        update_codex_local_config(
+        effective_config = update_codex_local_config(
             install_result.paths["plugin_dir"],
             {"codex_cli_command": str(codex_cli.recommended_path)},
         )
+        _synchronize_codex_config_replicas(install_result.paths, effective_config)
     registry_messages = _register_codex_personal_plugin(
         codex_cli=codex_cli.recommended_path,
         project_root=project_root_path,
+        codex_home=codex_home_path,
         enabled=install_marketplace,
     )
+    installed_paths = dict(install_result.paths)
+    staged_cache_dir = installed_paths.get("codex_plugin_cache_dir")
+    if staged_cache_dir is not None:
+        installed_paths["codex_plugin_cache_dir"] = _resolved_codex_plugin_cache_dir(
+            staged_cache_dir,
+            plugin_dir=install_result.paths["plugin_dir"],
+        )
     doctor_report = doctor_codex(codex_home=codex_home_path, project_root=project_root_path, wiki_root=wiki_root_path)
+    installed_trigger_strategy = str(
+        read_codex_local_config(install_result.paths["plugin_dir"]).get("trigger_strategy") or "hook-primary"
+    ).strip().lower()
     return CodexSetupResult(
         ok=doctor_report.ok,
         status=install_result.status,
-        paths={**paths, **install_result.paths, **init_result.paths},
+        paths={**paths, **installed_paths, **init_result.paths},
         messages=[
             *init_result.messages,
             *install_result.messages,
@@ -278,6 +301,7 @@ def setup_codex(
             "Hook trust: primary path is Codex app -> Settings -> Hooks -> agent-context-substrate Stop hook -> Trust.",
             "CLI/TUI fallback: run codex, enter /hooks, and trust the same Stop hook.",
             "Hook trust is separate from Full Access, approval mode, and sandbox settings.",
+            _setup_trigger_strategy_message(installed_trigger_strategy),
             "Default Windows setup installs the plugin Stop hook only; user hooks.json fallback is opt-in to avoid duplicate Stop hooks.",
         ],
         actions=actions,
@@ -370,6 +394,33 @@ def doctor_codex(
         STATUS_OK if codex_installed_hook_status(codex_home=codex_home_path) == "installed" else STATUS_MISSING
     )
     checks["watcher_fallback_available"] = STATUS_OK
+    trigger_strategy = str(local_config.get("trigger_strategy") or "hook-primary").strip().lower()
+    checks["codex_trigger_strategy"] = STATUS_OK if trigger_strategy == "hook-enqueue" else STATUS_WARN
+    queue_path = default_codex_jobs_path(project_root_path)
+    worker_status_path = default_codex_worker_status_path(project_root_path)
+    if trigger_strategy == "hook-enqueue":
+        if queue_path.exists():
+            try:
+                queue_health = CodexJobQueue(queue_path).health()
+            except (OSError, sqlite3.Error):
+                checks["codex_job_queue"] = STATUS_WARN
+                checks["codex_dead_letter_queue"] = STATUS_SKIPPED
+            else:
+                checks["codex_job_queue"] = STATUS_OK
+                checks["codex_dead_letter_queue"] = (
+                    STATUS_WARN if queue_health.dead_letter_count else STATUS_OK
+                )
+        else:
+            checks["codex_job_queue"] = STATUS_WARN
+            checks["codex_dead_letter_queue"] = STATUS_SKIPPED
+        checks["codex_worker_heartbeat"] = _worker_heartbeat_status(
+            read_codex_worker_status(project_root_path),
+            lease_seconds=local_config.get("worker_lease_seconds"),
+        )
+    else:
+        checks["codex_job_queue"] = STATUS_SKIPPED
+        checks["codex_dead_letter_queue"] = STATUS_SKIPPED
+        checks["codex_worker_heartbeat"] = STATUS_SKIPPED
     checks["data_dir_writable"] = _data_dir_writable_status(project_root_path)
     checks["git_available"] = STATUS_OK if shutil.which("git") else STATUS_WARN
     summary_mode = str(local_config.get("summary_mode") or "").strip().lower()
@@ -382,6 +433,7 @@ def doctor_codex(
     selected_codex_cli_kind = _selected_codex_cli_kind(selected_codex_cli)
     plugin_registry = _inspect_codex_plugin_registry(
         selected_codex_cli=effective_codex_cli or detected_codex_cli,
+        codex_home=codex_home_path,
     )
     checks["codex_plugin_registered"] = plugin_registry.status
     workspace_skips = _inspect_recent_workspace_guard_skips(
@@ -412,6 +464,8 @@ def doctor_codex(
         ok = False
     report_paths = dict(paths)
     report_paths["wiki_root_effective"] = wiki_root_path
+    report_paths["codex_job_queue"] = queue_path
+    report_paths["codex_worker_status"] = worker_status_path
     if codex_cli.path_codex is not None:
         report_paths["codex_path_cli"] = codex_cli.path_codex
     if codex_cli.app_cli_path is not None:
@@ -427,7 +481,7 @@ def doctor_codex(
         checks=checks,
         paths=report_paths,
         messages=(
-            _doctor_messages(checks=checks, paths=paths)
+            _doctor_messages(checks=checks, paths=paths, trigger_strategy=trigger_strategy)
             + _wiki_root_messages(resolution=wiki_root_resolution)
             + plugin_registry.messages
             + workspace_skips.messages
@@ -445,6 +499,17 @@ def doctor_codex(
             + codex_cli.messages
         ),
     )
+
+
+def _setup_trigger_strategy_message(trigger_strategy: str) -> str:
+    if trigger_strategy == "hook-enqueue":
+        return "The trusted Stop hook only enqueues durable work; a hidden singleton worker performs finalization."
+    if trigger_strategy == "hook-primary":
+        return (
+            "The legacy synchronous hook-primary strategy remains configured; set the canonical trigger_strategy "
+            "to hook-enqueue after validating the worker migration."
+        )
+    return f"The installed trigger_strategy={trigger_strategy!r} is unsupported and must be repaired."
 
 
 def diagnose_codex(
@@ -465,12 +530,13 @@ def diagnose_codex(
     ]
     actions = _diagnostic_actions(report)
     if fix and not report.ok:
+        preserve_user_hook_fallback = _hooks_json_has_acs_stop_hook(codex_home_path / "hooks.json")
         setup_codex(
             codex_home=codex_home_path,
             project_root=project_root_path,
             wiki_root=wiki_root,
             personal_marketplace_root=personal_marketplace_root,
-            install_user_hook=False,
+            install_user_hook=preserve_user_hook_fallback,
             install_marketplace=True,
             overwrite=True,
         )
@@ -499,7 +565,9 @@ def read_codex_local_config(plugin_dir: Path | str) -> dict[str, Any]:
 def write_codex_local_config(plugin_dir: Path | str, config: dict[str, Any]) -> dict[str, Any]:
     config_path = Path(plugin_dir).expanduser() / "local_config.json"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary = config_path.with_name(f".{config_path.name}.{uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(config_path)
     return dict(config)
 
 
@@ -507,6 +575,23 @@ def update_codex_local_config(plugin_dir: Path | str, updates: dict[str, Any]) -
     config = read_codex_local_config(plugin_dir)
     config.update(updates)
     return write_codex_local_config(plugin_dir, config)
+
+
+def _synchronize_codex_config_replicas(paths: dict[str, Path], config: dict[str, Any]) -> None:
+    for key in ("personal_marketplace_plugin_dir", "codex_plugin_cache_dir"):
+        plugin_dir = paths.get(key)
+        if plugin_dir is not None:
+            write_codex_local_config(plugin_dir, config)
+
+
+def _resolved_codex_plugin_cache_dir(staged_cache_dir: Path | str, *, plugin_dir: Path | str) -> Path:
+    staged_path = Path(staged_cache_dir)
+    manifest = _read_json_object(Path(plugin_dir) / ".codex-plugin" / "plugin.json")
+    version = str(manifest.get("version") or "").strip()
+    registered_path = staged_path.parent / version if version else staged_path
+    if registered_path.is_dir():
+        return registered_path
+    return staged_path
 
 
 def default_codex_local_config(*, codex_home: Path | str | None, project_root: Path | str, wiki_root: Path | str | None) -> dict[str, Any]:
@@ -518,14 +603,25 @@ def default_codex_local_config(*, codex_home: Path | str | None, project_root: P
         "wiki_root": wiki_root_config_value,
         "wiki_root_source": wiki_root_config_source,
         "codex_home": str(codex_home_path),
+        "canonical_config_path": str(codex_home_path / "plugins" / CODEX_PLUGIN_NAME / "local_config.json"),
         "python_executable": sys.executable,
         "python_path_entries": [str(project_root_path / "src")],
         "hook_event_log_path": str(project_root_path / "data" / "index" / "codex_hook_events.jsonl"),
         "workspace_scope": "all",
         "allowed_workspace_roots": [],
-        "trigger_strategy": "hook-primary",
+        "trigger_strategy": "hook-enqueue",
         "watcher_fallback": True,
         "hook_timeout_seconds": 110,
+        "worker_job_timeout_seconds": 600,
+        "worker_lease_seconds": 900,
+        "worker_lock_timeout_seconds": 5,
+        "worker_lock_contention_retry_seconds": 60,
+        "worker_idle_grace_seconds": 1,
+        "worker_poll_seconds": 1,
+        "worker_heartbeat_seconds": 30,
+        "worker_max_attempts": 3,
+        "worker_retry_base_seconds": 15,
+        "worker_retry_max_seconds": 300,
         "summary_mode": "auto",
         "summary_cache": False,
         "summary_model": None,
@@ -650,6 +746,7 @@ def _register_codex_personal_plugin(
     *,
     codex_cli: Path | None,
     project_root: Path,
+    codex_home: Path,
     enabled: bool,
 ) -> list[str]:
     if not enabled:
@@ -669,6 +766,7 @@ def _register_codex_personal_plugin(
             encoding="utf-8",
             errors="replace",
             capture_output=True,
+            env={**os.environ, "CODEX_HOME": str(codex_home)},
             timeout=45,
             check=False,
             shell=False,
@@ -691,7 +789,7 @@ def _register_codex_personal_plugin(
     ]
 
 
-def _inspect_codex_plugin_registry(*, selected_codex_cli: str) -> CodexPluginRegistryCheck:
+def _inspect_codex_plugin_registry(*, selected_codex_cli: str, codex_home: Path) -> CodexPluginRegistryCheck:
     if not selected_codex_cli:
         return CodexPluginRegistryCheck(
             status=STATUS_SKIPPED,
@@ -719,6 +817,7 @@ def _inspect_codex_plugin_registry(*, selected_codex_cli: str) -> CodexPluginReg
             encoding="utf-8",
             errors="replace",
             capture_output=True,
+            env={**os.environ, "CODEX_HOME": str(codex_home)},
             timeout=30,
             check=False,
             shell=False,
@@ -900,17 +999,52 @@ def _data_dir_writable_status(project_root: Path) -> str:
     return STATUS_OK
 
 
-def _doctor_messages(*, checks: dict[str, str], paths: dict[str, Any]) -> list[str]:
+def _worker_heartbeat_status(status: dict[str, Any], *, lease_seconds: Any) -> str:
+    if not status:
+        return STATUS_WARN
+    heartbeat_value = str(status.get("heartbeat_at") or "").strip()
+    try:
+        heartbeat = datetime.fromisoformat(heartbeat_value)
+    except ValueError:
+        return STATUS_WARN
+    if heartbeat.tzinfo is None:
+        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+    worker_state = str(status.get("status") or "").strip().lower()
+    if worker_state == "idle":
+        return STATUS_OK
+    if worker_state not in {"running", "processing", "waiting-retry"}:
+        return STATUS_WARN
+    try:
+        lease = float(lease_seconds)
+    except (TypeError, ValueError):
+        lease = 900.0
+    stale_after = max(120.0, lease * 2.0)
+    age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
+    return STATUS_WARN if age > stale_after else STATUS_OK
+
+
+def _doctor_messages(*, checks: dict[str, str], paths: dict[str, Any], trigger_strategy: str) -> list[str]:
     _ = checks
-    return [
+    messages = [
         f"Codex source SQLite: {paths['codex_sqlite']}",
         f"Codex rollout JSONL root: {paths['codex_rollouts']}",
         f"LLM Wiki root: {paths['llm_wiki_root']}",
         f"ACS artifacts: {paths['acs_artifacts']}",
         "Hook trust: restart Codex, open Codex app -> Settings -> Hooks, review the ACS Stop hook, then trust/enable it; CLI /hooks is the alternate path.",
         "Hook trust is separate from Full Access, approval mode, and sandbox permissions.",
-        "Stop hook strategy: plugin hook is primary; ~/.codex/hooks.json fallback is opt-in to avoid duplicate Stop hooks.",
     ]
+    if trigger_strategy == "hook-enqueue":
+        messages.append(
+            "Stop hook strategy: plugin hook durably enqueues work; a singleton worker finalizes it off the hook path."
+        )
+    elif trigger_strategy == "hook-primary":
+        messages.append(
+            "Stop hook strategy: legacy synchronous hook-primary is still configured; migrate to hook-enqueue to keep finalization off the hook path."
+        )
+    else:
+        messages.append(f"Stop hook strategy: unsupported value {trigger_strategy!r}; configure hook-enqueue.")
+    messages.append("codex-watch remains an explicit fallback/backfill tool and does not run automatically.")
+    return messages
 
 
 def _wiki_root_messages(*, resolution: CodexWikiRootResolution) -> list[str]:

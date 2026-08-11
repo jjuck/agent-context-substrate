@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from contextlib import contextmanager
+from uuid import uuid4
 import json
 import os
 import re
@@ -321,21 +322,32 @@ def _write_codex_local_config(
     wiki_root_source: str = "explicit",
 ) -> Path:
     local_config_path = destination / "local_config.json"
-    local_config_path.write_text(
-        json.dumps(
-            {
+    payload = {
                 "project_root": str(project_root),
                 "wiki_root": wiki_root_config_value or str(wiki_root),
                 "wiki_root_source": wiki_root_source,
                 "codex_home": str(codex_home),
+                "canonical_config_path": str(
+                    codex_home / "plugins" / "agent-context-substrate" / "local_config.json"
+                ),
                 "python_executable": sys.executable,
                 "python_path_entries": [str(project_root / "src")],
                 "hook_event_log_path": str(project_root / "data" / "index" / "codex_hook_events.jsonl"),
                 "workspace_scope": "all",
                 "allowed_workspace_roots": [],
-                "trigger_strategy": "hook-primary",
+                "trigger_strategy": "hook-enqueue",
                 "watcher_fallback": True,
                 "hook_timeout_seconds": 110,
+                "worker_job_timeout_seconds": 600,
+                "worker_lease_seconds": 900,
+                "worker_lock_timeout_seconds": 5,
+                "worker_lock_contention_retry_seconds": 60,
+                "worker_idle_grace_seconds": 1,
+                "worker_poll_seconds": 1,
+                "worker_heartbeat_seconds": 30,
+                "worker_max_attempts": 3,
+                "worker_retry_base_seconds": 15,
+                "worker_retry_max_seconds": 300,
                 "summary_mode": "auto",
                 "summary_cache": False,
                 "summary_model": None,
@@ -353,17 +365,30 @@ def _write_codex_local_config(
                 "commands": {
                     "status": "agent-context-substrate codex-status",
                     "watch": "agent-context-substrate codex-watch",
+                    "worker": "agent-context-substrate codex-worker",
+                    "jobs": "agent-context-substrate codex-jobs",
                     "finalize": "agent-context-substrate codex-finalize",
                     "search": "agent-context-substrate search-knowledge",
                     "expand": "agent-context-substrate expand-hit",
                 },
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    }
+    _write_json_object_atomic(local_config_path, payload)
     return local_config_path
+
+
+def _write_json_object_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _read_json_object(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _install_codex_personal_marketplace(
@@ -423,7 +448,7 @@ def _codex_user_stop_hook_group(*, plugin_dir: Path) -> dict[str, object]:
                 "command": f'python3 "{hook_script.as_posix()}"',
                 "commandWindows": f'python "{hook_script}"',
                 "timeout": 120,
-                "statusMessage": "Finalizing Codex thread into Agent Context Substrate",
+                "statusMessage": "Queueing Codex finalize job for Agent Context Substrate",
             }
         ]
     }
@@ -536,6 +561,7 @@ def install_codex_plugin(
     project_root = Path(project_root).expanduser()
     wiki_root = Path(wiki_root).expanduser()
     plugin_dir = codex_home / "plugins" / "agent-context-substrate"
+    previous_config = _read_json_object(plugin_dir / "local_config.json")
     if plugin_dir.exists() and not overwrite:
         return InstallResult(
             status="skipped",
@@ -555,10 +581,36 @@ def install_codex_plugin(
         wiki_root_config_value=wiki_root_config_value,
         wiki_root_source=wiki_root_source,
     )
+    if previous_config:
+        generated_config = _read_json_object(local_config_path)
+        merged_config = {**generated_config, **previous_config}
+        for key in {
+            "project_root",
+            "wiki_root",
+            "wiki_root_source",
+            "codex_home",
+            "canonical_config_path",
+            "python_executable",
+            "python_path_entries",
+            "hook_event_log_path",
+            "commands",
+        }:
+            merged_config[key] = generated_config[key]
+        _write_json_object_atomic(local_config_path, merged_config)
 
     paths = {"plugin_dir": plugin_dir, "local_config_path": local_config_path}
     if backup_path:
         paths["backup_path"] = backup_path
+    trigger_strategy = str(_read_json_object(local_config_path).get("trigger_strategy") or "hook-primary").strip().lower()
+    if trigger_strategy == "hook-enqueue":
+        runtime_message = "codex plugin installed; Stop hook durably enqueues and a singleton worker finalizes jobs"
+    elif trigger_strategy == "hook-primary":
+        runtime_message = (
+            "codex plugin installed; legacy synchronous hook-primary remains configured until the canonical "
+            "trigger_strategy is changed to hook-enqueue"
+        )
+    else:
+        runtime_message = f"codex plugin installed; unsupported trigger_strategy={trigger_strategy!r} requires repair"
     if personal_marketplace_root is not None:
         paths.update(
             _install_codex_personal_marketplace(
@@ -568,11 +620,11 @@ def install_codex_plugin(
             )
         )
         messages = [
-            "codex plugin installed; Stop hook is primary and codex-watch remains fallback",
+            runtime_message,
             "personal marketplace entry and Codex plugin cache installed",
         ]
     else:
-        messages = ["codex plugin installed; Stop hook is primary and codex-watch remains fallback"]
+        messages = [runtime_message]
     if install_user_hook:
         paths["codex_user_hooks_path"] = _install_codex_user_stop_hook(codex_home=codex_home, plugin_dir=plugin_dir)
         messages.append("Codex user hooks.json Stop hook installed for non-plugin hook fallback")

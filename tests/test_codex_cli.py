@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 from agent_context_substrate import cli
+import agent_context_substrate.commands.codex as codex_commands
+from agent_context_substrate.codex_jobs import CodexJobQueue, default_codex_jobs_path
+from agent_context_substrate.process_lock import LockTimeoutError
 
 
 class _FakeTextStream:
@@ -42,6 +45,8 @@ def test_codex_commands_are_registered() -> None:
     assert parser.parse_args(["diagnose-codex", "--project-root", "C:/project", "--fix"]).command == "diagnose-codex"
     assert parser.parse_args(["config-codex", "paths", "--project-root", "C:/project"]).command == "config-codex"
     assert parser.parse_args(["codex-status", "--codex-home", "C:/codex"]).command == "codex-status"
+    assert parser.parse_args(["codex-worker", "--plugin-root", "C:/plugin"]).command == "codex-worker"
+    assert parser.parse_args(["codex-jobs", "list", "--status", "dead_letter"]).command == "codex-jobs"
     assert parser.parse_args(
         [
             "codex-finalize",
@@ -116,6 +121,33 @@ def test_codex_commands_are_registered() -> None:
     ).command == "install-codex-plugin"
 
 
+def test_codex_finalize_reports_lock_contention_as_explicit_temporary_failure(
+    monkeypatch,
+    capsys,
+) -> None:
+    def lock_is_busy(**_kwargs):
+        raise LockTimeoutError("writer lock is held")
+
+    monkeypatch.setattr(codex_commands, "run_codex_thread_finalize_pipeline", lock_is_busy)
+
+    return_code = cli.main(
+        [
+            "codex-finalize",
+            "--thread-id",
+            "thread-lock-busy",
+            "--codex-home",
+            "C:/codex",
+            "--project-root",
+            "C:/project",
+            "--wiki-root",
+            "C:/wiki",
+        ]
+    )
+
+    assert return_code == 75
+    assert capsys.readouterr().err == "ACS_CODEX_FINALIZE_LOCK_BUSY: writer lock is held\n"
+
+
 @pytest.mark.parametrize("command", ["setup-codex", "setup-codex-wizard"])
 def test_setup_codex_help_renders_userprofile_template(command: str, capsys) -> None:
     parser = cli.build_parser()
@@ -159,6 +191,87 @@ def test_codex_status_cli_prints_threads(tmp_path: Path, capsys) -> None:
     assert "watcher_fallback=available" in captured.out
 
 
+def test_codex_status_cli_prints_durable_queue_and_worker_health(tmp_path: Path, capsys) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    plugin_root = codex_home / "plugins" / "agent-context-substrate"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(tmp_path / "wiki"),
+                "codex_home": str(codex_home),
+                "trigger_strategy": "hook-enqueue",
+            }
+        ),
+        encoding="utf-8",
+    )
+    queue = CodexJobQueue(default_codex_jobs_path(project_root))
+    queue.enqueue(
+        thread_id="thread-queued",
+        rollout_fingerprint='{"mtime_ns":1,"rollout_path":"rollout.jsonl","size":2}',
+        config_digest="digest",
+    )
+    status_path = project_root / "data" / "index" / "codex_worker_status.json"
+    status_path.write_text(
+        json.dumps({"status": "idle", "heartbeat_at": "2026-08-11T00:00:00+00:00", "last_error": ""}),
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["codex-status", "--codex-home", str(codex_home)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "trigger_strategy=hook-enqueue" in output
+    assert f"job_queue_path={default_codex_jobs_path(project_root)}" in output
+    assert "queue_pending_count=1" in output
+    assert "queue_queued_count=1" in output
+    assert "queue_dead_letter_count=0" in output
+    assert "worker_status=idle" in output
+
+
+def test_codex_jobs_cli_lists_errors_and_requeues_dead_letter(tmp_path: Path, capsys) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "project"
+    plugin_root = codex_home / "plugins" / "agent-context-substrate"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(tmp_path / "wiki"),
+                "codex_home": str(codex_home),
+            }
+        ),
+        encoding="utf-8",
+    )
+    queue = CodexJobQueue(default_codex_jobs_path(project_root))
+    job = queue.enqueue(
+        thread_id="thread-dead",
+        rollout_fingerprint='{"mtime_ns":1,"rollout_path":"rollout.jsonl","size":2}',
+        config_digest="digest",
+    )
+    leased = queue.claim(worker_id="test", lease_seconds=30)
+    assert leased is not None
+    assert queue.dead_letter(leased.id, leased.lease_token, error="broken")
+
+    list_code = cli.main(
+        ["codex-jobs", "--codex-home", str(codex_home), "list", "--status", "dead_letter", "--json"]
+    )
+    listed = json.loads(capsys.readouterr().out)
+    retry_code = cli.main(
+        ["codex-jobs", "--codex-home", str(codex_home), "retry", "--job-id", str(job.id)]
+    )
+    retry_output = capsys.readouterr().out
+
+    assert list_code == 0
+    assert listed[0]["last_error"] == "broken"
+    assert retry_code == 0
+    assert "requeued=true" in retry_output
+    assert queue.get(job.id).status == "queued"
+
+
 def test_setup_codex_cli_dry_run_prints_json(tmp_path: Path, capsys) -> None:
     exit_code = cli.main(
         [
@@ -200,6 +313,32 @@ def test_doctor_codex_cli_fail_on_issues_returns_nonzero(tmp_path: Path, capsys)
     assert exit_code == 1
     assert "doctor-codex ok=False" in captured.out
     assert "codex_plugin_installed=missing" in captured.out
+
+
+def test_doctor_codex_defaults_project_root_from_installed_config(tmp_path: Path, capsys) -> None:
+    codex_home = tmp_path / "codex"
+    project_root = tmp_path / "installed-project"
+    wiki_root = tmp_path / "wiki"
+    plugin_root = codex_home / "plugins" / "agent-context-substrate"
+    plugin_root.mkdir(parents=True)
+    project_root.mkdir()
+    wiki_root.mkdir()
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(["doctor-codex", "--codex-home", str(codex_home), "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["paths"]["acs_project_root"] == str(project_root.resolve(strict=False))
 
 
 def test_config_codex_paths_cli_prints_user_facing_paths(tmp_path: Path, capsys) -> None:

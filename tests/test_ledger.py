@@ -1,7 +1,10 @@
 import json
+import multiprocessing
+from queue import Empty
 import sqlite3
 from pathlib import Path
 import sys
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -10,6 +13,23 @@ if str(SRC) not in sys.path:
 
 from agent_context_substrate.integration import run_session_finalize_pipeline  # noqa: E402
 from agent_context_substrate.ledger import SessionLedger  # noqa: E402
+from agent_context_substrate.process_lock import InterProcessFileLock  # noqa: E402
+
+
+def _mark_completed_after_signal(
+    ledger_path: str,
+    start_event: Any,
+    result_queue: Any,
+) -> None:
+    result_queue.put("ready")
+    start_event.wait(timeout=5)
+    result_queue.put("writing")
+    SessionLedger(Path(ledger_path)).mark_completed(
+        session_id="child-session",
+        pipeline="session_finalize",
+        artifact_paths={"packet_json": "child.json"},
+    )
+    result_queue.put("completed")
 
 
 def _build_sample_state_db(db_path: Path) -> None:
@@ -102,6 +122,48 @@ def test_session_ledger_round_trips_completed_records(tmp_path) -> None:
     assert record.status == "completed"
     assert record.artifact_paths["packet_json"].endswith("session-1.json")
     assert payload["session_finalize"]["session-1"]["status"] == "completed"
+
+
+def test_session_ledger_serializes_cross_process_read_modify_write(tmp_path) -> None:
+    ledger_path = tmp_path / "data" / "index" / "session_ledger.json"
+    ledger = SessionLedger(ledger_path)
+    context = multiprocessing.get_context("spawn")
+    start_event = context.Event()
+    result_queue = context.Queue()
+    child = context.Process(
+        target=_mark_completed_after_signal,
+        args=(str(ledger_path), start_event, result_queue),
+    )
+
+    with InterProcessFileLock(ledger.lock_path):
+        child.start()
+        assert result_queue.get(timeout=5) == "ready"
+        start_event.set()
+        assert result_queue.get(timeout=5) == "writing"
+        try:
+            premature_result = result_queue.get(timeout=0.3)
+        except Empty:
+            premature_result = None
+        assert premature_result is None
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_path.write_text(
+            json.dumps({"sentinel": {"written_while_locked": True}}),
+            encoding="utf-8",
+        )
+
+    child.join(timeout=5)
+    if child.is_alive():
+        child.terminate()
+        child.join(timeout=5)
+        raise AssertionError("child ledger writer did not finish within 5 seconds")
+
+    assert child.exitcode == 0
+    assert result_queue.get(timeout=1) == "completed"
+    payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert payload["sentinel"] == {"written_while_locked": True}
+    record = ledger.get_record("child-session", "session_finalize")
+    assert record is not None
+    assert record.artifact_paths == {"packet_json": "child.json"}
 
 
 def test_run_session_finalize_pipeline_skips_already_completed_session(tmp_path, monkeypatch) -> None:

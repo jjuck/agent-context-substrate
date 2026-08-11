@@ -10,6 +10,9 @@ import re
 import subprocess
 import sys
 
+from .codex_jobs import CodexJob, CodexJobQueue, default_codex_jobs_path, encode_rollout_fingerprint
+from .codex_runtime_config import codex_config_digest, load_codex_runtime_config
+from .codex_source import discover_codex_threads
 from .codex_wiki_root import resolve_codex_wiki_root
 
 
@@ -125,7 +128,38 @@ def run_codex_stop_finalize_hook(
     )
     if not decision.should_finalize:
         _append_hook_event(config, payload=payload, status="skipped", detail=decision.skip_reason)
+        if decision.skip_reason in {
+            "missing or invalid local_config.json",
+            "missing project_root or wiki_root",
+            "no wiki root resolved",
+        }:
+            return _non_blocking_failure(f"ACS Codex hook configuration error: {decision.skip_reason}")
         return {"continue": True}
+
+    trigger_strategy = str(config.get("trigger_strategy") or "hook-primary").strip().lower()
+    if trigger_strategy == "hook-enqueue":
+        try:
+            job = _enqueue_codex_stop_job(config=config, payload=payload, decision=decision)
+            _append_hook_event(
+                config,
+                payload=payload,
+                status="enqueued",
+                detail=f"durable Codex finalize job queued; job_id={job.id}",
+            )
+            _start_codex_worker(
+                plugin_root=plugin_root_path,
+                python_executable=python_executable,
+                config=config,
+            )
+        except Exception as exc:
+            message = f"ACS Codex enqueue hook failed: {exc}"
+            _append_hook_event(config, payload=payload, status="failed", detail=message)
+            return _non_blocking_failure(message)
+        return {"continue": True}
+    if trigger_strategy != "hook-primary":
+        message = f"ACS Codex hook has unsupported trigger_strategy={trigger_strategy!r}"
+        _append_hook_event(config, payload=payload, status="failed", detail=message)
+        return _non_blocking_failure(message)
 
     try:
         if runner is None:
@@ -188,11 +222,67 @@ def _run_command(
 
 
 def _load_config(plugin_root: Path) -> dict[str, Any]:
-    try:
-        config = json.loads((plugin_root / "local_config.json").read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return config if isinstance(config, dict) else {}
+    return load_codex_runtime_config(plugin_root)
+
+
+def _enqueue_codex_stop_job(
+    *,
+    config: dict[str, Any],
+    payload: dict[str, Any],
+    decision: CodexStopFinalizeDecision,
+) -> CodexJob:
+    if decision.project_root is None or not decision.thread_id:
+        raise ValueError("enqueue decision is missing project_root or thread_id")
+    thread = next(
+        (
+            item
+            for item in discover_codex_threads(codex_home=decision.codex_home, include_archived=True)
+            if item.thread_id == decision.thread_id
+        ),
+        None,
+    )
+    if thread is None:
+        raise KeyError(f"Codex thread not found: {decision.thread_id}")
+    queue = CodexJobQueue(default_codex_jobs_path(decision.project_root))
+    return queue.enqueue(
+        thread_id=decision.thread_id,
+        rollout_fingerprint=encode_rollout_fingerprint(thread.fingerprint),
+        config_digest=codex_config_digest(config),
+        payload={
+            "turn_id": str(payload.get("turn_id") or ""),
+            "cwd": str(payload.get("cwd") or ""),
+        },
+    )
+
+
+def _start_codex_worker(
+    *,
+    plugin_root: Path,
+    python_executable: str,
+    config: dict[str, Any],
+) -> None:
+    project_root = _resolve_non_strict(Path(str(config["project_root"])).expanduser())
+    command = [
+        python_executable,
+        "-m",
+        "agent_context_substrate.cli",
+        "codex-worker",
+        "--plugin-root",
+        str(plugin_root),
+    ]
+    kwargs: dict[str, Any] = {
+        "cwd": str(project_root),
+        "env": _subprocess_environment(config, project_root=project_root),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(command, **kwargs)
 
 
 def _subprocess_environment(config: dict[str, Any], *, project_root: Path) -> dict[str, str]:
@@ -253,7 +343,10 @@ def _append_hook_event(
 def _non_blocking_failure(message: str) -> dict[str, Any]:
     return {
         "continue": True,
-        "systemMessage": f"{message}. codex-watch remains available as fallback.",
+        "systemMessage": (
+            f"{message}. Run codex-status and doctor-codex first; "
+            "use codex-watch only for explicit history recovery/backfill."
+        ),
     }
 
 
@@ -422,7 +515,11 @@ def _dedupe_paths(paths: list[Path]) -> list[Path]:
     return unique
 
 
-def _mark_watcher_state_processed(decision: CodexStopFinalizeDecision) -> None:
+def _mark_watcher_state_processed(
+    decision: CodexStopFinalizeDecision,
+    *,
+    fingerprint: dict[str, int | str] | None = None,
+) -> None:
     if decision.project_root is None or not decision.thread_id:
         return
     try:
@@ -432,7 +529,7 @@ def _mark_watcher_state_processed(decision: CodexStopFinalizeDecision) -> None:
         state = CodexWatcherState(default_codex_watcher_state_path(decision.project_root))
         for thread in discover_codex_threads(codex_home=decision.codex_home, include_archived=True):
             if thread.thread_id == decision.thread_id:
-                state.mark_processed(thread, fingerprint=thread.fingerprint)
+                state.mark_processed(thread, fingerprint=fingerprint or thread.fingerprint)
                 return
     except Exception:
         return

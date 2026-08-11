@@ -53,9 +53,10 @@ def handle_setup_codex_wizard_command(*, args: Any) -> int:
 
 
 def handle_doctor_codex_command(*, args: Any) -> int:
+    project_root = _resolve_installed_project_root(args)
     report = doctor_codex(
         codex_home=args.codex_home,
-        project_root=args.project_root,
+        project_root=project_root,
         wiki_root=args.wiki_root,
         summary_smoke=args.summary_smoke,
     )
@@ -73,9 +74,10 @@ def handle_doctor_codex_command(*, args: Any) -> int:
 
 
 def handle_diagnose_codex_command(*, args: Any) -> int:
+    project_root = _resolve_installed_project_root(args)
     report = diagnose_codex(
         codex_home=args.codex_home,
-        project_root=args.project_root,
+        project_root=project_root,
         wiki_root=args.wiki_root,
         personal_marketplace_root=args.personal_marketplace_root,
         fix=args.fix,
@@ -181,3 +183,18 @@ def _parse_config_value(value: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def _resolve_installed_project_root(args: Any) -> str:
+    explicit = str(getattr(args, "project_root", None) or "").strip()
+    if explicit:
+        return explicit
+    plugin_dir = codex_plugin_dir(getattr(args, "codex_home", None))
+    try:
+        config = read_codex_local_config(plugin_dir)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise SystemExit("--project-root is required when installed Codex config is unavailable") from exc
+    configured = str(config.get("project_root") or "").strip()
+    if not configured:
+        raise SystemExit("--project-root is required when installed Codex config has no project_root")
+    return configured

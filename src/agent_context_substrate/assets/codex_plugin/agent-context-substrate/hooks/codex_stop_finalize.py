@@ -32,10 +32,29 @@ def _plugin_root() -> Path:
 
 def _load_config(plugin_root: Path) -> dict[str, object]:
     try:
-        config = json.loads((plugin_root / "local_config.json").read_text(encoding="utf-8-sig"))
+        bootstrap_path = plugin_root / "local_config.json"
+        config = json.loads(bootstrap_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return config if isinstance(config, dict) else {}
+    if not isinstance(config, dict):
+        return {}
+    canonical_value = str(config.get("canonical_config_path") or "").strip()
+    if not canonical_value:
+        codex_home = str(config.get("codex_home") or "").strip()
+        if codex_home:
+            canonical_value = str(
+                Path(codex_home) / "plugins" / "agent-context-substrate" / "local_config.json"
+            )
+    if not canonical_value:
+        return config
+    canonical_path = Path(canonical_value).expanduser().resolve(strict=False)
+    if canonical_path == bootstrap_path.resolve(strict=False) or not canonical_path.exists():
+        return config
+    try:
+        canonical = json.loads(canonical_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return canonical if isinstance(canonical, dict) else {}
 
 
 def _prepare_import_path(config: dict[str, object]) -> None:
@@ -69,7 +88,10 @@ def _read_stdin_json_text() -> str:
 def _failure(message: str) -> dict[str, object]:
     return {
         "continue": True,
-        "systemMessage": f"{message}. codex-watch remains available as fallback.",
+        "systemMessage": (
+            f"{message}. Run codex-status and doctor-codex first; "
+            "use codex-watch only for explicit history recovery/backfill."
+        ),
     }
 
 

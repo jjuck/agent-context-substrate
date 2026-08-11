@@ -19,6 +19,7 @@ from .models import MicroEvidenceBundle, MicroSummaryV2, UnitSummaryV2
 from .naming import slugify_label
 from .paths import HarnessPaths
 from .policy import should_process_bundle
+from .process_lock import InterProcessFileLock, shared_wiki_writer_lock_path
 from .promotion import (
     promote_context_packet_to_plan,
     promote_context_packet_to_query,
@@ -602,17 +603,21 @@ def run_session_finalize_pipeline(
                     unit_title=packet_artifacts.unit_title,
                     related_pages=related_pages,
                 )
-                promoted_paths = _promote_default_artifacts(
-                    packet_artifacts=packet_artifacts,
-                    promotion_plan=promotion_plan,
-                    paths=paths,
-                )
-                _register_default_promotions(
-                    paths=paths,
-                    promotion_plan=promotion_plan,
-                    promoted_paths=promoted_paths,
-                    packet_json_path=packet_artifacts.packet_json_path,
-                )
+                with InterProcessFileLock(
+                    shared_wiki_writer_lock_path(paths.wiki_root),
+                    timeout_seconds=30.0,
+                ):
+                    promoted_paths = _promote_default_artifacts(
+                        packet_artifacts=packet_artifacts,
+                        promotion_plan=promotion_plan,
+                        paths=paths,
+                    )
+                    _register_default_promotions(
+                        paths=paths,
+                        promotion_plan=promotion_plan,
+                        promoted_paths=promoted_paths,
+                        packet_json_path=packet_artifacts.packet_json_path,
+                    )
 
             lint_artifacts = _export_lint_artifacts(paths=paths, packet_id=packet_id)
             base_artifact_paths = _build_base_artifact_paths(

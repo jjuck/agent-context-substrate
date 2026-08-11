@@ -34,8 +34,10 @@ from .commands.build_context_packet import (
 from .commands.codex import (
     default_wiki_root,
     handle_codex_finalize_command,
+    handle_codex_jobs_command,
     handle_codex_status_command,
     handle_codex_watch_command,
+    handle_codex_worker_command,
     handle_expand_hit_command,
     handle_search_knowledge_command,
 )
@@ -590,7 +592,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
     doctor_codex.add_argument("--fail-on-issues", action="store_true", help="Return exit code 1 if required checks fail")
-    _add_project_root_argument(doctor_codex)
+    doctor_codex.add_argument("--project-root", default=None, help="ACS project root; default uses installed config")
 
     diagnose_codex = subparsers.add_parser("diagnose-codex", help="Explain and optionally repair safe Codex setup issues")
     diagnose_codex.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
@@ -598,7 +600,7 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose_codex.add_argument("--personal-marketplace-root", default=None, help="Optional personal marketplace root for --fix")
     diagnose_codex.add_argument("--fix", action="store_true", help="Repair safe local ACS files; does not bypass hook trust")
     diagnose_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
-    _add_project_root_argument(diagnose_codex)
+    diagnose_codex.add_argument("--project-root", default=None, help="ACS project root; default uses installed config")
 
     config_codex = subparsers.add_parser("config-codex", help="Inspect or update installed Codex plugin local_config.json")
     config_actions = config_codex.add_subparsers(dest="config_action", required=True)
@@ -623,6 +625,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     codex_status = subparsers.add_parser("codex-status", help="Inspect Codex local session source and integration mode")
     codex_status.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+
+    codex_worker = subparsers.add_parser("codex-worker", help="Drain durable Codex Stop jobs with a singleton worker")
+    codex_worker.add_argument("--plugin-root", required=True, help="Installed ACS Codex plugin root")
+    codex_worker.add_argument("--worker-id", default=None, help="Optional worker identity override")
+    codex_worker.add_argument("--max-jobs", type=int, default=None, help="Optional maximum jobs to claim before exiting")
+
+    codex_jobs = subparsers.add_parser("codex-jobs", help="Inspect or requeue durable Codex jobs")
+    codex_jobs.add_argument("--codex-home", default=None, help="Codex home directory, usually ~/.codex")
+    codex_job_actions = codex_jobs.add_subparsers(dest="jobs_action", required=True)
+    codex_jobs_list = codex_job_actions.add_parser("list", help="List recent durable jobs")
+    codex_jobs_list.add_argument(
+        "--status",
+        choices=["queued", "leased", "retry", "completed", "dead_letter", "superseded"],
+        default=None,
+    )
+    codex_jobs_list.add_argument("--limit", type=int, default=20)
+    codex_jobs_list.add_argument("--json", action="store_true")
+    codex_jobs_retry = codex_job_actions.add_parser("retry", help="Requeue one dead-letter job")
+    codex_jobs_retry.add_argument("--job-id", type=int, required=True)
 
     codex_finalize = subparsers.add_parser("codex-finalize", help="Finalize one Codex thread into ACS artifacts")
     codex_finalize.add_argument("--thread-id", required=True, help="Codex thread id from state_5.sqlite")
@@ -675,6 +696,11 @@ def build_parser() -> argparse.ArgumentParser:
     codex_finalize.add_argument("--llm-max-input-chars", type=int, default=12_000)
     codex_finalize.add_argument("--llm-allow-code-snippets", choices=["on", "off"], default="off")
     codex_finalize.add_argument("--llm-path-policy", choices=["redact", "allow"], default="redact")
+    codex_finalize.add_argument("--expected-rollout-path", default=None, help=argparse.SUPPRESS)
+    codex_finalize.add_argument("--expected-rollout-mtime-ns", type=int, default=None, help=argparse.SUPPRESS)
+    codex_finalize.add_argument("--expected-rollout-size", type=int, default=None, help=argparse.SUPPRESS)
+    codex_finalize.add_argument("--runtime-plugin-root", default=None, help=argparse.SUPPRESS)
+    codex_finalize.add_argument("--expected-config-digest", default=None, help=argparse.SUPPRESS)
     _add_wiki_auto_arguments(codex_finalize)
     _add_project_root_argument(codex_finalize)
 
@@ -773,6 +799,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "codex-status":
         return handle_codex_status_command(args=args)
+
+    if args.command == "codex-worker":
+        return handle_codex_worker_command(args=args)
+
+    if args.command == "codex-jobs":
+        return handle_codex_jobs_command(args=args)
 
     paths = HarnessPaths(project_root=Path(args.project_root).resolve())
 

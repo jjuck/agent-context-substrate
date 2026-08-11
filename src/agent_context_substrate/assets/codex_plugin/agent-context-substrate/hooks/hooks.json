@@ -9,7 +9,7 @@
             "command": "python3 \"${PLUGIN_ROOT}/hooks/codex_stop_finalize.py\"",
             "commandWindows": "cmd /c python \"%PLUGIN_ROOT%\\hooks\\codex_stop_finalize.py\"",
             "timeout": 120,
-            "statusMessage": "Finalizing Codex thread into Agent Context Substrate"
+            "statusMessage": "Queueing Codex finalize job for Agent Context Substrate"
           }
         ]
       }

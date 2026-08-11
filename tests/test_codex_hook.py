@@ -7,11 +7,13 @@ import os
 import subprocess
 import sys
 
+import agent_context_substrate.codex_hook as codex_hook
 from agent_context_substrate.codex_hook import (
     CodexHookCommandRunnerResult,
     build_codex_stop_finalize_decision,
     run_codex_stop_finalize_hook,
 )
+from agent_context_substrate.codex_jobs import CodexJobQueue, default_codex_jobs_path
 
 
 def _write_plugin_config(plugin_root: Path, *, project_root: Path, wiki_root: Path | str, codex_home: Path) -> None:
@@ -349,6 +351,206 @@ def test_stop_hook_runner_never_blocks_codex_on_finalize_failure(tmp_path: Path)
     assert calls
     assert output["continue"] is True
     assert "systemMessage" in output
+
+
+def test_stop_hook_enqueue_strategy_durably_queues_and_returns_without_finalizing(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    rollout_path = codex_home / "sessions" / "rollout-thread-queued.jsonl"
+    rollout_path.parent.mkdir(parents=True)
+    rollout_path.write_text('{"payload":{"type":"user_message","message":"hello"}}\n', encoding="utf-8")
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "trigger_strategy": "hook-enqueue",
+            }
+        ),
+        encoding="utf-8",
+    )
+    launches: list[Path] = []
+    launch_observed_events: list[list[str]] = []
+
+    def record_worker_launch(**kwargs) -> None:
+        launches.append(kwargs["plugin_root"])
+        event_path = project_root / "data" / "index" / "codex_hook_events.jsonl"
+        launch_observed_events.append(
+            [json.loads(line)["status"] for line in event_path.read_text(encoding="utf-8").splitlines()]
+            if event_path.exists()
+            else []
+        )
+
+    monkeypatch.setattr(codex_hook, "_start_codex_worker", record_worker_launch)
+    finalize_calls: list[list[str]] = []
+
+    def runner(command: list[str], **_kwargs) -> CodexHookCommandRunnerResult:
+        finalize_calls.append(command)
+        return CodexHookCommandRunnerResult(returncode=0)
+
+    output = run_codex_stop_finalize_hook(
+        payload={
+            "hook_event_name": "Stop",
+            "session_id": "thread-queued",
+            "turn_id": "turn-1",
+            "cwd": str(tmp_path / "workspace"),
+        },
+        plugin_root=plugin_root,
+        python_executable="python",
+        runner=runner,
+    )
+
+    queue = CodexJobQueue(default_codex_jobs_path(project_root))
+    health = queue.health()
+    assert output == {"continue": True}
+    assert finalize_calls == []
+    assert launches == [plugin_root]
+    assert launch_observed_events == [["enqueued"]]
+    assert health.pending_count == 1
+    queued = queue.claim(worker_id="test", lease_seconds=30)
+    assert queued is not None
+    assert queued.thread_id == "thread-queued"
+    assert queued.payload["turn_id"] == "turn-1"
+    assert queued.payload["cwd"] == str(tmp_path / "workspace")
+
+
+def test_stop_hook_enqueue_strategy_coalesces_rapid_stops_to_latest_rollout(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    rollout_path = codex_home / "sessions" / "rollout-thread-queued.jsonl"
+    rollout_path.parent.mkdir(parents=True)
+    rollout_path.write_text("first\n", encoding="utf-8")
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(project_root),
+                "wiki_root": str(wiki_root),
+                "codex_home": str(codex_home),
+                "trigger_strategy": "hook-enqueue",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codex_hook, "_start_codex_worker", lambda **_kwargs: None)
+    payload = {"hook_event_name": "Stop", "session_id": "thread-queued", "cwd": str(tmp_path)}
+
+    run_codex_stop_finalize_hook(payload={**payload, "turn_id": "turn-1"}, plugin_root=plugin_root)
+    rollout_path.write_text("first\nsecond\n", encoding="utf-8")
+    run_codex_stop_finalize_hook(payload={**payload, "turn_id": "turn-2"}, plugin_root=plugin_root)
+
+    queue = CodexJobQueue(default_codex_jobs_path(project_root))
+    health = queue.health()
+    latest = queue.claim(worker_id="test", lease_seconds=30)
+    assert health.pending_count == 1
+    assert health.superseded_count == 1
+    assert latest is not None
+    assert latest.payload["turn_id"] == "turn-2"
+
+
+def test_cached_hook_uses_the_canonical_installed_config(tmp_path: Path, monkeypatch) -> None:
+    codex_home = tmp_path / "codex"
+    canonical_root = codex_home / "plugins" / "agent-context-substrate"
+    cached_root = codex_home / "plugins" / "cache" / "personal" / "agent-context-substrate" / "0.2.0"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    rollout_path = codex_home / "sessions" / "rollout-thread-canonical.jsonl"
+    rollout_path.parent.mkdir(parents=True)
+    rollout_path.write_text("latest\n", encoding="utf-8")
+    canonical_root.mkdir(parents=True)
+    cached_root.mkdir(parents=True)
+    canonical_config = {
+        "project_root": str(project_root),
+        "wiki_root": str(wiki_root),
+        "codex_home": str(codex_home),
+        "trigger_strategy": "hook-enqueue",
+    }
+    (canonical_root / "local_config.json").write_text(json.dumps(canonical_config), encoding="utf-8")
+    (cached_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                **canonical_config,
+                "trigger_strategy": "hook-primary",
+                "canonical_config_path": str(canonical_root / "local_config.json"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(codex_hook, "_start_codex_worker", lambda **_kwargs: None)
+    finalize_calls: list[list[str]] = []
+
+    run_codex_stop_finalize_hook(
+        payload={"hook_event_name": "Stop", "session_id": "thread-canonical", "cwd": str(tmp_path)},
+        plugin_root=cached_root,
+        runner=lambda command, **_kwargs: (
+            finalize_calls.append(command) or CodexHookCommandRunnerResult(returncode=0)
+        ),
+    )
+
+    assert finalize_calls == []
+    assert CodexJobQueue(default_codex_jobs_path(project_root)).health().pending_count == 1
+
+
+def test_stop_hook_enqueue_failure_is_non_blocking_and_does_not_fall_back_to_sync(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    wiki_root = tmp_path / "wiki"
+    codex_home = tmp_path / "codex"
+    _write_plugin_config(plugin_root, project_root=project_root, wiki_root=wiki_root, codex_home=codex_home)
+    config_path = plugin_root / "local_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["trigger_strategy"] = "hook-enqueue"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(codex_hook, "_enqueue_codex_stop_job", lambda **_kwargs: (_ for _ in ()).throw(OSError("disk full")))
+    finalize_calls: list[list[str]] = []
+
+    output = run_codex_stop_finalize_hook(
+        payload={"hook_event_name": "Stop", "session_id": "thread-fails", "cwd": str(project_root)},
+        plugin_root=plugin_root,
+        runner=lambda command, **_kwargs: (
+            finalize_calls.append(command) or CodexHookCommandRunnerResult(returncode=0)
+        ),
+    )
+
+    assert output["continue"] is True
+    assert "enqueue hook failed" in output["systemMessage"]
+    assert finalize_calls == []
+
+
+def test_stop_hook_surfaces_corrupt_canonical_config_instead_of_silently_skipping(tmp_path: Path) -> None:
+    plugin_root = tmp_path / "cached-plugin"
+    canonical_path = tmp_path / "codex" / "plugins" / "agent-context-substrate" / "local_config.json"
+    plugin_root.mkdir(parents=True)
+    canonical_path.parent.mkdir(parents=True)
+    canonical_path.write_text("{broken", encoding="utf-8")
+    (plugin_root / "local_config.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(tmp_path / "project"),
+                "wiki_root": str(tmp_path / "wiki"),
+                "codex_home": str(tmp_path / "codex"),
+                "canonical_config_path": str(canonical_path),
+                "trigger_strategy": "hook-enqueue",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output = run_codex_stop_finalize_hook(
+        payload={"hook_event_name": "Stop", "session_id": "thread-corrupt", "cwd": str(tmp_path)},
+        plugin_root=plugin_root,
+    )
+
+    assert output["continue"] is True
+    assert "missing or invalid local_config.json" in output["systemMessage"]
+    assert "Run codex-status and doctor-codex first" in output["systemMessage"]
+    assert "only for explicit history recovery/backfill" in output["systemMessage"]
 
 
 def test_stop_hook_subprocess_protocol_is_utf8(tmp_path: Path, monkeypatch) -> None:
