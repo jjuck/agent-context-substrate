@@ -1,0 +1,12 @@
+{
+  "source_repository": "https://github.com/jjuck/agent-context-substrate",
+  "source_revision": "ea83152d01dccecf359164971de8e592cad577f3",
+  "diagram_type": "architecture",
+  "artifact_sha256": "7d412b35642cc4281f48794b5786f2147d2fd9a2e13e32a1a57427facd2a8f41",
+  "analyzed_on": "2026-10-04",
+  "generator": "Archify 3.0.1",
+  "scope": "Static session capture, local artifact storage, retrieval and recovery overview",
+  "checks": "showcase validation, strict artifact check and automated browser check passed at generation",
+  "original_artifact_sha256": "b263c1afb0969ab623b61c9c16a6c5d403b541b5622a5002c405e405a3695ea9",
+  "publication_normalization": "Removed trailing spaces on 15 blank CSS lines; diagram content and behavior unchanged."
+}

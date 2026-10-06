@@ -1,261 +1,68 @@
 # Agent Context Substrate 사용자 가이드
 
-[English User Guide](./USER_GUIDE.en.md) · [한국어 README](../README.ko.md) · [Windows Codex 앱 설치](./WINDOWS_CODEX_APP_SETUP.ko.md) · [English README](../README.md)
+[English](./USER_GUIDE.en.md) · [한국어 README](../README.ko.md) · [Windows 설치](./WINDOWS_CODEX_APP_SETUP.ko.md)
 
-이 문서는 `agent-context-substrate`를 실제 사용자 관점에서 설명합니다. 핵심은 **무엇이 어디에 저장되는지**, **Obsidian과 어떻게 분리되는지**, **언어 설정을 어떻게 쓰는지**, **Hermes에서 어떻게 켜고 끄는지**입니다.
+ACS는 Hermes와 Codex 세션을 로컬 context packet, 복구 브리프, 검색 가능한 근거로 정리합니다. 이 문서는 일상 사용을 다룹니다. 유지 관리는 [Operations](./OPERATIONS.md), artifact 처리 과정은 [Pipeline](./PIPELINE.md)을 참고하세요.
 
-현재 릴리스에서 packaged integration은 **Hermes Agent**와 **비-MCP Codex 로컬 세션 source**를 포함합니다. Codex 경로는 `~/.codex/state_5.sqlite`와 `~/.codex/sessions/**/rollout-*.jsonl`을 read-only로 읽고, plugin Stop hook을 primary trigger로 사용하며 `codex-watch` fallback을 유지합니다. 이전 프로젝트 이름은 `hermes-llm-wiki-harness`입니다.
+## 1. 작업 선택
 
-## 1. 무엇을 해주는가
-
-`Agent Context Substrate`는 Hermes와 Codex 대화 세션을 장기적으로 재사용 가능한 지식 substrate로 바꾸는 도구입니다.
-
-현재 기본 session-finalize 정책은 `packet-only`입니다.
-
-```text
-Hermes state.db 또는 Codex rollout JSONL
-  -> raw session export
-  -> micro/unit summary
-  -> context packet
-  -> lint report
-  -> recovery brief
-  -> ledger
-```
-
-즉, 기본 자동 처리에서는 Obsidian에 query/concept/plan/architecture page를 만들지 않습니다. Obsidian LLM Wiki는 사람이 읽기 좋은 semantic wiki로 유지하고, agent용 packet/recovery/lint/raw transcript는 Agent Context Substrate project의 `data/exports/`에 둡니다.
-
-지식을 wiki로 키울 때도 바로 쓰지 않습니다. 먼저 evidence-backed summary, claim atom, promotion candidate, wiki patch proposal을 만든 뒤 사람이 검토하고 반영합니다.
-
-## 2. 저장 계층
-
-| 계층 | 위치 | 형식 | 역할 |
-| --- | --- | --- | --- |
-| Hermes 원본 세션 DB | `HERMES_HOME/state.db` 또는 `~/.hermes/state.db` | SQLite | 원본 대화와 세션 메타데이터 |
-| Codex 로컬 세션 source | `~/.codex/state_5.sqlite`, `~/.codex/sessions/**/rollout-*.jsonl` | SQLite / JSONL | Codex thread metadata와 rollout event, read-only |
-| Harness exports | `data/exports/` | JSON/Markdown | raw export, context packet, evidence, v2 summary, lint report, recovery brief |
-| Harness atoms | `data/atoms/` | JSONL | packet에서 추출한 claim atom |
-| Harness promotions | `data/promotions/` | JSON/Markdown | wiki 반영 후보 queue |
-| Harness wiki patches | `data/wiki_patches/` | JSON/Markdown/JSONL | reviewable patch proposal과 apply log |
-| Harness ledger/index | `data/index/` | JSON/Markdown | 처리 상태, topic map, artifact 경로, retry/idempotency 기록 |
-| Obsidian LLM Wiki | `WIKI_PATH` | Markdown | 사람이 읽는 curated wiki |
-
-Windows Codex 앱 사용자에게는 아래 실제 경로를 먼저 알려주는 것이 좋습니다.
-
-```text
-Codex 원본 SQLite:
-%USERPROFILE%\.codex\state_5.sqlite
-
-Codex rollout JSONL:
-%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl
-
-권장 LLM Wiki:
-%USERPROFILE%\Documents\LLM Wiki
-
-ACS artifact:
-<PROJECT_ROOT>\data\...
-```
-
-## 3. 기본 artifact
-
-`packet-only` session finalize가 성공하면 보통 아래 artifact가 생깁니다.
-
-```text
-data/exports/<session_id>.json
-data/exports/context_packets/<session_id>.json
-data/exports/context_packets/<session_id>.md
-data/exports/lint/<session_id>-lint.json
-data/exports/lint/<session_id>-lint.md
-data/exports/recovery/<session_id>.json
-data/index/session_ledger.json
-
-# --summary-mode 사용 시 추가
-data/exports/evidence/<session_id>/<micro_id>.json
-data/exports/summaries/<packet_id>-micro-v2.json
-data/exports/summaries/<packet_id>-unit-v2.json
-
-# review-first wiki growth 사용 시 추가
-data/atoms/claims.jsonl
-data/promotions/<packet_id>.json
-data/promotions/<packet_id>.md
-data/wiki_patches/<packet_id>.json
-data/wiki_patches/<packet_id>.md
-```
-
-ledger에는 `promotion_mode`도 기록됩니다. 기존에 `full`로 처리한 세션이 있어도, 이후 `packet-only` 요청은 promotion mode가 다르므로 잘못 reuse하지 않습니다.
-
-## 4. Obsidian human-facing wiki 구조
-
-현재 사용자 vault 권장 구조는 다음과 같습니다.
-
-```text
-LLM Wiki/
-  Home.md
-  index.md              # harness lint compatibility catalog
-  SCHEMA.md
-  log.md
-  01 지식/
-  02 내 아이디어/
-  03 인물과 조직/
-  04 프로젝트/
-  05 계획/
-  06 원천 자료/
-  90 보관/
-  _system/
-    config.yaml
-    templates/
-      ko/
-      en/
-    styles/
-      llm-wiki.css
-```
-
-폴더는 사람이 이해하기 쉬운 목적 기준으로 나누고, 기계 분류는 frontmatter로 보완합니다.
-
-| Folder | 용도 |
+| 작업 | 시작 위치 |
 | --- | --- |
-| `01 지식/` | 처리된 지식, 개념, 비교, 패턴 |
-| `02 내 아이디어/` | 사용자 발상, 설계 직관, 가설 |
-| `03 인물과 조직/` | 사람, 회사, 연구소, 커뮤니티 |
-| `04 프로젝트/` | 프로젝트 hub, SPEC, 사용설명서, 아키텍처, 다음 진행 |
-| `05 계획/` | durable 계획과 roadmap |
-| `06 원천 자료/` | article/repo/paper/docs/video source card |
-| `90 보관/` | active graph에서 제외된 legacy/generated page |
-| `_system/` | config, templates, CSS |
+| Windows Codex 설치 | [설치·hook 신뢰·진단 전용 가이드](./WINDOWS_CODEX_APP_SETUP.ko.md) |
+| Hermes 설치 | 3절 |
+| Codex thread 수동 처리 또는 watcher 실행 | 4절 |
+| 이전 맥락 검색·복구 | 5절 |
+| 검토할 wiki 변경 제안 | 6절 |
+| artifact 누락 진단 | 8절 |
 
-## 5. 언어 설정법
+기본값은 `packet-only`입니다. raw export → summary → context packet → lint → recovery → ledger 순서로 처리하며, 기계용 artifact를 ACS `data/` 아래에 저장합니다. 세션 페이지를 Obsidian에 자동 승격하지 않습니다. V2 summary와 wiki 승격은 선택적인 추가 단계입니다.
 
-언어 설정은 Obsidian human-facing page의 생성/검증 정책입니다. 현재 지원 언어는 `ko`, `en`입니다.
+## 2. 경로 확인
 
-### 5.1 Vault 기본 언어 설정
-
-```yaml
-# <WIKI_PATH>/_system/config.yaml
-wiki:
-  default_language: ko
-  supported_languages: [ko, en]
-  filename_language: ko
-  template_language: ko
-  source_language_preserve: true
-```
-
-| 필드 | 의미 |
+| 경로 | 용도 |
 | --- | --- |
-| `default_language` | 새 human-facing page의 기본 언어 |
-| `supported_languages` | lint가 허용하는 언어 코드 |
-| `filename_language` | 새 파일명을 어떤 언어 관례로 만들지 |
-| `template_language` | 기본 template 언어 |
-| `source_language_preserve` | 원천 자료의 원문 언어를 보존할지 |
+| `<PROJECT_ROOT>` | `data/`를 포함하는 ACS artifact 범위. 보통 ACS checkout |
+| `<WIKI_ROOT>` | 사람이 읽는 LLM Wiki / Obsidian vault |
+| `<HERMES_AGENT_ROOT>` | 기존 Hermes Agent checkout과 실행 환경 |
+| `HERMES_HOME/state.db` (보통 `~/.hermes/state.db`) | Hermes 원본 세션 |
+| `<CODEX_HOME>/state_5.sqlite`, `sessions/**/rollout-*.jsonl` | 로컬 Codex metadata/event. ACS는 읽기 전용으로 접근 |
 
-### 5.2 Page frontmatter
+세션 처리, 검색, hit 확장에 같은 project/wiki root를 사용하세요. `--project-root .`는 현재 디렉터리의 ACS 데이터를 뜻하며 컴퓨터의 모든 프로젝트를 뜻하지 않습니다. Codex Stop hook은 설정된 project root로 범위도 제한합니다. payload의 `cwd`가 그 밖에 있으면 건너뜁니다. Watcher의 범위는 다르므로 4절을 참고하세요.
 
-모든 active human-facing page는 `lang`을 가져야 합니다.
+| Artifact | `<PROJECT_ROOT>` 아래 위치 |
+| --- | --- |
+| Hermes raw export | `data/exports/<session_id>.json` |
+| Codex raw export | `data/exports/raw/codex/<thread_id>.json` |
+| Packet | `data/exports/context_packets/<id>.{json,md}` |
+| Recovery | `data/exports/recovery/<id>.json` |
+| Lint report | `data/exports/lint/` |
+| Ledger / watcher 상태 | `data/index/` |
+| 선택적 evidence / V2 summary | `data/exports/evidence/`, `data/exports/summaries/` |
+| 선택적 claim / promotion / patch | `data/atoms/`, `data/promotions/`, `data/wiki_patches/` |
 
-```yaml
----
-title: Context Packet
-lang: ko
-type: knowledge
-category: knowledge
-status: active
-tags: [context, hermes, recovery]
-cssclasses: [knowledge-page]
----
-```
+Obsidian은 실행에 필수가 아닙니다. 페이지를 읽고 정리하려면 `<WIKI_ROOT>`를 vault로 여세요. 초기화는 wiki 구조를 만들지만 Obsidian vault를 등록하거나 열지는 않습니다.
 
-영어 page 예시:
+## 3. Hermes 설치 및 활성화
 
-```yaml
----
-title: Context Packet
-lang: en
-type: knowledge
-category: knowledge
-status: active
-tags: [context, hermes, recovery]
-cssclasses: [knowledge-page]
----
-```
-
-### 5.3 언어별 template
-
-```text
-_system/templates/ko/home.md
-_system/templates/ko/knowledge.md
-_system/templates/ko/project.md
-_system/templates/en/home.md
-_system/templates/en/knowledge.md
-_system/templates/en/project.md
-```
-
-새 page를 만들 때:
-
-1. page type을 고릅니다. (`knowledge`, `idea`, `source`, `project`, `spec`, `plan`, `decision` 등)
-2. 언어를 고릅니다. (`ko` 또는 `en`)
-3. 해당 template을 복사합니다.
-4. frontmatter의 `title`, `lang`, `type`, `category`, `status`, `tags`를 채웁니다.
-
-### 5.4 언어 lint
+ACS checkout에서 Python 3.11+를 사용하세요. 꺾쇠 괄호 placeholder를 모두 실제 값으로 바꾸세요. 아래 예시는 POSIX shell 기준입니다. Windows Codex 설치에는 전용 PowerShell 안내가 있습니다.
 
 ```bash
 cd '<PROJECT_ROOT>'
+python -m venv .venv
 . .venv/bin/activate
-.venv/bin/agent-context-substrate lint-wiki \
-  --project-root '<PROJECT_ROOT>' \
-  --report-id language-check
-```
-
-문제가 있으면 report의 `Human-Facing Quality` 섹션에 다음 항목으로 표시됩니다.
-
-- `Missing language`
-- `Unsupported language`
-
-## 6. Hermes 연동 설치와 활성화
-
-Hermes 연동은 두 부분입니다.
-
-1. `agent-context-substrate` user plugin: session finalize hook과 `/harness`, `/packet`, `/wiki-resume`, `/wiki-lint` 명령을 제공합니다.
-2. `agent_context_substrate` context engine: `wiki_recovery_context`, `wiki_knowledge_search`, `wiki_knowledge_expand` 도구를 제공합니다.
-
-아래 placeholder를 실제 경로로 바꿉니다.
-
-| Placeholder | 의미 |
-| --- | --- |
-| `<PROJECT_ROOT>` | Agent Context Substrate project/data root |
-| `<WIKI_ROOT>` | Obsidian LLM Wiki vault root |
-| `<HERMES_AGENT_ROOT>` | Hermes Agent root, 예: `~/.hermes/hermes-agent` |
-
-### 6.1 packaged installer 실행
-
-```bash
-cd '<PROJECT_ROOT>'
-. .venv/bin/activate
-
-.venv/bin/agent-context-substrate init-wiki \
+python -m pip install -e .
+agent-context-substrate init-wiki --wiki-root '<WIKI_ROOT>'
+agent-context-substrate install-plugin \
+  --hermes-home ~/.hermes --project-root '<PROJECT_ROOT>' \
   --wiki-root '<WIKI_ROOT>'
-
-.venv/bin/agent-context-substrate install-plugin \
-  --hermes-home ~/.hermes \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --overwrite
-
-.venv/bin/agent-context-substrate install-context-engine \
+agent-context-substrate install-context-engine \
   --hermes-agent-root '<HERMES_AGENT_ROOT>' \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --overwrite
-
-.venv/bin/agent-context-substrate doctor \
-  --hermes-home ~/.hermes \
-  --project-root '<PROJECT_ROOT>' \
-  --wiki-root '<WIKI_ROOT>' \
-  --hermes-agent-root '<HERMES_AGENT_ROOT>' \
-  --fail-on-issues
+  --project-root '<PROJECT_ROOT>' --wiki-root '<WIKI_ROOT>'
 ```
 
-`install-plugin`은 `~/.hermes/plugins/agent-context-substrate/local_config.py`에 `<PROJECT_ROOT>`와 `<WIKI_ROOT>`를 기록합니다. 이 파일은 사용자별 local 설정이므로 public template의 hardcoded 경로와 분리됩니다.
+기존 설치를 갱신하려면 두 install 명령에 `--overwrite`를 추가하세요. 설치된 asset을 백업하고 교체합니다. Plugin/context engine 옆에 기기별 `local_config.py`를 기록합니다.
 
-### 6.2 plugin 활성화
+기존 Hermes 실행 환경에서 plugin을 켜세요.
 
 ```bash
 cd '<HERMES_AGENT_ROOT>'
@@ -263,360 +70,160 @@ cd '<HERMES_AGENT_ROOT>'
 hermes plugins enable agent-context-substrate
 ```
 
-활성화되면 `~/.hermes/config.yaml`에 대략 다음 설정이 들어갑니다.
+Hermes 설정의 다른 항목을 유지하면서 아래 값을 선택하세요.
 
 ```yaml
 plugins:
   enabled:
     - agent-context-substrate
-```
-
-### 6.3 context engine 활성화
-
-```yaml
 context:
   engine: agent_context_substrate
 ```
 
-이 설정이 있어야 Hermes agent가 아래 도구를 사용할 수 있습니다.
+Plugin은 finalize hook과 Telegram 명령을 제공합니다. Context engine은 `wiki_recovery_context`, `wiki_knowledge_search`, `wiki_knowledge_expand`를 제공합니다. Asset을 설치하는 것만으로 두 구성 요소가 활성화되지는 않습니다.
 
-```text
-wiki_recovery_context
-wiki_knowledge_search
-wiki_knowledge_expand
-```
-
-### 6.4 gateway 재시작
-
-Telegram gateway가 이미 실행 중이면 plugin/config 변경을 바로 반영하지 못할 수 있습니다.
-
-```text
-/restart
-```
-
-진행 중인 긴 작업이 있으면 재시작 타이밍을 주의하세요.
-
-## 7. Codex 연동 설치와 활성화
-
-Codex 연동의 기본 전략은 hook-primary, watcher fallback입니다. packaged plugin은 manifest `hooks`를 쓰지 않고 `hooks/hooks.json`에 Stop hook을 포함합니다. Codex `/hooks` review로 hook을 trust하면 Stop hook이 thread를 finalize하고, hook이 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`가 fallback으로 동작합니다. 두 경로 모두 Codex 원본 파일을 read-only로 읽고 ACS artifact만 `<PROJECT_ROOT>/data/` 아래에 기록합니다.
-
-Windows Codex 앱 사용자는 [Windows 상세 가이드](./WINDOWS_CODEX_APP_SETUP.ko.md)를 우선 보세요. 배포용 PowerShell 설치 흐름은 단일 bootstrap script를 기준으로 합니다.
-
-```powershell
-git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
-cd agent-context-substrate
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
-```
-
-누락 도구까지 선택 설치하려면 `Python.Python.3.13`, `Git.Git`, `Obsidian.Obsidian` winget ID를 사용합니다.
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
-```
-
-설치 후에는 아래 명령으로 상태와 경로를 확인합니다.
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
-.\.venv\Scripts\agent-context-substrate.exe config-codex paths
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex
-```
-
-경로를 확인하며 설치하려면 `setup-codex-wizard`를 사용합니다. `diagnose-codex --fix`는 wiki skeleton, Codex plugin, user hook fallback, local config처럼 안전한 ACS 로컬 파일만 복구합니다.
-
-Codex의 non-managed hook 정책상 실제 실행 전 `/hooks` review/trust는 여전히 필요합니다.
-
-Hook 승인 확인 뒤 fallback dry run도 실행할 수 있습니다.
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe codex-watch `
-  --once `
-  --codex-home $CodexHome `
-  --project-root $ProjectRoot `
-  --wiki-root $WikiRoot `
-  --idle-seconds 999999
-```
-
-특정 thread를 수동으로 finalize할 수도 있습니다.
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe codex-finalize `
-  --thread-id "<CODEX_THREAD_ID>" `
-  --codex-home $CodexHome `
-  --project-root $ProjectRoot `
-  --wiki-root $WikiRoot
-```
-
-Codex raw export는 `data/exports/raw/codex/<thread_id>.json`에 저장됩니다. 이후 context packet, recovery, retrieval, atoms, promotions, wiki patch 명령은 Hermes session artifact와 같은 layout을 사용합니다.
-
-## 8. Plugin 설정
-
-| 변수 | 기본값 | 설명 |
-| --- | --- | --- |
-| `AGENT_CONTEXT_SUBSTRATE_PROJECT_ROOT` | 사용자 project path | Agent Context Substrate package와 `data/` 위치 |
-| `AGENT_CONTEXT_SUBSTRATE_WIKI_ROOT` | 사용자 LLM Wiki vault path | Obsidian wiki root |
-| `AGENT_CONTEXT_SUBSTRATE_AUTO_FINALIZE` | `true` | session finalize 자동 처리 |
-| `AGENT_CONTEXT_SUBSTRATE_MIN_MESSAGE_COUNT` | `3` | 너무 짧은 session 제외 |
-| `AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES` | `telegram,cli` | 자동 처리할 raw session source |
-| `AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY` | `trigger-only` | gateway source를 durable 대상에서 보수적으로 제외 |
-| `AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE` | `packet-only` | `packet-only` 또는 legacy `full` |
-| `AGENT_CONTEXT_SUBSTRATE_SKIP_TITLE_PATTERNS` | empty | 자동 처리 제외 title pattern |
-
-권장 기본값:
-
-```text
-AGENT_CONTEXT_SUBSTRATE_PROMOTION_MODE=packet-only
-AGENT_CONTEXT_SUBSTRATE_ALLOWED_SOURCES=telegram,cli
-AGENT_CONTEXT_SUBSTRATE_GATEWAY_POLICY=trigger-only
-```
-
-## 9. Telegram 명령
-
-### `/harness`
-
-상태 확인:
-
-```text
-/harness
-```
-
-정상 예시:
-
-```text
-Agent Context Substrate plugin status
-- health: ok
-- project_root exists: True
-- wiki_root exists: True
-- harness_importable: True
-- auto_finalize_enabled: True
-- min_message_count: 3
-- allowed_sources: telegram, cli
-- promotion_mode: packet-only
-- gateway_policy: trigger-only
-- gateway source auto-finalize: disabled
-```
-
-### `/packet <session_id>`
-
-특정 session을 수동 finalize합니다. 기본 설정이면 `packet-only`로 처리합니다.
-
-```text
-/packet 20260424_122938_c308ad
-```
-
-### `/wiki-resume <session_id>`
-
-특정 session의 recovery brief를 확인합니다.
-
-```text
-/wiki-resume 20260424_122938_c308ad
-```
-
-### `/wiki-lint`
-
-Obsidian human-facing wiki와 packet artifact graph를 검사합니다.
-
-```text
-/wiki-lint
-```
-
-## 10. Agent가 자동으로 검색하는 방식
-
-`context.engine: agent_context_substrate`가 활성화되어 있으면 Hermes agent는 이전 지식이 필요할 때 read-only retrieval을 사용할 수 있습니다.
-
-검색 순서:
-
-1. Obsidian durable wiki pages
-2. context packet JSON artifacts
-3. unit/micro summary fields
-4. 필요할 때 raw Hermes `state.db` evidence
-
-검색에서 기본 제외되는 경로:
-
-- `.obsidian/`
-- `_system/`
-- `90 보관/`
-
-즉 `_system/templates`나 archive page는 일반 검색 결과를 오염시키지 않습니다.
-
-## 11. CLI 직접 사용
-
-### raw export
+실행 중인 gateway는 Telegram `/restart` 또는 `hermes gateway restart`로 재시작하세요. 이어 ACS 환경에서 점검하세요.
 
 ```bash
-agent-context-substrate extract-session \
-  --session-id <session_id> \
-  --project-root .
+cd '<PROJECT_ROOT>'
+. .venv/bin/activate
+agent-context-substrate doctor \
+  --hermes-home ~/.hermes --project-root '<PROJECT_ROOT>' \
+  --wiki-root '<WIKI_ROOT>' --hermes-agent-root '<HERMES_AGENT_ROOT>' \
+  --fail-on-issues
 ```
 
-### context packet
+### Hermes 기본값과 제어
+
+환경 변수는 설치된 로컬 설정보다 우선합니다. 아래 suffix 앞에 `AGENT_CONTEXT_SUBSTRATE_`를 붙이세요.
+
+| Suffix | 기본값 | 효과 |
+| --- | --- | --- |
+| `PROJECT_ROOT` | 설치된 로컬 값, 없으면 `~/.hermes/agent-context-substrate` | ACS 데이터 범위 |
+| `WIKI_ROOT` | 설치된 로컬 값, 없으면 `~/LLM Wiki` | Wiki 위치 |
+| `AUTO_FINALIZE` | `true` | `false`로 자동 finalize 중지 |
+| `MIN_MESSAGE_COUNT` | `3` | 더 짧은 세션 제외 |
+| `ALLOWED_SOURCES` | `telegram,cli` | 자동 처리할 세션 source |
+| `GATEWAY_POLICY` | `trigger-only` | Gateway hook은 trigger/backstop 역할 |
+| `PROMOTION_MODE` | `packet-only` | 자동 결과를 ACS artifact에 저장 |
+| `SKIP_TITLE_PATTERNS` | 비어 있음 | 건너뛸 제목 패턴, 쉼표로 구분 |
+| `SUMMARY_MODE` | 비어 있음 | V2 summary 생성은 선택 사항 |
+| `SUMMARY_JUDGE_MODE` | `off` | 선택적인 artifact 전용 평가 |
+
+Gateway-source 세션은 기본적으로 제외됩니다. 환경 변수를 바꾸면 해당 Hermes 프로세스를 재시작하세요. Legacy `PROMOTION_MODE=full`은 wiki 페이지를 씁니다. 그 동작을 원할 때만 사용하세요.
+
+| Telegram 명령 | 작업 |
+| --- | --- |
+| `/harness` | 상태, 경로, 정책 확인 |
+| `/packet <session_id>` | 설정된 정책으로 선택한 세션 처리 |
+| `/wiki-resume <session_id>` | 해당 복구 브리프 표시 |
+| `/wiki-lint` | Wiki 및 artifact 일관성 점검 |
+
+## 4. MCP 없이 Codex 처리
+
+[Windows 설치 가이드](./WINDOWS_CODEX_APP_SETUP.ko.md)에 따라 설치하고 hook 신뢰를 검토하세요. Packaged integration은 Stop hook을 사용하며 watcher fallback을 제공합니다. MCP server는 없습니다.
+
+ACS checkout의 PowerShell에서 경로를 명시하세요.
+
+```powershell
+$AcsCli = '.\.venv\Scripts\agent-context-substrate.exe'
+$AcsRoot = (Resolve-Path -LiteralPath '.').Path
+$AcsWiki = "$env:USERPROFILE\Documents\LLM Wiki"
+$AcsCodex = "$env:USERPROFILE\.codex"
+& $AcsCli codex-status --codex-home $AcsCodex
+& $AcsCli codex-finalize --thread-id '<THREAD_ID>' `
+  --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
+```
+
+`codex-status`에서 thread ID를 고르세요. 수동 finalize는 packet, recovery, lint, ledger artifact를 쓰며 hook 신뢰가 필요하지 않습니다. 원본 파일은 읽기 전용으로 유지됩니다.
+
+현재 idle 상태인 thread를 한 번 처리하려면:
+
+```powershell
+& $AcsCli codex-watch --once --idle-seconds 300 `
+  --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
+```
+
+이 명령은 dry-run이 아니라 실제 처리 명령입니다. 선택한 Codex home 전체에서 세션을 찾으며 Stop hook의 `cwd` 필터는 적용하지 않습니다. 조건에 맞는 오래된 thread도 선택한 ACS root로 export될 수 있습니다. Idle 기준을 높이면 최근 변경된 thread의 처리가 늦춰질 뿐, 오래된 thread가 제외되지는 않습니다.
+
+계속 감시하려면 `--once`를 빼세요. `--interval-seconds`로 polling 간격을 설정하고 Ctrl+C로 중지합니다. Watcher는 처리한 rollout fingerprint를 `data/index/codex_watcher_state.json`에 기록합니다.
+
+현재 Codex finalize는 packet-only summary 경로를 사용하며 `--summary-mode` flag가 없습니다. 그 결과에 claim 추출용 V2 artifact가 이미 포함되어 있다고 가정하지 마세요.
+
+## 5. 맥락 검색·복구
+
+설치된 CLI를 각 shell에서 사용하세요. 아래 예시는 POSIX 줄 이어쓰기 기준입니다.
+
+```bash
+agent-context-substrate search-knowledge \
+  --query 'deployment decision' --mode knowledge \
+  --project-root '<PROJECT_ROOT>' --wiki-root '<WIKI_ROOT>'
+agent-context-substrate expand-hit \
+  --hit-id '<HIT_ID>' --project-root '<PROJECT_ROOT>' --wiki-root '<WIKI_ROOT>'
+```
+
+검색 결과의 `hit_id`를 복사하세요. 복구 브리프에는 `--mode recovery`, 관계 탐색에는 `--mode graph`를 사용합니다. `--limit`, `--json`으로 결과를 조정합니다. `--include-raw`는 Hermes 원본 메시지를 포함하는 옵션이며 Codex home을 임의로 스캔하는 옵션이 아닙니다. Raw-message hit는 snippet/provenance를 제공하며 전체 확장은 비활성화되어 있습니다.
+
+검색은 wiki 페이지, export된 packet, recovery 및 지원되는 artifact를 읽습니다. Codex 근거는 export를 통해 사용할 수 있습니다. 검색과 확장은 Obsidian을 수정하지 않습니다. 기본 제외 wiki 폴더는 `.obsidian/`, `_system/`, `90 보관/`입니다.
+
+## 6. 선택적 V2 summary → claim → 검토한 wiki patch
+
+다음 V2 build 명령은 **Hermes session ID**를 받습니다. 근거를 포함한 summary가 필요할 때 실행하세요.
 
 ```bash
 agent-context-substrate build-context-packet \
-  --session-id <session_id> \
-  --packet-id <packet_id> \
-  --task-title "<task title>" \
-  --macro-context "<macro context>" \
-  --unit-title "<unit title>" \
-  --goal "<goal>" \
-  --project-root .
+  --session-id '<SESSION_ID>' --packet-id '<PACKET_ID>' \
+  --task-title '<TASK>' --macro-context '<CONTEXT>' \
+  --unit-title '<UNIT>' --goal '<GOAL>' \
+  --summary-mode heuristic --summary-cache on --project-root '<PROJECT_ROOT>'
 ```
 
-### wiki lint
+`heuristic`은 로컬에서 결정적으로 실행됩니다. `custom-command`는 JSON stdin/stdout을 처리하는 `--summarizer-command`가 필요합니다. `agent-llm`, `hybrid`는 LLM router를 제공하는 host integration이 필요하며 standalone CLI는 router를 제공하지 않습니다. `--summary-judge-mode hybrid`는 summary mode가 필요하지만 router 없이도 실행할 수 있습니다. Router가 없거나 실패하면 `judge_unavailable`과 함께 degraded mechanical verdict를 반환합니다. Semantic 판단에는 정상적인 host router가 필요합니다. Judge는 patch를 적용하는 대신 평가 artifact를 만듭니다.
+
+V2 summary가 준비되면 같은 ACS root에서 진행하세요.
+
+```bash
+cd '<PROJECT_ROOT>'
+agent-context-substrate extract-atoms --packet-id '<PACKET_ID>' --project-root .
+agent-context-substrate propose-promotions --packet-id '<PACKET_ID>' --project-root .
+agent-context-substrate plan-wiki-patches \
+  --promotion-file 'data/promotions/<PACKET_ID>.json' \
+  --wiki-root '<WIKI_ROOT>' --project-root .
+agent-context-substrate apply-wiki-patch \
+  --patch-file 'data/wiki_patches/<PACKET_ID>.json' \
+  --wiki-root '<WIKI_ROOT>' --project-root .
+```
+
+Planning은 `pending` candidate를 사용합니다. 생성된 JSON/Markdown의 근거, 대상, diff를 검토하세요. `review-promotion --candidate-id '<ID>' --preview-evidence --project-root .`는 상태를 바꾸지 않고 미리 보여줍니다. Planning과 기본 patch 적용은 wiki 페이지를 쓰지 않습니다.
+
+제안과 dry-run 결과를 검토한 뒤 apply 명령에 `--apply`를 추가해 다시 실행하세요. 사람의 검토는 workflow 요건이며 CLI가 강제하는 승인 gate는 아닙니다. 현재 alpha operation은 페이지 생성, managed claim block, section append를 다룹니다. 지원하지 않거나 충돌하는 변경은 건너뜁니다. 새 seed 페이지와 언어 metadata를 검토한 뒤 정리된 지식으로 사용하세요. 자세한 내용은 [Pipeline](./PIPELINE.md)을 참고하세요.
+
+## 7. Wiki 언어와 lint 관리
+
+초기화된 vault에는 `Home.md`, `index.md`, `SCHEMA.md`, `log.md`, 번호가 붙은 콘텐츠 폴더, `_system/`이 있습니다. 언어 설정은 `_system/config.yaml`, template은 `_system/templates/ko/`, `en/`에 있습니다.
+
+사람용 페이지에는 title, type, category, status, tags와 함께 `lang: ko` 또는 `lang: en`을 넣으세요. 두 언어 모두 폴더 이름은 한국어로 유지할 수 있습니다. 페이지를 추가할 때 해당 언어 template을 사용하세요.
 
 ```bash
 export WIKI_PATH='<WIKI_ROOT>'
-
-agent-context-substrate lint-wiki \
-  --project-root . \
-  --report-id wiki-lint
+agent-context-substrate lint-wiki --project-root '<PROJECT_ROOT>' --report-id wiki-lint
 ```
 
-### v2 summary artifact 만들기
+PowerShell에서는 `export` 대신 `$env:WIKI_PATH = $AcsWiki`를 사용하세요. Lint는 report를 쓰며 페이지를 고치지 않습니다. `--semantic`은 semantic artifact 점검을 포함하고, `--fail-on-issues`는 문제가 있을 때 0이 아닌 exit code를 반환합니다.
 
-기본 `build-context-packet`은 기존 packet artifact만 만듭니다. 아래처럼 `--summary-mode`를 추가하면 evidence bundle과 v2 summary artifact도 생성합니다.
+## 8. 진단 및 개인정보 보호
 
-```bash
-agent-context-substrate build-context-packet \
-  --session-id <session_id> \
-  --packet-id <packet_id> \
-  --task-title "<task title>" \
-  --macro-context "<macro context>" \
-  --unit-title "<unit title>" \
-  --goal "<goal>" \
-  --summary-mode heuristic \
-  --summary-cache on \
-  --project-root .
-```
-
-요약 모드:
-
-| 모드 | 의미 |
+| 증상 | 확인 / 다음 조치 |
 | --- | --- |
-| `heuristic` | 기본 오프라인 요약. 비용/키/네트워크 없음. |
-| `agent-llm` | host Agent가 제공하는 LLM router를 사용합니다. |
-| `hybrid` | heuristic evidence + Agent LLM 해석을 조합합니다. |
-| `custom-command` | 외부 command가 stdin JSON을 받아 stdout JSON을 반환합니다. |
+| Hermes `/harness`가 degraded | 경로/import 오류를 확인하고 ACS 환경에서 `doctor` 실행 |
+| Hermes 설정이 이전 값 | 변경 후 gateway/프로세스 재시작 |
+| Hermes 자동 finalize가 건너뛰어짐 | Source, 메시지 수, skip pattern, 정책 확인 |
+| Codex Stop hook 결과가 없음 | Windows 가이드에서 설치, 신뢰, runtime, `cwd` 범위 확인 |
+| Packet이 reused | Ledger와 필수 artifact 확인. 정상 재사용일 수 있음 |
+| 검색 결과가 없음 | Project/wiki root가 일치하고 원본이 finalize로 export되었는지 확인 |
+| Claim 추출 입력이 없음 | 먼저 V2 summary 생성. Legacy packet만으로는 부족 |
+| Lint 언어/링크 오류 | Frontmatter 또는 링크 대상을 고치고 lint 재실행 |
 
-참고: standalone CLI에서 바로 쓸 수 있는 모드는 `heuristic`과 `custom-command`입니다. `agent-llm`과 `hybrid`는 host integration이 Agent LLM router를 주입할 때 사용합니다.
+원본 DB, rollout, export, summary, provenance, 설치된 로컬 설정에는 메시지, 비밀정보, 코드, 개인정보, 기기 경로가 들어갈 수 있습니다. 비공개로 보관하고 공유 전에 변경 사항을 확인하세요. 선택한 LLM/custom summary는 필터링한 근거를 설정된 provider나 process로 보낼 수 있습니다. Redaction이 모든 민감정보 제거를 보장하지는 않습니다.
 
-Summary judge evaluation is opt-in and artifact-only:
-
-```bash
-agent-context-substrate build-context-packet \
-  --summary-mode heuristic \
-  --summary-judge-mode hybrid \
-  --project-root .
-```
-
-Host integration이 Agent LLM router를 주입하면 `hybrid` judge는 recovery usefulness, hallucination risk, missing next steps, wiki-candidate noise를 평가하고 `data/exports/evals/<packet_id>-summary-judge.json`만 씁니다. summary를 수정하거나 wiki patch를 apply하지 않습니다.
-
-### review-first wiki growth
-
-```bash
-agent-context-substrate extract-atoms --packet-id <packet_id> --project-root .
-agent-context-substrate propose-promotions --packet-id <packet_id> --project-root .
-agent-context-substrate plan-wiki-patches \
-  --promotion-file data/promotions/<packet_id>.json \
-  --wiki-root '<WIKI_ROOT>' \
-  --project-root .
-```
-
-여기까지는 Obsidian을 수정하지 않습니다. 실제 쓰기는 patch Markdown/JSON을 검토한 뒤 아래처럼 명시합니다.
-
-```bash
-agent-context-substrate apply-wiki-patch \
-  --patch-file data/wiki_patches/<packet_id>.json \
-  --wiki-root '<WIKI_ROOT>' \
-  --project-root . \
-  --apply
-```
-
-## 12. 자동 처리되지 않는 것
-
-현재 기본 정책에서 자동 처리되지 않는 대상:
-
-- `source=gateway` session
-- 메시지가 `min_message_count`보다 적은 session
-- skip title pattern에 걸리는 session
-- 이미 completed 처리됐고 필요한 artifact가 살아 있는 session
-- Obsidian durable page promotion (`promotion_mode=packet-only`인 경우)
-- v2 summary/atoms/promotions/wiki patches. 이들은 CLI로 명시적으로 실행합니다.
-
-Obsidian이 수정되는 경로:
-
-- legacy `promotion_mode="full"`
-- `run-e2e-pipeline`
-- `promote-*` CLI commands
-- `apply-wiki-patch --apply`
-- 사람이 직접 curated page를 작성/수정하는 경우
-
-## 13. privacy / release 주의점
-
-이 harness는 로컬 private data를 다룹니다.
-
-- `HERMES_HOME/state.db`에는 전체 대화, tool output, 파일 경로, 운영 메모가 들어갈 수 있습니다.
-- Codex `%USERPROFILE%\.codex\state_5.sqlite`와 rollout JSONL에는 thread metadata, 메시지, tool call, 로컬 경로가 들어갈 수 있습니다.
-- `data/exports/**/*.json`과 `data/exports/**/*.md`에는 raw transcript 또는 상세 요약이 포함될 수 있습니다.
-- Obsidian page와 provenance도 개인 프로젝트/조직 정보를 포함할 수 있습니다.
-- API key, token, password, connection string, `.env` 파일은 절대 commit하지 않습니다.
-- public 배포 전에는 `git status --short`, `.gitignore`, `docs/RELEASE_CHECKLIST.md`, `doctor`, `fresh-install-smoke`를 확인합니다.
-
-## 14. 안전장치
-
-- ledger 기반 idempotency
-- completed artifact 존재 확인
-- stale completed record 재빌드
-- failed record retry budget 관리
-- retry exhausted 시 중단
-- late failure 발생 시 partial artifact 경로 보존
-- packet-only 기본값
-- gateway source 기본 제외
-- qualitative lint
-- summary lint와 fallback
-- promotion/wiki patch semantic lint
-- retrieval read-only 기본값
-- wiki patch dry-run 기본값
-
-## 15. 빠른 문제 해결
-
-| 증상 | 확인할 것 | 해결 방향 |
-| --- | --- | --- |
-| `/harness`가 `degraded` | project/wiki path, import error | 경로와 venv/plugin 설정 확인 |
-| `/wiki-lint`에서 `Missing language` | page frontmatter | active page에 `lang: ko` 또는 `lang: en` 추가 |
-| `/wiki-lint`에서 broken link | wikilink target | 존재하지 않는 링크 수정 또는 page 생성 |
-| `/packet`이 `reused`만 표시 | ledger completed record | 정상일 수 있음. 다른 promotion mode면 재처리됨 |
-| 새 설정이 Telegram에 안 보임 | gateway process cache | gateway 재시작 필요 가능성 |
-| 자동 처리 안 됨 | source, message count, policy | `allowed_sources`, `min_message_count`, session source 확인 |
-
-## 16. 일반 경로 예시
-
-```text
-Hermes DB:
-~/.hermes/state.db
-
-Codex source:
-%USERPROFILE%\.codex\state_5.sqlite
-%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl
-
-Harness project:
-<PROJECT_ROOT>
-
-Obsidian LLM Wiki:
-%USERPROFILE%\Documents\LLM Wiki 또는 <WIKI_ROOT>
-
-권장 promotion mode:
-packet-only
-
-자동 처리 source:
-telegram, cli
-
-gateway policy:
-trigger-only
-```
-
-WSL에서 이 프로젝트 경로는 Windows mount와 한글 사용자명을 포함하므로, terminal command는 `workdir` 대신 명령 내부 `cd`를 사용하세요.
-
-```bash
-cd '<PROJECT_ROOT>' && . .venv/bin/activate && python -m pytest -q
-```
+유지 관리와 공개 배포 점검은 [Operations](./OPERATIONS.md), [Release checklist](./RELEASE_CHECKLIST.md)를 참고하세요. 설치 상태, CLI help, artifact 점검은 서로 다른 근거를 제공합니다. 어느 하나만으로 GUI hook 실행 성공을 증명할 수는 없습니다.

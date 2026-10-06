@@ -1,182 +1,151 @@
 # Windows Codex 앱 설치 가이드
 
-[English](./WINDOWS_CODEX_APP_SETUP.md) · [한국어 README](../README.ko.md) · [사용자 가이드](./USER_GUIDE.md)
+[English](./WINDOWS_CODEX_APP_SETUP.md) · [한국어 README](../README.ko.md) · [사용자 가이드](./USER_GUIDE.md) · [Operations](./OPERATIONS.md)
 
-이 문서는 Windows Codex 앱 사용자가 Agent Context Substrate(ACS)를 GitHub repo에서 바로 설치할 때 필요한 절차를 설명합니다. 목표는 “Codex에게 repo URL을 주고 설치해 달라고 요청하면 스스로 진행할 수 있는” 흐름입니다.
+이 가이드에서 ACS 설치, hook 신뢰 검토, 로컬 설치 진단을 진행하세요. ACS는 Codex 원본 세션을 읽기 전용으로 읽고 설정된 project root 아래에 파생 artifact를 씁니다. 일상 검색, 수동 finalize, 선택적 wiki 갱신은 [사용자 가이드](./USER_GUIDE.md), artifact 동작은 [Pipeline](./PIPELINE.md)을 참고하세요.
 
-ACS는 Codex 원본 세션을 **읽기 전용**으로 읽고, 정리된 artifact만 ACS 프로젝트의 `data\...` 아래에 씁니다. Obsidian LLM Wiki는 사람이 읽는 curated wiki로 유지합니다.
+## 1. 경로와 범위 선택
 
-## 1. 먼저 인지해야 할 경로
+| 항목 | 기본값 / 예시 |
+| --- | --- |
+| Codex home | `%USERPROFILE%\.codex` |
+| Codex metadata | `<CODEX_HOME>\state_5.sqlite` |
+| Codex rollout | `<CODEX_HOME>\sessions\...\rollout-*.jsonl` |
+| ACS project root | Clone한 `agent-context-substrate` checkout |
+| ACS artifact | `<PROJECT_ROOT>\data\...` |
+| LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` |
+| 설치된 plugin | `<CODEX_HOME>\plugins\agent-context-substrate` |
+| User hook fallback | `<CODEX_HOME>\hooks.json` |
 
-| 항목 | Windows 기본 예시 | 설명 |
-| --- | --- | --- |
-| Codex home | `%USERPROFILE%\.codex` | Codex 앱의 로컬 설정과 세션 저장소 |
-| Codex SQLite | `%USERPROFILE%\.codex\state_5.sqlite` | thread metadata. ACS가 읽기 전용으로 조회 |
-| Codex rollout JSONL | `%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl` | 실제 thread event. ACS가 읽기 전용으로 조회 |
-| ACS project root | clone한 `agent-context-substrate` 폴더 | ACS 코드와 `data\...` artifact 저장 위치 |
-| ACS artifacts | `<PROJECT_ROOT>\data\...` | raw export, packet, recovery, ledger, retrieval index |
-| LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` | Obsidian에서 열 수 있는 사람용 wiki |
-| Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | ACS Codex plugin asset |
-| Codex user hook | `%USERPROFILE%\.codex\hooks.json` | Stop hook fallback 등록 위치 |
+`project_root`는 ACS artifact 범위이자 Stop hook의 `cwd` 필터입니다. 기본 checkout root가 **다른 repository의 작업까지 자동 수집하지는 않습니다**. Stop payload의 `cwd`가 설정된 root 밖이면 건너뜁니다. 의도한 범위를 선택하세요. 수동 finalize와 watcher의 세션 선택 방식은 다릅니다.
 
-## 2. 준비물과 자동 설치 범위
+ACS checkout과 `.venv`를 유지하세요. Editable install이며 설치된 hook은 설정된 Python/project 경로를 참조합니다. 이동하거나 삭제하면 설정/설치를 갱신해야 합니다.
 
-필수 준비물은 Windows Codex 앱, Python 3.11+, Git, PowerShell입니다. Obsidian은 ACS 실행 자체에는 필수가 아니지만, LLM Wiki를 사람이 읽고 정리하려면 설치하는 것이 좋습니다.
+## 2. 준비물 확인
 
-`scripts/setup-codex-windows.ps1`는 기본적으로 시스템 도구를 마음대로 설치하지 않습니다. 누락 도구 설치를 허용하려면 아래 winget ID를 사용합니다.
+Python 3.11+, Git, PowerShell, 로컬 세션 파일을 제공하는 Codex runtime을 사용하세요. Obsidian은 선택 사항입니다. Bootstrap은 명령 존재 여부를 확인합니다. `py`나 `python`을 찾았다는 것만으로 선택된 interpreter 버전이나 Codex GUI hook 동작을 확인할 수는 없습니다.
 
-| 도구 | winget ID | 자동 설치 |
-| --- | --- | --- |
-| Python | `Python.Python.3.13` | `-InstallMissingTools`를 줄 때 |
-| Git | `Git.Git` | `-InstallMissingTools`를 줄 때 |
-| Obsidian | `Obsidian.Obsidian` | `-InstallObsidian`을 줄 때 |
-| Codex 앱/CLI | 별도 설치 | 자동 설치하지 않음 |
-| Hook trust | `/hooks`에서 직접 review/trust | 자동 우회하지 않음 |
+| 도구 | Bootstrap 설치 옵션 |
+| --- | --- |
+| Python | `-InstallMissingTools`, winget `Python.Python.3.13` |
+| Git | `-InstallMissingTools`, winget `Git.Git` |
+| Obsidian | `-InstallObsidian`, winget `Obsidian.Obsidian` |
+| Codex 앱/CLI | 별도 설치. Bootstrap에서 설치하지 않음 |
 
-## 3. 단일 PowerShell 설치
+도구 설치 후 PATH 갱신을 위해 새 terminal이 필요할 수 있습니다. Script는 `.venv`를 만들 때 `py -3`를 우선 사용합니다. Python이 여러 버전이면 생성된 interpreter를 확인하세요.
 
-PowerShell에서 repo를 clone한 뒤 bootstrap script 하나를 실행합니다.
+## 3. PowerShell에서 설치
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
 cd agent-context-substrate
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
+```
+
+`-CheckOnly`는 ACS setup 전에 종료합니다. 준비물 확인만 하려면 설치 switch **없이** 실행하세요. 도구 처리가 종료 지점보다 먼저 실행되므로 설치 switch와 조합하면 누락된 시스템 도구를 설치할 수 있습니다.
+
+표시된 기본 경로로 ACS를 설치하세요.
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 ```
 
-도구 누락까지 처리하려면:
+다른 wiki나 Codex home에는 `-WikiRoot`, `-CodexHome`을 지정하세요. `-ProjectRoot`는 editable install과 artifact에 사용할 ACS checkout을 선택합니다. ACS package가 있는 경로여야 하므로 다른 repository의 세션을 수집하려고 bootstrap의 이 옵션을 그 repository로 지정할 수는 없습니다. 누락된 도구 설치를 허용하려면:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
-점검만 하고 설치하지 않으려면:
+Script는 `.venv` 생성, pip 갱신, `pip install -e .`로 ACS 설치 후 명시한 경로로 `setup-codex --yes`를 실행합니다. Setup은 wiki 초기화, plugin/config와 user hook fallback 설치, 개인 marketplace/cache 등록, 로컬 진단을 수행합니다. `--yes`는 setup 선택을 수락하며 hook 신뢰를 부여하지 않습니다.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
-```
-
-이 script는 `.venv`를 만들고 `pip install -e .`로 ACS를 설치한 뒤 아래 명령을 실행합니다.
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe setup-codex --yes
-```
-
-## 4. 설치 후 확인 명령
-
-상태 점검:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
-```
-
-사용자-facing 경로 확인:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe config-codex paths
-```
-
-설치된 `local_config.json` 확인:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe config-codex show
-```
-
-문제 진단:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex
-```
-
-안전한 로컬 파일만 재설치/복구:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex --fix
-```
-
-대화형 wizard:
+CLI가 준비된 뒤 경로를 대화형으로 검토하려면:
 
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-`setup-codex-wizard`는 Codex SQLite, rollout JSONL, LLM Wiki, ACS artifact 경로를 보여주고 확인을 받은 뒤 설치합니다.
+Setup 파일을 쓰지 않고 ACS 설치 계획을 확인하려면:
 
-## 5. Hook 승인
+```powershell
+.\.venv\Scripts\agent-context-substrate.exe setup-codex --dry-run
+```
 
-설치 명령은 hook 파일을 배치하지만, Codex 보안 정책상 non-managed command hook은 사용자가 한 번 review/trust 해야 실행됩니다. 이 단계는 `기본 권한`, `자동검토`, `전체권한` 같은 approval/sandbox 설정과 다릅니다.
+## 4. 설치 상태와 runtime을 구분해 확인
 
-PowerShell에서 Codex CLI를 열고:
+ACS checkout에서 실행하세요.
+
+```powershell
+$AcsCli = '.\.venv\Scripts\agent-context-substrate.exe'
+$AcsRoot = (Resolve-Path -LiteralPath '.').Path
+$AcsWiki = "$env:USERPROFILE\Documents\LLM Wiki"
+$AcsCodex = "$env:USERPROFILE\.codex"
+& $AcsCli config-codex paths --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
+& $AcsCli config-codex show --codex-home $AcsCodex
+& $AcsCli doctor-codex --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki --fail-on-issues
+& $AcsCli diagnose-codex --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
+```
+
+사용자 지정 경로를 골랐다면 변수 값을 바꾸세요. `config-codex paths`는 인수/기본값으로 계산한 경로를 표시합니다. `config-codex show`는 설치된 `local_config.json`을 읽습니다. 표시된 경로가 설치 설정에서 왔다고 가정하지 말고 둘을 비교하세요.
+
+`doctor-codex`는 로컬 파일, 설정 일치, interpreter 버전, 데이터 디렉터리 쓰기 가능 여부를 확인합니다. `--fail-on-issues` 사용 시 필수 항목 실패는 0이 아닌 exit code를 반환합니다. 경고가 있어도 `ok=True`일 수 있습니다. `hook_support`는 ACS의 지원 가정을 표시하고 `hook_primary_installed`는 hook 파일을 확인합니다. 어느 값도 Codex가 hook을 로드·활성화·신뢰·실행했다는 증거가 아닙니다. 원본 metadata 존재 여부와 runtime 동작은 따로 확인해야 합니다.
+
+## 5. Hook 활성화와 신뢰
+
+ACS는 plugin 디렉터리 아래 기본 `hooks/hooks.json`을 제공합니다. 공식 [plugin packaging 문서](https://developers.openai.com/plugins/build/plugins)는 기본 hook 탐색을 설명합니다. 탐색이나 plugin 설치/활성화가 non-managed command hook의 신뢰를 부여하지는 않습니다.
+
+사용 중인 Codex runtime에서 ACS plugin이 활성화되어 있는지 확인하세요. Hook 검토는 공식 [hooks 문서](https://developers.openai.com/docs/hooks)의 안내대로 Codex CLI를 열고 `/hooks`를 입력하세요.
 
 ```powershell
 codex
 ```
 
-Codex CLI 입력창에서:
-
 ```text
 /hooks
 ```
 
-다음 hook을 찾아 Trust, Allow, Enable 계열의 선택지를 고릅니다.
+`agent-context-substrate`, `codex_stop_finalize.py`, `Finalizing Codex thread into Agent Context Substrate`에 해당하는 명령/경로를 검토하고 제공되는 검토 화면에서 신뢰를 부여하세요. 사용 중인 runtime의 제어 기능을 따르세요. 이 가이드는 GUI 상태를 테스트했다고 주장하거나 특정 버튼 이름을 전제하지 않습니다.
 
-```text
-agent-context-substrate
-codex_stop_finalize.py
-Finalizing Codex thread into Agent Context Substrate
-```
+Full Access, sandbox 설정, approval mode는 hook 신뢰와 별개입니다. 재설치/복구를 포함해 hook 정의나 명령이 바뀌면 다시 검토해야 할 수 있습니다. ACS setup은 이 단계를 우회하지 않습니다. Runtime에 hook 검토 화면이 없거나 Stop event를 놓치면 수동 finalize나 watcher를 사용하세요.
 
-Hook 파일이나 명령이 바뀌면 Codex가 다시 review 대상으로 표시할 수 있습니다. installer는 이 trust를 자동 승인하지 않습니다.
+실제 실행을 검증하려면 설정된 범위 안의 thread에서 Stop event가 발생한 뒤 해당 packet/recovery/ledger artifact를 확인하세요. 설치된 파일이나 정상 doctor report만으로는 충분하지 않습니다.
 
-## 6. Obsidian 안내
+## 6. 수동 finalize 및 watcher fallback
 
-ACS는 `%USERPROFILE%\Documents\LLM Wiki` 폴더 구조를 만들 수 있지만, Obsidian 앱을 자동으로 열어 vault로 등록하지는 않습니다.
-
-Obsidian을 설치했다면 Obsidian에서 `Open folder as vault`를 선택하고 아래 폴더를 엽니다.
-
-```text
-%USERPROFILE%\Documents\LLM Wiki
-```
-
-기본 자동 처리는 `packet-only`입니다. 즉 Codex thread 종료 때 Obsidian에 긴 자동 생성 페이지를 쏟아 넣지 않고, `<PROJECT_ROOT>\data\...` 아래에 context packet, recovery, ledger, retrieval artifact를 저장합니다.
-
-## 7. Fallback 확인
-
-Hook이 아직 trust되지 않았거나 Stop event를 놓친 경우 `codex-watch`를 fallback으로 실행할 수 있습니다.
+Thread를 확인한 뒤 선택한 ID를 처리하세요.
 
 ```powershell
-.\.venv\Scripts\agent-context-substrate.exe codex-watch `
-  --once `
-  --codex-home "$env:USERPROFILE\.codex" `
-  --project-root (Resolve-Path -LiteralPath ".").Path `
-  --wiki-root "$env:USERPROFILE\Documents\LLM Wiki" `
-  --idle-seconds 999999
+& $AcsCli codex-status --codex-home $AcsCodex
+& $AcsCli codex-finalize --thread-id '<THREAD_ID>' `
+  --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
 ```
 
-`processed=0`이어도 정상입니다. 위 명령은 오래된 thread를 갑자기 처리하지 않도록 큰 idle window를 사용합니다.
+수동 처리는 hook 신뢰가 필요하지 않습니다. Watcher를 한 번 실행하려면:
 
-## 8. 순정 Codex에게 맡기는 프롬프트
-
-새 Codex thread에 아래 프롬프트와 GitHub repo URL을 주면, Codex가 README와 이 문서를 보고 설치를 진행할 수 있어야 합니다.
-
-```text
-Windows Codex 앱에서 Agent Context Substrate를 설치해줘.
-
-Repo: https://github.com/jjuck/agent-context-substrate
-
-요구사항:
-- Windows PowerShell 기준으로 설치해.
-- Codex 원본 저장소는 %USERPROFILE%\.codex 아래의 state_5.sqlite와 sessions\...\rollout-*.jsonl임을 사용자에게 알려줘.
-- LLM Wiki 기본 경로는 %USERPROFILE%\Documents\LLM Wiki로 잡고, 설치 전에 이 경로를 사용자에게 확인해.
-- ACS artifact는 clone한 agent-context-substrate 프로젝트의 data\... 아래에 저장된다고 알려줘.
-- scripts/setup-codex-windows.ps1를 기본 설치 경로로 사용해.
-- 누락 도구가 있으면 Python.Python.3.13, Git.Git, Obsidian.Obsidian winget ID를 알려주고, 설치 전 사용자에게 확인해.
-- 설치 후 doctor-codex, config-codex paths, diagnose-codex 명령을 안내해.
-- non-managed hook trust는 자동 우회하지 말고, 설치 후 codex CLI에서 /hooks를 열어 agent-context-substrate Stop hook을 review/trust 하라고 안내해.
+```powershell
+& $AcsCli codex-watch --once --idle-seconds 300 `
+  --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
 ```
 
-## 9. 자주 헷갈리는 점
+`--once`는 조건에 맞는 idle thread의 artifact를 쓰며 dry-run이 아닙니다. Watcher는 hook의 project `cwd` 필터 없이 선택한 Codex home을 탐색하므로 다른 프로젝트의 오래된 세션도 `$AcsRoot`로 export할 수 있습니다. `--idle-seconds`를 높이면 최근 변경된 세션 처리가 늦춰질 뿐 오래된 세션은 여전히 대상이 될 수 있습니다. `processed=0`은 처리할 미처리 thread가 없었다는 뜻이며 hook 실행을 증명하지 않습니다. 계속 감시하려면 `--once`를 빼고 Ctrl+C로 중지하세요.
 
-- `기본 권한`, `자동검토`, `전체권한`은 Codex agent의 작업 승인/샌드박스 설정입니다. Hook trust와는 별개입니다.
-- ACS는 Codex SQLite와 rollout JSONL을 수정하지 않습니다.
-- `doctor-codex`는 설치 상태를 점검하고, `diagnose-codex --fix`는 안전한 ACS 로컬 파일만 복구합니다.
-- Obsidian은 선택 의존성입니다. ACS는 LLM Wiki 폴더를 만들지만 Obsidian 앱/vault 등록은 사용자가 직접 확인해야 합니다.
+## 7. 진단·복구 및 wiki 열기
+
+| 증상 | 확인 / 조치 |
+| --- | --- |
+| CLI executable이 없음 | `.venv` Python과 pip 출력 확인. Python 3.11+인지 확인 |
+| 필수 doctor 항목 실패 | 해당 항목과 명시한 project/wiki/Codex 경로 확인 |
+| Doctor는 정상인데 자동 packet 없음 | Plugin 활성화, hook 신뢰, Stop event 전달, `cwd` 범위 확인 |
+| Codex 원본 파일 없음 | Runtime이 사용하는 Codex home에 로컬 세션이 있는지 확인 |
+| 이동/갱신 후 hook 중지 | 설치 설정, Python 경로, hook 정의, 신뢰 비교 |
+| Obsidian에 vault 없음 | 선택한 wiki 폴더를 직접 vault로 열기 |
+
+필수 setup 항목이 실패하면 경로를 명시해 로컬 ACS 복구를 요청하세요.
+
+```powershell
+& $AcsCli diagnose-codex --fix --codex-home $AcsCodex `
+  --project-root $AcsRoot --wiki-root $AcsWiki
+```
+
+필수 항목 실패 시 복구는 wiki 구조, plugin/config, user hook, marketplace asset에 대해 setup을 다시 실행합니다. 모든 경고를 고치거나 누락 도구를 전부 설치하거나 신뢰를 부여하지는 않습니다. 이후 hook 변경을 검토하세요.
+
+필요하면 Obsidian의 `Open folder as vault`로 `<WIKI_ROOT>`를 여세요. 기본 `packet-only`는 세션 결과를 ACS `data/`에 저장하며 검토한 wiki patch는 선택 사항입니다. 원본 세션, 파생 artifact, 로컬 설정, provenance는 비공개로 취급하고 공유 전에 확인하세요.

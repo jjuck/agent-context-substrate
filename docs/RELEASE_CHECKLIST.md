@@ -1,204 +1,71 @@
 # Release Checklist
 
-Use this checklist before publishing or updating Agent Context Substrate releases. The repository lives at `https://github.com/jjuck/agent-context-substrate` and is public as of `v0.1.0`; the current local release candidate is `v0.2.0`. Keep generated/private local artifacts out of tracked source and release assets.
+Record the candidate commit, Python/platform, exact commands, exit codes, skips and limitations for each release. This checklist defines checks to run; it is not evidence that a live installation or test run succeeded. Python 3.11+ is required by `pyproject.toml`.
 
-## 1. Source hygiene
+For docs-only edits, run section 1 checks relevant to the changed files; pytest, builds and install smoke are not required. Sections 2–4 apply to runtime/package releases or changes that affect those behaviors.
 
-- [ ] `git status --short --branch` is clean and tracking `origin/main`.
-- [ ] `data/exports/`, `data/atoms/`, `data/promotions/`, `data/wiki_patches/`, `data/lint/`, `data/cache/`, and generated `data/index/` artifacts are ignored or intentionally excluded.
-- [ ] `.hermes/`, `.venv/`, caches, and `*.egg-info/` are ignored.
-- [ ] `LICENSE` exists and matches `pyproject.toml` metadata.
-- [ ] GitHub remote `origin` points to `https://github.com/jjuck/agent-context-substrate.git`.
-- [ ] `pyproject.toml` has name, version, description, license, keywords, classifiers, and CLI entrypoint.
+## 1. Read-only source and documentation review
 
-## 2. Personal path audit
+- [ ] Review `git status --short --branch`, `git diff --check` and the staged diff; release only intended source files.
+- [ ] Match version, license and CLI metadata in `pyproject.toml`, package metadata and changelog.
+- [ ] Exclude private/generated `data/`, session DBs, rollout exports, vaults, local configs, credentials, caches and environment directories from commits and release assets.
+- [ ] Audit tracked source/docs for personal paths and secrets; generic placeholders must be consistent. Review any intentional historical examples explicitly.
+- [ ] Keep [Korean](USER_GUIDE.md) / [English](USER_GUIDE.en.md) guides and [Windows Korean](WINDOWS_CODEX_APP_SETUP.ko.md) / [English](WINDOWS_CODEX_APP_SETUP.md) instructions aligned with local CLI defaults and hook trust behavior.
+- [ ] For Pages/diagram changes, confirm publishing from `main` `/docs`, `docs/index.html` redirects to `site/`, and `docs/site/index.html` plus `docs/site/preview.png` resolve. Check deployed URLs after publication; local file checks alone do not prove deployment.
+- [ ] Check local links and command options against source or `--help`. Record these as documentation checks, not test execution or live smoke results.
 
-Run:
+## 2. Execute tests, lint and package build
 
-```bash
-python - <<'PY'
-from pathlib import Path
-markers = ['/' + 'mnt/' + 'c/Users/', 'C:' + '\\\\Users\\\\']
-roots = [Path('src'), Path('tests'), Path('README.md'), Path('README.ko.md'), Path('docs'), Path('spec.md'), Path('CHANGELOG.md'), Path('pyproject.toml')]
-allowed = {'docs/plans/2026-04-27-distribution-hardening-final-plan.md'}
-for root in roots:
-    files = [root] if root.is_file() else root.rglob('*')
-    for path in files:
-        if not path.is_file() or path.as_posix() in allowed:
-            continue
-        if path.suffix not in {'.py', '.md', '.toml', '.yaml', '.yml', '.txt'}:
-            continue
-        text = path.read_text(encoding='utf-8', errors='ignore')
-        for marker in markers:
-            if marker in text:
-                raise SystemExit(f'personal path marker in {path}: {marker}')
-print('personal path audit ok')
-PY
-```
-
-## 3. Test suite and lint
+Use a disposable checkout and virtual environment. These commands install dependencies and create build/test outputs; they are not read-only checks. Bash examples assume the repository root and an activated environment; on Windows activate `.venv/Scripts/Activate.ps1` instead of `.venv/bin/activate`.
 
 ```bash
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e '.[dev]' build
 python -m pytest -q
-ruff check .
+python -m ruff check .
+python -m build --outdir '<DIST_ROOT>'
 ```
 
-Expected current public alpha baseline: `305 passed, 12 skipped` and `All checks passed!` from Ruff.
+- [ ] Run on the minimum supported Python and each release target platform; retain results without hard-coded test counts.
+- [ ] Explain skips. Tests marked `integration` require a local Hermes Agent checkout/venv; skips do not establish Hermes runtime compatibility.
+- [ ] Review `tests/test_distribution_assets.py`, distribution, Codex setup/hook and fresh-install fixture tests in the full suite.
+- [ ] Inspect wheel and sdist contents, including the hidden Codex `.codex-plugin/plugin.json`, hooks, skills, Hermes plugin and context-engine assets. Reject bytecode, caches and private data.
 
-For a Windows Codex app release, also verify the Windows-facing one-shot install docs and hook-trust instructions in `README.ko.md`, `README.md`, and `docs/WINDOWS_CODEX_APP_SETUP*.md`.
-
-## 4. Fresh-install smoke
-
-Use temp roots so no durable Obsidian vault is mutated:
+Install the built wheel into another clean environment, then run outside the source checkout so editable imports cannot mask packaging defects:
 
 ```bash
-TMP_PROJECT=$(mktemp -d)
-TMP_WIKI=$(mktemp -d)
-TMP_AGENT=$(mktemp -d)
-agent-context-substrate fresh-install-smoke \
-  --session-id <known-session-id> \
-  --hermes-home ~/.hermes \
-  --project-root "$TMP_PROJECT" \
-  --wiki-root "$TMP_WIKI" \
-  --hermes-agent-root "$TMP_AGENT"
+python -m venv '<PACKAGE_TEST_ENV>'
+. '<PACKAGE_TEST_ENV>/bin/activate'
+python -m pip install '<DIST_ROOT>/<WHEEL_FILE>'
+cd '<EMPTY_DIRECTORY>'
+python -m agent_context_substrate.cli --help
+agent-context-substrate --help
+python -c "from importlib.resources import files; r=files('agent_context_substrate')/'assets'; print('\n'.join(str(p) for p in r.rglob('*') if p.is_file()))"
 ```
 
-Expected:
+- [ ] Compare installed resources to `REQUIRED_ASSET_FILES` in `tests/test_distribution_assets.py`; check wheel version and import location. Build dependencies may require network access.
 
-```text
-fresh-install-smoke ok=True
-retrieval_hit_count>0  # current baseline: 1
-lint_issue_count=0
-```
+## 3. Isolated install and end-to-end smoke
 
-## 5. Live install smoke
+Use the wheel environment. Prepare disposable project, wiki, Hermes home and Hermes Agent roots. The Hermes home must contain a valid fixture `state.db` with a known session; the fixture test in `tests/test_fresh_install_smoke.py` shows the required input. For real-session validation, use a consistent private DB snapshot in that disposable home and keep outputs private.
 
-Back up before overwrite:
+**All roots must be disposable:** `fresh-install-smoke` installs/overwrites the plugin in its supplied Hermes home, initializes the wiki, creates a project import shim and optionally installs the context engine. Temporary project/wiki roots alone do not protect a live Hermes home.
 
 ```bash
-TS=$(date +%Y%m%d-%H%M%S)
-cp ~/.hermes/config.yaml ~/.hermes/config.yaml.bak-agent-context-substrate-release-$TS
-cp -a ~/.hermes/plugins/agent-context-substrate ~/.hermes/plugins/agent-context-substrate.bak-release-$TS 2>/dev/null || true
-cp -a ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate ~/.hermes/hermes-agent/plugins/context_engine/agent_context_substrate.bak-release-$TS 2>/dev/null || true
+agent-context-substrate fresh-install-smoke --session-id '<KNOWN_SESSION_ID>' --hermes-home '<TEMP_HERMES_HOME>' --project-root '<TEMP_PROJECT_ROOT>' --wiki-root '<TEMP_WIKI_ROOT>' --hermes-agent-root '<TEMP_AGENT_ROOT>'
+agent-context-substrate doctor --hermes-home '<TEMP_HERMES_HOME>' --project-root '<TEMP_PROJECT_ROOT>' --wiki-root '<TEMP_WIKI_ROOT>' --hermes-agent-root '<TEMP_AGENT_ROOT>' --fail-on-issues
 ```
 
-Install:
+- [ ] Require `ok=True`, existing raw/packet/lint/recovery artifacts, retrieval hits and expanded content greater than zero, and no lint issues. Retain actual results.
+- [ ] Verify Codex packaged installation in disposable Codex home, project, wiki **and personal marketplace** roots with explicit `--personal-marketplace-root`; setup otherwise reaches the user's marketplace/cache. Use `setup-codex --dry-run` before the write.
+- [ ] Use a fixture Codex DB/rollout for finalize, hook and watcher checks; observe hook event output and artifact creation. `watcher_fallback_available=ok` alone is not evidence of a running watcher.
 
-```bash
-agent-context-substrate install-plugin \
-  --hermes-home ~/.hermes \
-  --project-root <project-root> \
-  --wiki-root <wiki-root> \
-  --overwrite
+## 4. Optional live acceptance and release record
 
-agent-context-substrate install-context-engine \
-  --hermes-agent-root ~/.hermes/hermes-agent \
-  --project-root <project-root> \
-  --wiki-root <wiki-root> \
-  --overwrite
-```
+Live acceptance is a separate, explicit operation. Back up source DBs, vault/data, runtime configs, plugins, user hooks and marketplace settings first. Follow [operations](OPERATIONS.md); record which live checks were performed and which were omitted.
 
-For Codex live install smoke, verify the user-facing paths before running:
-
-```text
-Codex source: ~/.codex/state_5.sqlite and ~/.codex/sessions/**/rollout-*.jsonl
-LLM Wiki: <wiki-root>
-ACS artifacts: <project-root>/data/
-```
-
-Then install and check status:
-
-```bash
-agent-context-substrate setup-codex \
-  --codex-home ~/.codex \
-  --project-root <project-root> \
-  --wiki-root <wiki-root> \
-  --yes
-
-agent-context-substrate doctor-codex \
-  --codex-home ~/.codex \
-  --project-root <project-root> \
-  --wiki-root <wiki-root> \
-  --fail-on-issues
-
-agent-context-substrate config-codex paths \
-  --codex-home ~/.codex \
-  --project-root <project-root> \
-  --wiki-root <wiki-root>
-```
-
-Expected: `doctor-codex ok=True`, `hook_primary_installed=ok`, `watcher_fallback_available=ok`, and paths for `state_5.sqlite`, `Documents\LLM Wiki`, and `data\...`. Codex still requires `/hooks` review/trust before non-managed command hooks run; do not document or use trust bypass as a normal install path.
-
-Windows one-shot bootstrap smoke:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
-```
-
-If prerequisite install instructions are tested, use these winget package IDs: `Python.Python.3.13`, `Git.Git`, and optional `Obsidian.Obsidian`.
-
-Verify:
-
-```bash
-agent-context-substrate doctor \
-  --hermes-home ~/.hermes \
-  --project-root <project-root> \
-  --wiki-root <wiki-root> \
-  --hermes-agent-root ~/.hermes/hermes-agent \
-  --fail-on-issues
-```
-
-## 6. Runtime checks
-
-```bash
-cd ~/.hermes/hermes-agent
-. venv/bin/activate
-hermes plugins list
-python - <<'PY'
-from plugins.context_engine import load_context_engine
-engine = load_context_engine('agent_context_substrate')
-print('engine', getattr(engine, 'name', None))
-print('tools', [schema['name'] for schema in engine.get_tool_schemas()] if engine else [])
-PY
-```
-
-Expected:
-
-- `agent-context-substrate` plugin is enabled.
-- engine is `agent_context_substrate`.
-- tools include `wiki_recovery_context`, `wiki_knowledge_search`, and `wiki_knowledge_expand`.
-
-## 7. Privacy review
-
-- [ ] Do not publish generated/private substrate artifact directories such as `data/exports/`, `data/atoms/`, `data/promotions/`, `data/wiki_patches/`, `data/lint/`, or `data/cache/`.
-- [ ] Do not publish raw `state.db` exports.
-- [ ] Confirm docs warn that raw session exports may include private conversation content, local paths, commands, and sensitive operational context.
-
-## 8. Gateway restart
-
-After installing plugin/context-engine changes into a live Hermes gateway, restart the gateway so cached modules are refreshed:
-
-```bash
-hermes gateway restart
-```
-
-Do this only when it is acceptable to interrupt active messaging sessions.
-
-
-## 9. Current public alpha baseline
-
-Latest verified local baseline for the v0.2.0 release candidate after spec pipeline implementation, real-wiki dry-run validation, semantic atom/lint/patch expansion, and release cleanup:
-
-```text
-commit: use `git log -1 --oneline` at audit time
-repo: https://github.com/jjuck/agent-context-substrate
-visibility: public
-project tests: 305 passed, 12 skipped
-fresh-install-smoke: ok=True retrieval_hit_count=1 expanded_content_length=14195 lint_issue_count=0
-real wiki lint: checked_pages=15 missing_provenance=0 orphan_pages=0 missing_from_index=0 broken_wikilinks=0
-live Codex runtime: plugin agent-context-substrate, Stop hook installed, watcher fallback available
-live Hermes runtime: plugin agent-context-substrate, context engine agent_context_substrate, gateway restarted
-```
-
-Refresh this section whenever a release candidate changes code, docs, installer behavior, or runtime configuration.
+- [ ] Review actual paths before any installer overwrite, `diagnose-codex --fix`, Windows bootstrap or gateway restart. These actions write files or interrupt runtime sessions.
+- [ ] Review/trust Codex hooks through `/hooks`; verify actual execution without a trust bypass. Confirm Hermes plugin enablement, context-engine selection and tool availability when Hermes is in scope.
+- [ ] If linting a real vault, set `WIKI_PATH` explicitly and run `lint-wiki --project-root '<PROJECT_ROOT>' --report-id release-check --fail-on-issues`; this reads the vault but writes reports under ACS `data/exports/lint/`.
+- [ ] Keep release notes accurate: separate fixture tests, wheel checks, isolated smoke, docs review and live runtime evidence. Include failures/skips and unresolved limitations; never carry forward old numerical baselines as current proof.

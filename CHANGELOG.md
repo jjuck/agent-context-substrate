@@ -2,6 +2,14 @@
 
 All notable changes to Agent Context Substrate are summarized here.
 
+## Unreleased
+
+### Documentation
+
+- Add a linked architecture preview to both READMEs and publish the standalone interactive diagram from `main` under `docs/site/`.
+- Consolidate installation, runtime, operations and release guidance; align command examples, hook trust, opt-in summary modes and wiki review behavior with source.
+- Remove superseded design and implementation plans from the current documentation; their history remains in Git.
+
 ## v0.2.0 - local release candidate
 
 ### Added
@@ -60,7 +68,9 @@ All notable changes to Agent Context Substrate are summarized here.
 - Semantic lint now flags duplicate active claims and stale claim atoms.
 - Wiki patch proposals include lifecycle metadata, and managed block conflicts are skipped with explicit reasons instead of being applied blindly.
 
-### Verified
+### Historical validation
+
+The following results were recorded for the local release candidate. They are not a current-checkout validation baseline.
 
 - Hardened retrieval expansion and wiki patch planning against forged path traversal inputs.
 - Project test suite: `277 passed`.

@@ -1,182 +1,151 @@
 # Windows Codex App Setup
 
-[한국어](./WINDOWS_CODEX_APP_SETUP.ko.md) · [README](../README.md) · [User Guide](./USER_GUIDE.en.md)
+[한국어](./WINDOWS_CODEX_APP_SETUP.ko.md) · [README](../README.md) · [User guide](./USER_GUIDE.en.md) · [Operations](./OPERATIONS.md)
 
-This guide is for Windows Codex app users who want Agent Context Substrate (ACS) installed from the GitHub repo. The target flow is simple: give a fresh Codex thread the repo URL and ask it to install ACS.
+Use this guide to install ACS, review hook trust, and diagnose local setup. ACS reads Codex session sources read-only and writes derived artifacts under its configured project root. Daily search, manual finalize, and optional wiki updates are in the [User guide](./USER_GUIDE.en.md); artifact behavior is in [Pipeline](./PIPELINE.md).
 
-ACS reads Codex session files **read-only** and writes ACS artifacts under the cloned project `data\...` directory. The LLM Wiki stays a human-facing Obsidian vault.
+## 1. Choose paths and scope
 
-## 1. Paths users should know
+| Item | Default / example |
+| --- | --- |
+| Codex home | `%USERPROFILE%\.codex` |
+| Codex metadata | `<CODEX_HOME>\state_5.sqlite` |
+| Codex rollouts | `<CODEX_HOME>\sessions\...\rollout-*.jsonl` |
+| ACS project root | Cloned `agent-context-substrate` checkout |
+| ACS artifacts | `<PROJECT_ROOT>\data\...` |
+| LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` |
+| Installed plugin | `<CODEX_HOME>\plugins\agent-context-substrate` |
+| User hook fallback | `<CODEX_HOME>\hooks.json` |
 
-| Item | Windows default example | Meaning |
-| --- | --- | --- |
-| Codex home | `%USERPROFILE%\.codex` | Local Codex settings and sessions |
-| Codex SQLite | `%USERPROFILE%\.codex\state_5.sqlite` | Thread metadata, read-only for ACS |
-| Codex rollout JSONL | `%USERPROFILE%\.codex\sessions\...\rollout-*.jsonl` | Thread event stream, read-only for ACS |
-| ACS project root | cloned `agent-context-substrate` folder | Code plus generated `data\...` artifacts |
-| ACS artifacts | `<PROJECT_ROOT>\data\...` | Raw exports, packets, recovery, ledger, retrieval index |
-| LLM Wiki root | `%USERPROFILE%\Documents\LLM Wiki` | Human-facing Obsidian wiki |
-| Codex plugin | `%USERPROFILE%\.codex\plugins\agent-context-substrate` | Installed ACS Codex plugin asset |
-| Codex user hook | `%USERPROFILE%\.codex\hooks.json` | Stop hook fallback registration |
+`project_root` is the ACS artifact scope and the Stop hook's `cwd` filter. The default checkout root does **not** automatically capture work in unrelated repositories. A Stop payload whose `cwd` is outside the configured root is skipped. Select the intended scope deliberately; manual finalize and watcher processing have different selection behavior.
 
-## 2. Prerequisites and automatic install scope
+Keep the ACS checkout and its `.venv` available: this is an editable install, and the installed hook references the configured Python/project paths. Moving or deleting them requires updating the configuration/install.
 
-Required tools are the Windows Codex app, Python 3.11+, Git, and PowerShell. Obsidian is optional for ACS execution, but recommended if the user wants to read and curate the LLM Wiki.
+## 2. Check prerequisites
 
-`scripts/setup-codex-windows.ps1` does not install system tools by default. If the user opts in, it can use these winget package IDs:
+Use Python 3.11+, Git, PowerShell, and a Codex runtime with local session files. Obsidian is optional. The bootstrap checks command availability; finding `py` or `python` alone does not establish the selected interpreter version or a working Codex GUI hook.
 
-| Tool | winget ID | Automatic install |
-| --- | --- | --- |
-| Python | `Python.Python.3.13` | With `-InstallMissingTools` |
-| Git | `Git.Git` | With `-InstallMissingTools` |
-| Obsidian | `Obsidian.Obsidian` | With `-InstallObsidian` |
-| Codex app/CLI | Separate install | Not installed automatically |
-| Hook trust | Review/trust in `/hooks` | Never bypassed automatically |
+| Tool | Bootstrap opt-in |
+| --- | --- |
+| Python | `-InstallMissingTools`, winget `Python.Python.3.13` |
+| Git | `-InstallMissingTools`, winget `Git.Git` |
+| Obsidian | `-InstallObsidian`, winget `Obsidian.Obsidian` |
+| Codex app/CLI | Install separately; bootstrap does not install it |
 
-## 3. Single PowerShell install
+After installing tools, a new terminal may be needed to refresh PATH. The script prefers `py -3` when creating `.venv`; check the resulting interpreter if multiple Python versions are present.
 
-Clone the repo and run one bootstrap script:
+## 3. Install from PowerShell
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
 cd agent-context-substrate
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
+```
+
+`-CheckOnly` exits before ACS setup. Run it **without** install switches for prerequisite inspection only: tool handling occurs before that exit, so combining it with install switches can install missing system tools.
+
+Install ACS with the displayed default paths:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 ```
 
-To let the script install missing tools:
+For another wiki or Codex home, supply `-WikiRoot` and `-CodexHome`; `-ProjectRoot` selects the ACS checkout used for editable installation and artifacts; it must contain the ACS package, so this bootstrap option cannot simply point to an unrelated repository to capture its sessions. To opt into installing missing tools:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
-To check prerequisites without installing:
+The script creates `.venv`, upgrades pip, installs ACS with `pip install -e .`, and runs `setup-codex --yes` with explicit paths. Setup initializes the wiki, installs plugin/config and user hook fallback, registers a personal marketplace/cache entry, and runs local diagnostics. `--yes` accepts setup choices; it does not grant hook trust.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -CheckOnly
-```
-
-The script creates `.venv`, runs `pip install -e .`, then runs:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe setup-codex --yes
-```
-
-## 4. Verify and inspect setup
-
-Health check:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe doctor-codex --fail-on-issues
-```
-
-User-facing paths:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe config-codex paths
-```
-
-Installed `local_config.json`:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe config-codex show
-```
-
-Diagnostics:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex
-```
-
-Safe local repair:
-
-```powershell
-.\.venv\Scripts\agent-context-substrate.exe diagnose-codex --fix
-```
-
-Interactive path review:
+For interactive path review after the CLI is available:
 
 ```powershell
 .\.venv\Scripts\agent-context-substrate.exe setup-codex-wizard
 ```
 
-`setup-codex-wizard` shows the Codex SQLite, rollout JSONL, LLM Wiki, and ACS artifact paths before installing.
+To preview ACS setup actions without writing setup files:
 
-## 5. Trust the hook once
+```powershell
+.\.venv\Scripts\agent-context-substrate.exe setup-codex --dry-run
+```
 
-The installer places the hook files, but Codex requires a user review before non-managed command hooks run. This is separate from Full Access or approval-mode settings.
+## 4. Inspect installation separately from runtime
 
-Open Codex CLI:
+Run from the ACS checkout:
+
+```powershell
+$AcsCli = '.\.venv\Scripts\agent-context-substrate.exe'
+$AcsRoot = (Resolve-Path -LiteralPath '.').Path
+$AcsWiki = "$env:USERPROFILE\Documents\LLM Wiki"
+$AcsCodex = "$env:USERPROFILE\.codex"
+& $AcsCli config-codex paths --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
+& $AcsCli config-codex show --codex-home $AcsCodex
+& $AcsCli doctor-codex --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki --fail-on-issues
+& $AcsCli diagnose-codex --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
+```
+
+Change these variables if you chose custom paths. `config-codex paths` displays paths calculated from arguments/defaults; `config-codex show` reads the installed `local_config.json`. Compare both rather than assuming displayed paths came from installed configuration.
+
+`doctor-codex` checks local files, configuration consistency, interpreter version, and data-directory writability. Required failures produce a nonzero exit with `--fail-on-issues`; warnings can coexist with `ok=True`. Its `hook_support` result reflects an ACS capability assumption, and `hook_primary_installed` checks hook files. Neither proves that Codex loaded, enabled, trusted, or executed the hook. Source metadata availability and runtime behavior need separate inspection.
+
+## 5. Enable and trust the hook
+
+ACS ships the default `hooks/hooks.json` under the plugin directory. Official [plugin packaging documentation](https://developers.openai.com/plugins/build/plugins) describes default hook discovery. Discovery and plugin installation/enabling do not grant trust to non-managed command hooks.
+
+Confirm the ACS plugin is enabled in your Codex runtime. For hook review, open Codex CLI and enter `/hooks` as described in the official [hooks documentation](https://developers.openai.com/docs/hooks):
 
 ```powershell
 codex
 ```
 
-Then enter:
-
 ```text
 /hooks
 ```
 
-Trust or allow the hook that mentions:
+Review the command/path associated with `agent-context-substrate`, `codex_stop_finalize.py`, and `Finalizing Codex thread into Agent Context Substrate`, then grant trust through the available review surface. Use your runtime's controls; this guide does not assert a tested GUI state or particular button label.
 
-```text
-agent-context-substrate
-codex_stop_finalize.py
-Finalizing Codex thread into Agent Context Substrate
-```
+Full Access, sandbox settings, and approval mode are separate from hook trust. Review may be required again when hook definitions or commands change, including after reinstall/repair. ACS setup does not bypass this step. If the runtime lacks a hook review surface or misses Stop events, use manual finalize or the watcher.
 
-Codex may require review again if the hook file or command changes. The installer does not auto-approve this trust step.
+To verify actual execution, observe a Stop event for a thread inside the configured scope and inspect its packet/recovery/ledger artifacts. Installed files or a healthy doctor report alone are insufficient evidence.
 
-## 6. Obsidian
+## 6. Manual finalize and watcher fallback
 
-ACS can create the `%USERPROFILE%\Documents\LLM Wiki` folder structure, but it does not automatically open or register the vault in Obsidian.
-
-If Obsidian is installed, open Obsidian, choose `Open folder as vault`, and select:
-
-```text
-%USERPROFILE%\Documents\LLM Wiki
-```
-
-The default automatic mode is `packet-only`: Codex thread finalization writes context packets, recovery, ledger, and retrieval artifacts under `<PROJECT_ROOT>\data\...` instead of flooding Obsidian with generated pages.
-
-## 7. Fallback verification
-
-If the hook has not been trusted yet, or if a Stop event is missed, `codex-watch` remains available as fallback.
+Inspect available threads, then finalize a chosen ID:
 
 ```powershell
-.\.venv\Scripts\agent-context-substrate.exe codex-watch `
-  --once `
-  --codex-home "$env:USERPROFILE\.codex" `
-  --project-root (Resolve-Path -LiteralPath ".").Path `
-  --wiki-root "$env:USERPROFILE\Documents\LLM Wiki" `
-  --idle-seconds 999999
+& $AcsCli codex-status --codex-home $AcsCodex
+& $AcsCli codex-finalize --thread-id '<THREAD_ID>' `
+  --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
 ```
 
-`processed=0` is fine. The command uses a large idle window to avoid unexpectedly processing old threads.
+Manual processing does not require hook trust. For a one-pass watcher run:
 
-## 8. Prompt for a fresh Codex install
-
-Paste this into a fresh Codex thread if you want Codex to install ACS from the GitHub repo.
-
-```text
-Install Agent Context Substrate for the Windows Codex app.
-
-Repo: https://github.com/jjuck/agent-context-substrate
-
-Requirements:
-- Use Windows PowerShell commands.
-- Tell me that Codex source data lives under %USERPROFILE%\.codex: state_5.sqlite plus sessions\...\rollout-*.jsonl.
-- Use %USERPROFILE%\Documents\LLM Wiki as the default LLM Wiki path, and confirm that path before installing.
-- Tell me that ACS artifacts are written under the cloned agent-context-substrate project data\... directory.
-- Use scripts/setup-codex-windows.ps1 as the default install path.
-- If tools are missing, mention Python.Python.3.13, Git.Git, and Obsidian.Obsidian winget package IDs, then ask before installing them.
-- After install, explain doctor-codex, config-codex paths, and diagnose-codex.
-- Do not bypass non-managed hook trust. After install, tell me to open /hooks in Codex CLI and trust the agent-context-substrate Stop hook.
+```powershell
+& $AcsCli codex-watch --once --idle-seconds 300 `
+  --codex-home $AcsCodex --project-root $AcsRoot --wiki-root $AcsWiki
 ```
 
-## 9. Common confusion
+`--once` writes artifacts for eligible idle threads; it is not a dry-run. The watcher scans the selected Codex home without the hook's project `cwd` filter, so older sessions from other projects may be exported into `$AcsRoot`. Raising `--idle-seconds` delays recently modified sessions but still permits older ones. `processed=0` means no eligible unprocessed threads were processed; it does not prove hook execution. Omit `--once` to keep polling; stop with Ctrl+C.
 
-- Full Access, approval mode, and sandbox settings are not the same as hook trust.
-- ACS does not modify Codex SQLite or rollout JSONL files.
-- `doctor-codex` checks setup health; `diagnose-codex --fix` repairs only safe ACS local files.
-- Obsidian is optional. ACS creates the LLM Wiki folder, but the user must open it as a vault in Obsidian.
+## 7. Diagnose, repair, and open the wiki
+
+| Symptom | Check / action |
+| --- | --- |
+| CLI executable missing | Inspect `.venv` Python and pip output; confirm Python 3.11+ |
+| Required doctor check fails | Read the named check and confirm explicit project/wiki/Codex paths |
+| Doctor is healthy but no automatic packet | Check plugin enablement, hook trust, Stop event delivery, and `cwd` scope |
+| Codex source files missing | Confirm the Codex home used by your runtime contains local sessions |
+| Hook stops after a move/update | Compare installed config, Python path, hook definitions, and trust |
+| Obsidian has no vault | Open the chosen wiki folder as a vault manually |
+
+For required setup failures, request local ACS repair with explicit paths:
+
+```powershell
+& $AcsCli diagnose-codex --fix --codex-home $AcsCodex `
+  --project-root $AcsRoot --wiki-root $AcsWiki
+```
+
+When required checks fail, repair reruns setup for the wiki skeleton, plugin/config, user hook, and marketplace assets. It does not fix every warning, install all missing tools, or grant trust. Review hook changes afterward.
+
+Open `<WIKI_ROOT>` in Obsidian with `Open folder as vault` if desired. Default `packet-only` stores session outputs in ACS `data/`, while reviewed wiki patches are optional. Treat source sessions, derived artifacts, local config, and provenance as private; inspect them before sharing.
