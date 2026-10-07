@@ -83,12 +83,14 @@ def test_codex_watcher_selects_idle_threads_once(tmp_path: Path) -> None:
         codex_home=codex_home,
         state=state,
         idle_seconds=0,
+        now=rollout_path.stat().st_mtime + 1,
     )
     state.mark_processed(due[0])
     second_due = discover_due_codex_threads(
         codex_home=codex_home,
         state=state,
         idle_seconds=0,
+        now=rollout_path.stat().st_mtime + 1,
     )
 
     assert [thread.thread_id for thread in due] == ["thread-1"]
@@ -102,7 +104,11 @@ def test_codex_watcher_state_can_record_discovery_fingerprint(tmp_path: Path) ->
     rollout_path = codex_home / "sessions" / "rollout-thread-1.jsonl"
     _write_codex_thread(codex_home, thread_id="thread-1", rollout_path=rollout_path)
     state = CodexWatcherState(project_root / "data" / "index" / "codex_watcher_state.json")
-    thread = discover_due_codex_threads(codex_home=codex_home, state=state, idle_seconds=0)[0]
+    # File timestamps and wall-clock reads can straddle Windows clock ticks.
+    thread = discover_due_codex_threads(
+        codex_home=codex_home, state=state, idle_seconds=0,
+        now=rollout_path.stat().st_mtime + 1,
+    )[0]
     fingerprint = thread.fingerprint
     rollout_path.write_text(rollout_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
 

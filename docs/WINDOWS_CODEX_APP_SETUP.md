@@ -15,7 +15,7 @@ Use this guide to install ACS, review hook trust, and diagnose local setup. ACS 
 | ACS artifacts | `<PROJECT_ROOT>\data\...` |
 | LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` |
 | Installed plugin | `<CODEX_HOME>\plugins\agent-context-substrate` |
-| User hook fallback | `<CODEX_HOME>\hooks.json` |
+| User hook (setup default) | `<CODEX_HOME>\hooks.json` |
 
 `project_root` is the ACS artifact scope and the Stop hook's `cwd` filter. The default checkout root does **not** automatically capture work in unrelated repositories. A Stop payload whose `cwd` is outside the configured root is skipped. Select the intended scope deliberately; manual finalize and watcher processing have different selection behavior.
 
@@ -35,6 +35,8 @@ Use Python 3.11+, Git, PowerShell, and a Codex runtime with local session files.
 After installing tools, a new terminal may be needed to refresh PATH. The script prefers `py -3` when creating `.venv`; check the resulting interpreter if multiple Python versions are present.
 
 ## 3. Install from PowerShell
+
+Use the repository's [setup script](../scripts/setup-codex-windows.ps1):
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
@@ -56,7 +58,13 @@ For another wiki or Codex home, supply `-WikiRoot` and `-CodexHome`; `-ProjectRo
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
-The script creates `.venv`, upgrades pip, installs ACS with `pip install -e .`, and runs `setup-codex --yes` with explicit paths. Setup initializes the wiki, installs plugin/config and user hook fallback, registers a personal marketplace/cache entry, and runs local diagnostics. `--yes` accepts setup choices; it does not grant hook trust.
+The script creates `.venv`, upgrades pip, installs ACS with `pip install -e .`, and runs `setup-codex --yes` with explicit paths. Setup initializes the wiki, installs plugin/config and a user hook, registers a personal marketplace/cache entry, and runs local diagnostics. `--yes` accepts setup choices; it does not grant hook trust.
+
+Starting with 0.2.1, installation selects one Stop trigger. `setup-codex` defaults to the user hook and disables the bundled hook in installed copies. Direct `install-codex-plugin` uses the bundled hook unless `--install-user-hook` is supplied; switching back removes only ACS handlers from user hooks. Other handlers are preserved. The watcher remains a separately started fallback.
+
+The Windows bundled command reads `PLUGIN_ROOT` inside Python instead of using shell-specific `%PLUGIN_ROOT%` expansion. Marketplace caches use the manifest version; older cached versions remain available to running hosts. After reinstalling, refresh/reinstall the personal plugin in Codex and inspect the loaded version and hooks before removing any old cache.
+
+For direct reinstallation of an existing personal-marketplace setup, always repeat `--personal-marketplace-root '<MARKETPLACE_ROOT>'`. The installer rejects an omitted root before changing files, so a mode switch cannot disable the user hook while leaving the registered plugin copy stale. `setup-codex` supplies its selected marketplace root automatically.
 
 For interactive path review after the CLI is available:
 
@@ -107,7 +115,7 @@ Review the command/path associated with `agent-context-substrate`, `codex_stop_f
 
 Full Access, sandbox settings, and approval mode are separate from hook trust. Review may be required again when hook definitions or commands change, including after reinstall/repair. ACS setup does not bypass this step. If the runtime lacks a hook review surface or misses Stop events, use manual finalize or the watcher.
 
-To verify actual execution, observe a Stop event for a thread inside the configured scope and inspect its packet/recovery/ledger artifacts. Installed files or a healthy doctor report alone are insufficient evidence.
+To verify actual execution, observe a Stop event for a thread inside the configured scope and inspect its packet/recovery/ledger artifacts. Installed files or a healthy doctor report alone are insufficient evidence. In `data/index/codex_hook_events.jsonl`, `finalized` means processing finished, while `skipped` means no processing occurred. Events include the plugin root, script path and launcher Python to distinguish installations. An outside-scope skip can appear as a successful hook run in Codex.
 
 ## 6. Manual finalize and watcher fallback
 

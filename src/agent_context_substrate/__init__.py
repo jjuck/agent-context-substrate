@@ -311,4 +311,4 @@ __all__ = [
     "export_session_bundle",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

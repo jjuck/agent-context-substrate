@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hooks/codex_stop_finalize.py\"",
-            "commandWindows": "python \"%PLUGIN_ROOT%\\hooks\\codex_stop_finalize.py\"",
+            "commandWindows": "python -c \"import os, runpy; runpy.run_path(os.path.join(os.environ['PLUGIN_ROOT'], 'hooks', 'codex_stop_finalize.py'), run_name='__main__')\"",
             "timeout": 120,
             "statusMessage": "Finalizing Codex thread into Agent Context Substrate"
           }

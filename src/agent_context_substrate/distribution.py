@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 
 PERSONAL_PATH_PATTERNS = (
     re.compile(r"/mnt/[a-z]/Users/[^/\s'\"]+"),
@@ -72,14 +73,24 @@ def _copy_resource_tree(source, destination: Path) -> None:
             target.write_bytes(child.read_bytes())
 
 
-def _backup_existing(path: Path, *, backup_parent: Path | None = None) -> Path | None:
-    if not path.exists():
-        return None
+def _unique_backup_path(path: Path, *, backup_parent: Path | None = None) -> Path:
     if backup_parent is None:
         backup_path = path.with_name(f"{path.name}.bak-{_timestamp()}")
     else:
         backup_parent.mkdir(parents=True, exist_ok=True)
         backup_path = backup_parent / f"{path.name}.bak-{_timestamp()}"
+    candidate = backup_path
+    suffix = 1
+    while candidate.exists():
+        candidate = backup_path.with_name(f"{backup_path.name}-{suffix}")
+        suffix += 1
+    return candidate
+
+
+def _backup_existing(path: Path, *, backup_parent: Path | None = None) -> Path | None:
+    if not path.exists():
+        return None
+    backup_path = _unique_backup_path(path, backup_parent=backup_parent)
     shutil.copytree(path, backup_path)
     return backup_path
 
@@ -241,7 +252,13 @@ def _install_codex_personal_marketplace(
     marketplace_path = marketplace_root / ".agents" / "plugins" / "marketplace.json"
     marketplace_plugin_dir = marketplace_root / "plugins" / plugin_name
     codex_cache_plugin_parent = codex_home / "plugins" / "cache" / "personal" / plugin_name
-    codex_cache_plugin_dir = codex_cache_plugin_parent / "local"
+    manifest = json.loads((source_plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8-sig"))
+    version = manifest.get("version")
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
+        raise ValueError("Codex plugin manifest must contain a safe version directory name")
+    codex_cache_plugin_dir = codex_cache_plugin_parent / version
+    if codex_cache_plugin_dir.resolve().parent != codex_cache_plugin_parent.resolve():
+        raise ValueError("Codex plugin cache target must stay inside its cache parent")
     marketplace_plugin_dir.parent.mkdir(parents=True, exist_ok=True)
     if marketplace_plugin_dir.exists():
         shutil.rmtree(marketplace_plugin_dir)
@@ -265,18 +282,30 @@ def _install_codex_personal_marketplace(
     marketplace_path.write_text(json.dumps(marketplace, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     codex_cache_plugin_parent.mkdir(parents=True, exist_ok=True)
-    for child in codex_cache_plugin_parent.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-    shutil.copytree(source_plugin_dir, codex_cache_plugin_dir)
+    cache_backup_parent = codex_home / "_backups" / "plugins" / "cache" / "personal" / plugin_name
+    cache_backup_parent.mkdir(parents=True, exist_ok=True)
+    cache_backup_path = None
+    with tempfile.TemporaryDirectory(prefix="acs-cache-", dir=cache_backup_parent) as staging_dir:
+        staged_plugin = Path(staging_dir) / version
+        shutil.copytree(source_plugin_dir, staged_plugin)
+        if codex_cache_plugin_dir.exists():
+            cache_backup_path = _unique_backup_path(codex_cache_plugin_dir, backup_parent=cache_backup_parent)
+            codex_cache_plugin_dir.rename(cache_backup_path)
+        try:
+            staged_plugin.rename(codex_cache_plugin_dir)
+        except OSError:
+            if cache_backup_path is not None:
+                cache_backup_path.rename(codex_cache_plugin_dir)
+            raise
 
-    return {
+    paths = {
         "personal_marketplace_path": marketplace_path,
         "personal_marketplace_plugin_dir": marketplace_plugin_dir,
         "codex_plugin_cache_dir": codex_cache_plugin_dir,
     }
+    if cache_backup_path is not None:
+        paths["codex_plugin_cache_backup_path"] = cache_backup_path
+    return paths
 
 
 def _codex_user_stop_hook_group(*, plugin_dir: Path) -> dict[str, object]:
@@ -294,40 +323,113 @@ def _codex_user_stop_hook_group(*, plugin_dir: Path) -> dict[str, object]:
     }
 
 
-def _is_acs_codex_stop_hook_group(group: object) -> bool:
-    if not isinstance(group, dict):
+def _is_acs_codex_stop_hook_handler(handler: object) -> bool:
+    if not isinstance(handler, dict):
         return False
-    handlers = group.get("hooks")
-    if not isinstance(handlers, list):
-        return False
-    for handler in handlers:
-        if not isinstance(handler, dict):
+    command = str(handler.get("command") or "")
+    command_windows = str(handler.get("commandWindows") or handler.get("command_windows") or "")
+    command_text = f"{command} {command_windows}"
+    return "agent-context-substrate" in command_text and "codex_stop_finalize.py" in command_text
+
+
+_CODEX_HOOK_SCRIPT_PATTERN = re.compile(
+    r'''"(?P<double>[^"\n]*codex_stop_finalize\.py)"|'''
+    r"'(?P<single>[^'\n]*codex_stop_finalize\.py)'|"
+    r'''(?P<bare>[^\s"'()]+codex_stop_finalize\.py)(?=$|[\s"'();])'''
+)
+_CODEX_COMMAND_FIELDS = ("command", "commandWindows", "command_windows")
+
+
+def _codex_hook_targets_current_script(handler: dict[str, object], *, hook_script: Path) -> bool:
+    expected = hook_script.resolve()
+    for command_field in _CODEX_COMMAND_FIELDS:
+        command = handler.get(command_field)
+        if not command:
             continue
-        command = str(handler.get("command") or "")
-        command_windows = str(handler.get("commandWindows") or handler.get("command_windows") or "")
-        if "agent-context-substrate" in f"{command} {command_windows}" and "codex_stop_finalize.py" in f"{command} {command_windows}":
-            return True
-    return False
+        matches = list(_CODEX_HOOK_SCRIPT_PATTERN.finditer(str(command)))
+        if not matches or any(Path(match.group(match.lastgroup)).expanduser().resolve() != expected for match in matches):
+            return False
+    return True
 
 
-def _install_codex_user_stop_hook(*, codex_home: Path, plugin_dir: Path) -> Path:
+def _repair_codex_hook_script_paths(handler: dict[str, object], *, hook_script: Path) -> dict[str, object]:
+    repaired = dict(handler)
+    for command_field in _CODEX_COMMAND_FIELDS:
+        command = handler.get(command_field)
+        if not command:
+            continue
+        command = str(command)
+        target = hook_script.as_posix() if command_field == "command" else str(hook_script)
+        matches = list(_CODEX_HOOK_SCRIPT_PATTERN.finditer(command))
+        if not matches:
+            raise ValueError("Cannot safely repair ACS user hook script path; review its command manually")
+        for match in reversed(matches):
+            if match.lastgroup == "bare" and re.search(r'''[\s&;|<>^%$`"'()\[\]{}*?!#,]''', target):
+                raise ValueError("Cannot safely repair bare ACS user hook path; quote its script path before reinstall")
+            start, end = match.span(match.lastgroup)
+            command = command[:start] + target + command[end:]
+        repaired[command_field] = command
+    return repaired
+
+
+def _install_codex_user_stop_hook(*, codex_home: Path, plugin_dir: Path, enabled: bool = True) -> Path | None:
     hooks_path = codex_home / "hooks.json"
     if hooks_path.exists():
         payload = json.loads(hooks_path.read_text(encoding="utf-8-sig"))
         if not isinstance(payload, dict):
             raise ValueError(f"{hooks_path} must contain a JSON object")
     else:
+        if not enabled:
+            return None
         payload = {}
 
     hooks = payload.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError(f"{hooks_path} field 'hooks' must be an object")
+    if not enabled and "Stop" not in hooks:
+        return None
     stop_groups = hooks.setdefault("Stop", [])
     if not isinstance(stop_groups, list):
         raise ValueError(f"{hooks_path} field 'hooks.Stop' must be an array")
 
-    stop_groups[:] = [group for group in stop_groups if not _is_acs_codex_stop_hook_group(group)]
-    stop_groups.append(_codex_user_stop_hook_group(plugin_dir=plugin_dir))
+    retained_acs_handler = False
+    changed = False
+    expected_group = _codex_user_stop_hook_group(plugin_dir=plugin_dir)
+    hook_script = plugin_dir / "hooks" / "codex_stop_finalize.py"
+    candidates = [
+        (group_index, handler_index, handler)
+        for group_index, group in enumerate(stop_groups)
+        if isinstance(group, dict) and isinstance(group.get("hooks"), list)
+        for handler_index, handler in enumerate(group["hooks"])
+        if _is_acs_codex_stop_hook_handler(handler)
+    ]
+    selected = None
+    if enabled:
+        selected = next(
+            (candidate for candidate in candidates
+             if _codex_hook_targets_current_script(candidate[2], hook_script=hook_script)),
+            candidates[0] if candidates else None,
+        )
+    for group_index, group in enumerate(stop_groups):
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            continue
+        handlers = []
+        for handler_index, handler in enumerate(group["hooks"]):
+            if _is_acs_codex_stop_hook_handler(handler):
+                if selected is None or (group_index, handler_index) != selected[:2]:
+                    changed = True
+                    continue
+                retained_acs_handler = True
+                if not _codex_hook_targets_current_script(handler, hook_script=hook_script):
+                    handler = _repair_codex_hook_script_paths(handler, hook_script=hook_script)
+                    changed = True
+            handlers.append(handler)
+        group["hooks"] = handlers
+    if enabled and not retained_acs_handler:
+        stop_groups.append(expected_group)
+        changed = True
+    if not changed:
+        return hooks_path if enabled else None
     hooks_path.parent.mkdir(parents=True, exist_ok=True)
     hooks_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return hooks_path
@@ -378,6 +480,9 @@ def install_codex_plugin(
     project_root = Path(project_root).expanduser()
     wiki_root = Path(wiki_root).expanduser()
     plugin_dir = codex_home / "plugins" / "agent-context-substrate"
+    personal_cache = codex_home / "plugins" / "cache" / "personal" / "agent-context-substrate"
+    if personal_marketplace_root is None and personal_cache.exists():
+        raise ValueError("Existing ACS personal cache requires an explicit --personal-marketplace-root before reinstall")
     if plugin_dir.exists() and not overwrite:
         return InstallResult(
             status="skipped",
@@ -395,6 +500,8 @@ def install_codex_plugin(
         wiki_root=wiki_root,
         codex_home=codex_home,
     )
+    if install_user_hook:
+        (plugin_dir / "hooks" / "hooks.json").write_text('{"hooks": {}}\n', encoding="utf-8")
 
     paths = {"plugin_dir": plugin_dir, "local_config_path": local_config_path}
     if backup_path:
@@ -413,9 +520,15 @@ def install_codex_plugin(
         ]
     else:
         messages = ["codex plugin installed; Stop hook is primary and codex-watch remains fallback"]
+    user_hooks_path = _install_codex_user_stop_hook(
+        codex_home=codex_home, plugin_dir=plugin_dir, enabled=install_user_hook
+    )
+    if user_hooks_path is not None:
+        paths["codex_user_hooks_path"] = user_hooks_path
     if install_user_hook:
-        paths["codex_user_hooks_path"] = _install_codex_user_stop_hook(codex_home=codex_home, plugin_dir=plugin_dir)
-        messages.append("Codex user hooks.json Stop hook installed for non-plugin hook fallback")
+        messages.append("Codex user Stop hook selected; installed bundled hooks are disabled")
+    else:
+        messages.append("Bundled Codex Stop hook selected; matching ACS user handlers are removed")
     return InstallResult(
         status="installed",
         paths=paths,

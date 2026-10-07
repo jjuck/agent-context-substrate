@@ -6,6 +6,9 @@ import json
 import os
 import subprocess
 import sys
+import shutil
+
+import pytest
 
 from agent_context_substrate.codex_hook import (
     CodexHookCommandRunnerResult,
@@ -17,13 +20,8 @@ from agent_context_substrate.codex_hook import (
 def _write_plugin_config(plugin_root: Path, *, project_root: Path, wiki_root: Path, codex_home: Path) -> None:
     plugin_root.mkdir(parents=True, exist_ok=True)
     (plugin_root / "local_config.json").write_text(
-        (
-            "{"
-            f'"project_root": {str(project_root)!r}, '
-            f'"wiki_root": {str(wiki_root)!r}, '
-            f'"codex_home": {str(codex_home)!r}'
-            "}"
-        ).replace("'", '"'),
+        json.dumps({"project_root": str(project_root), "wiki_root": str(wiki_root),
+                    "codex_home": str(codex_home)}),
         encoding="utf-8",
     )
 
@@ -211,3 +209,67 @@ def test_packaged_stop_hook_script_accepts_utf8_stdin_on_windows_paths(tmp_path:
     assert state["thread-utf8"]["rollout_path"] == str(rollout_path)
     assert events[-1]["status"] == "finalized"
     assert events[-1]["session_id"] == "thread-utf8"
+    assert events[-1]["plugin_root"] == str(plugin_root)
+    assert Path(events[-1]["script_path"]).name == "codex_stop_finalize.py"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows commandWindows launcher regression")
+@pytest.mark.parametrize("shell", ["powershell.exe", "cmd.exe"])
+def test_packaged_windows_command_launches_from_unrelated_cwd(tmp_path: Path, shell: str) -> None:
+    """Exercise the shipped command, including shell parsing and plugin-root lookup."""
+    asset = files("agent_context_substrate") / "assets/codex_plugin/agent-context-substrate"
+    plugin_root = tmp_path / "plugin 한글 & apostrophe's $root %value%"
+    (plugin_root / "hooks").mkdir(parents=True)
+    shutil.copyfile(asset / "hooks/codex_stop_finalize.py", plugin_root / "hooks/codex_stop_finalize.py")
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    cwd = tmp_path / "unrelated"
+    cwd.mkdir()
+    (plugin_root / "local_config.json").write_text(json.dumps({
+        "project_root": str(project_root), "wiki_root": str(tmp_path / "wiki")
+    }), encoding="utf-8")
+    command = json.loads((asset / "hooks/hooks.json").read_text(encoding="utf-8"))["hooks"]["Stop"][0]["hooks"][0]["commandWindows"]
+    env = {**os.environ, "PLUGIN_ROOT": str(plugin_root),
+           "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")}
+    if shell == "cmd.exe":
+        # cmd /s /c needs an intact command line; list2cmdline would escape its inner quotes.
+        argv = subprocess.list2cmdline([shutil.which(shell), "/d", "/s", "/c"]) + ' "' + command + '"'
+    else:
+        argv = [shell, "-NoProfile", "-NonInteractive", "-Command", command]
+    completed = subprocess.run(argv, input=json.dumps({
+        "hook_event_name": "Stop", "session_id": "launcher-check", "cwd": str(cwd)
+    }).encode(), cwd=cwd, env=env, capture_output=True, timeout=20, check=False)
+    assert completed.returncode == 0, completed.stderr.decode("utf-8", errors="replace")
+    assert json.loads(completed.stdout) == {"continue": True}
+    event = json.loads((project_root / "data/index/codex_hook_events.jsonl").read_text(encoding="utf-8"))
+    assert event["status"] == "skipped"
+    assert event["detail"] == "cwd outside configured project_root"
+    assert event["plugin_root"] == str(plugin_root)
+
+
+def test_packaged_hook_failure_is_ascii_json_with_utf8_child_output(tmp_path: Path) -> None:
+    asset = files("agent_context_substrate") / "assets/codex_plugin/agent-context-substrate"
+    plugin_root = tmp_path / "plugin"
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    plugin_root.mkdir()
+    # A failing CLI fixture proves stderr survives Windows code pages and produces valid JSON.
+    module = tmp_path / "module/agent_context_substrate"
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text("", encoding="utf-8")
+    (module / "cli.py").write_text("import sys\nprint('실패: 경로 확인', file=sys.stderr)\nsys.exit(7)\n", encoding="utf-8")
+    (plugin_root / "local_config.json").write_text(json.dumps({
+        "project_root": str(project_root), "wiki_root": str(tmp_path / "wiki"),
+        "python_executable": sys.executable, "python_path_entries": [str(module.parent)]
+    }), encoding="utf-8")
+    completed = subprocess.run([sys.executable, str(asset / "hooks/codex_stop_finalize.py")],
+        input=json.dumps({"hook_event_name": "Stop", "session_id": "failure-check", "cwd": str(project_root)}).encode(),
+        env={**os.environ, "PLUGIN_ROOT": str(plugin_root), "PYTHONIOENCODING": "ascii"},
+        capture_output=True, timeout=20, check=False)
+    assert completed.returncode == 0
+    output = json.loads(completed.stdout.decode("ascii"))
+    assert output["continue"] is True
+    assert "실패: 경로 확인" in output["systemMessage"]
+    event = json.loads((project_root / "data/index/codex_hook_events.jsonl").read_text(encoding="utf-8"))
+    assert event["status"] == "failed"
+    assert "실패: 경로 확인" in event["detail"]

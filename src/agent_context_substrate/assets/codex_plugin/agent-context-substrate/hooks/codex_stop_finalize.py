@@ -18,7 +18,8 @@ def main() -> int:
         output = run(payload)
     except Exception as exc:
         output = _failure(f"ACS Codex finalize hook failed: {exc}")
-    print(json.dumps(output, ensure_ascii=False))
+    # ASCII JSON stays valid UTF-8 even when the Windows console uses a legacy code page.
+    print(json.dumps(output, ensure_ascii=True))
     return 0
 
 
@@ -69,6 +70,8 @@ def run(payload: dict[str, object]) -> dict[str, object]:
             cwd=str(project_root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=_subprocess_env(config, project_root=project_root),
             timeout=_timeout_seconds(config),
             check=False,
@@ -126,6 +129,8 @@ def _timeout_seconds(config: dict[str, object]) -> int:
 
 def _subprocess_env(config: dict[str, object], *, project_root: Path) -> dict[str, str]:
     env = dict(os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     entries: list[str] = []
     configured_entries = config.get("python_path_entries")
     if isinstance(configured_entries, list):
@@ -164,6 +169,9 @@ def _append_hook_event(
             "session_id": str(payload.get("session_id") or ""),
             "turn_id": str(payload.get("turn_id") or ""),
             "cwd": str(payload.get("cwd") or ""),
+            "plugin_root": str(_plugin_root()),
+            "script_path": str(Path(__file__).resolve()),
+            "launcher_python": sys.executable,
         }
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as handle:

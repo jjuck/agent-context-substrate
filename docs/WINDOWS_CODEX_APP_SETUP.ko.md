@@ -15,7 +15,7 @@
 | ACS artifact | `<PROJECT_ROOT>\data\...` |
 | LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` |
 | 설치된 plugin | `<CODEX_HOME>\plugins\agent-context-substrate` |
-| User hook fallback | `<CODEX_HOME>\hooks.json` |
+| User hook (setup 기본값) | `<CODEX_HOME>\hooks.json` |
 
 `project_root`는 ACS artifact 범위이자 Stop hook의 `cwd` 필터입니다. 기본 checkout root가 **다른 repository의 작업까지 자동 수집하지는 않습니다**. Stop payload의 `cwd`가 설정된 root 밖이면 건너뜁니다. 의도한 범위를 선택하세요. 수동 finalize와 watcher의 세션 선택 방식은 다릅니다.
 
@@ -35,6 +35,8 @@ Python 3.11+, Git, PowerShell, 로컬 세션 파일을 제공하는 Codex runtim
 도구 설치 후 PATH 갱신을 위해 새 terminal이 필요할 수 있습니다. Script는 `.venv`를 만들 때 `py -3`를 우선 사용합니다. Python이 여러 버전이면 생성된 interpreter를 확인하세요.
 
 ## 3. PowerShell에서 설치
+
+저장소의 [설치 스크립트](../scripts/setup-codex-windows.ps1)를 실행합니다.
 
 ```powershell
 git clone https://github.com/jjuck/agent-context-substrate.git agent-context-substrate
@@ -56,7 +58,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
-Script는 `.venv` 생성, pip 갱신, `pip install -e .`로 ACS 설치 후 명시한 경로로 `setup-codex --yes`를 실행합니다. Setup은 wiki 초기화, plugin/config와 user hook fallback 설치, 개인 marketplace/cache 등록, 로컬 진단을 수행합니다. `--yes`는 setup 선택을 수락하며 hook 신뢰를 부여하지 않습니다.
+Script는 `.venv` 생성, pip 갱신, `pip install -e .`로 ACS 설치 후 명시한 경로로 `setup-codex --yes`를 실행합니다. Setup은 wiki 초기화, plugin/config와 user hook 설치, 개인 marketplace/cache 등록, 로컬 진단을 수행합니다. `--yes`는 setup 선택을 수락하며 hook 신뢰를 부여하지 않습니다.
+
+0.2.1부터 Stop 실행 경로는 하나만 설치합니다. `setup-codex` 기본값은 user hook이며 설치본의 bundled hook을 비웁니다. `install-codex-plugin` 직접 실행은 bundled hook을 사용하고, `--install-user-hook`을 지정하면 user hook으로 전환합니다. Bundled 방식으로 되돌릴 때는 user hook에서 ACS handler만 제거하고 다른 handler는 보존합니다. Watcher는 별도로 시작하는 fallback입니다.
+
+Windows bundled 명령은 shell별 `%PLUGIN_ROOT%` 확장 대신 Python에서 환경변수를 읽습니다. Marketplace cache는 manifest 버전 경로를 사용하며 실행 중인 host가 참조할 수 있는 이전 cache를 보존합니다. 재설치 후 Codex에서 개인 plugin을 갱신/재설치하고, 실제 로드된 버전과 hook을 확인한 다음 이전 cache 정리를 판단하세요.
+
+기존 개인 marketplace 설치를 직접 재설치할 때는 `--personal-marketplace-root '<MARKETPLACE_ROOT>'`를 다시 지정하세요. 누락하면 파일을 변경하기 전에 거부하므로, 등록된 plugin 복사본은 그대로인데 user hook만 꺼지는 상태를 방지합니다. `setup-codex`는 선택한 marketplace root를 자동 전달합니다.
 
 CLI가 준비된 뒤 경로를 대화형으로 검토하려면:
 
@@ -107,7 +115,7 @@ codex
 
 Full Access, sandbox 설정, approval mode는 hook 신뢰와 별개입니다. 재설치/복구를 포함해 hook 정의나 명령이 바뀌면 다시 검토해야 할 수 있습니다. ACS setup은 이 단계를 우회하지 않습니다. Runtime에 hook 검토 화면이 없거나 Stop event를 놓치면 수동 finalize나 watcher를 사용하세요.
 
-실제 실행을 검증하려면 설정된 범위 안의 thread에서 Stop event가 발생한 뒤 해당 packet/recovery/ledger artifact를 확인하세요. 설치된 파일이나 정상 doctor report만으로는 충분하지 않습니다.
+실제 실행을 검증하려면 설정된 범위 안의 thread에서 Stop event가 발생한 뒤 해당 packet/recovery/ledger artifact를 확인하세요. 설치된 파일이나 정상 doctor report만으로는 충분하지 않습니다. `data/index/codex_hook_events.jsonl`에서 `finalized`는 처리 완료, `skipped`는 미처리를 뜻합니다. 설치본을 구분할 수 있도록 plugin root, script path, 실행 Python도 기록합니다. 범위 밖이라 건너뛴 경우에도 Codex 화면에는 hook 성공으로 표시될 수 있습니다.
 
 ## 6. 수동 finalize 및 watcher fallback
 

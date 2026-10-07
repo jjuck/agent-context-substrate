@@ -4,6 +4,16 @@ All notable changes to Agent Context Substrate are summarized here.
 
 ## Unreleased
 
+## v0.2.1
+
+### Fixed
+
+- Read the Windows plugin root inside Python so bundled Stop hooks also launch from PowerShell sessions and paths containing shell metacharacters.
+- Select one Stop trigger during installation; user-hook mode disables bundled registration, while plugin mode removes only ACS user handlers and preserves unrelated hooks.
+- Keep older versioned plugin caches available to running hosts during reinstall.
+- Record hook installation paths and launcher Python; preserve Unicode CLI errors as valid JSON on Windows.
+- Add shell-level Windows launcher, installation mode-switching and mixed-handler regression coverage.
+
 ### Documentation
 
 - Add a linked architecture preview to both READMEs and publish the standalone interactive diagram from `main` under `docs/site/`.

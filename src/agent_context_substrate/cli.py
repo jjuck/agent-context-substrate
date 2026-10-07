@@ -470,7 +470,7 @@ def build_parser() -> argparse.ArgumentParser:
     install_codex_plugin.add_argument(
         "--install-user-hook",
         action="store_true",
-        help="Also register the Stop hook in ~/.codex/hooks.json for non-plugin hook fallback",
+        help="Use the user Stop hook instead of the bundled plugin hook (one active trigger)",
     )
     install_codex_plugin.add_argument("--overwrite", action="store_true", help="Backup and replace an existing plugin install")
 

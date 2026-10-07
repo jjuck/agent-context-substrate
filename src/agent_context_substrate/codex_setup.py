@@ -419,7 +419,7 @@ def _diagnostic_actions(report: CodexDoctorReport) -> list[str]:
     if checks.get("codex_plugin_installed") == STATUS_MISSING or checks.get("codex_local_config_exists") == STATUS_MISSING:
         actions.append("run setup-codex to reinstall the Codex plugin and local_config.json")
     if checks.get("codex_user_hook_installed") == STATUS_WARN:
-        actions.append("run setup-codex with user hook enabled to register ~/.codex/hooks.json fallback")
+        actions.append("if using user-hook mode, run setup-codex to register its single Stop trigger")
     if checks.get("codex_state_sqlite_exists") == STATUS_WARN:
         actions.append("start Codex once so %USERPROFILE%\\.codex\\state_5.sqlite exists")
     if checks.get("codex_rollout_jsonl_exists") == STATUS_WARN:
