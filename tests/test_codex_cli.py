@@ -3,7 +3,34 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from agent_context_substrate import cli
+
+
+@pytest.mark.parametrize("hook_args, user_hook", [([], False), (["--no-user-hook"], False), (["--install-user-hook"], True)])
+def test_setup_codex_cli_selects_hook_mode(tmp_path: Path, capsys, hook_args: list[str], user_hook: bool) -> None:
+    codex_home = tmp_path / "codex"
+    exit_code = cli.main([
+        "setup-codex", "--codex-home", str(codex_home),
+        "--project-root", str(tmp_path / "project"), "--wiki-root", str(tmp_path / "wiki"),
+        "--no-marketplace", "--json", *hook_args,
+    ])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert (codex_home / "hooks.json").exists() is user_hook
+    bundled_hooks = codex_home / "plugins" / "agent-context-substrate" / "hooks" / "hooks.json"
+    assert bool(json.loads(bundled_hooks.read_text(encoding="utf-8"))["hooks"].get("Stop")) is not user_hook
+    assert payload["doctor_report"]["checks"]["codex_user_hook_installed"] == ("ok" if user_hook else "not-required")
+
+
+def test_setup_codex_cli_rejects_conflicting_hook_options() -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.build_parser().parse_args([
+            "setup-codex", "--project-root", "C:/project", "--install-user-hook", "--no-user-hook",
+        ])
+    assert error.value.code == 2
 
 
 def test_codex_commands_are_registered() -> None:

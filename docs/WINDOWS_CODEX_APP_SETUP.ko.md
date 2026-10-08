@@ -15,7 +15,7 @@
 | ACS artifact | `<PROJECT_ROOT>\data\...` |
 | LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` |
 | 설치된 plugin | `<CODEX_HOME>\plugins\agent-context-substrate` |
-| User hook (setup 기본값) | `<CODEX_HOME>\hooks.json` |
+| User hook (명시적 선택) | `<CODEX_HOME>\hooks.json` |
 
 `project_root`는 ACS artifact 범위이자 Stop hook의 `cwd` 필터입니다. 기본 checkout root가 **다른 repository의 작업까지 자동 수집하지는 않습니다**. Stop payload의 `cwd`가 설정된 root 밖이면 건너뜁니다. 의도한 범위를 선택하세요. 수동 finalize와 watcher의 세션 선택 방식은 다릅니다.
 
@@ -58,9 +58,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
-Script는 `.venv` 생성, pip 갱신, `pip install -e .`로 ACS 설치 후 명시한 경로로 `setup-codex --yes`를 실행합니다. Setup은 wiki 초기화, plugin/config와 user hook 설치, 개인 marketplace/cache 등록, 로컬 진단을 수행합니다. `--yes`는 setup 선택을 수락하며 hook 신뢰를 부여하지 않습니다.
+Script는 `.venv` 생성, pip 갱신, `pip install -e .`로 ACS 설치 후 명시한 경로로 `setup-codex --yes`를 실행합니다. Setup은 wiki 초기화, bundled hook이 포함된 plugin/config 설치, 개인 marketplace/cache 등록, 로컬 진단을 수행합니다. `--yes`는 setup 선택을 수락하며 hook 신뢰를 부여하지 않습니다.
 
-0.2.1부터 Stop 실행 경로는 하나만 설치합니다. `setup-codex` 기본값은 user hook이며 설치본의 bundled hook을 비웁니다. `install-codex-plugin` 직접 실행은 bundled hook을 사용하고, `--install-user-hook`을 지정하면 user hook으로 전환합니다. Bundled 방식으로 되돌릴 때는 user hook에서 ACS handler만 제거하고 다른 handler는 보존합니다. Watcher는 별도로 시작하는 fallback입니다.
+0.2.2에서는 Stop 실행 경로를 하나만 설치합니다. `setup-codex`, wizard, 진단 복구의 기본값은 bundled plugin hook이며 전역 ACS user hook을 추가하지 않습니다. `setup-codex`와 `install-codex-plugin`은 `--install-user-hook`을 명시하면 user hook으로 전환하고 설치본의 bundled hook을 비웁니다. `setup-codex --no-user-hook`은 bundled 기본값을 선택하는 호환 옵션으로 유지되며 `--install-user-hook`과 함께 사용할 수 없습니다. Bundled 방식으로 되돌릴 때는 user hook에서 ACS handler만 제거하고 다른 handler는 보존합니다. Doctor는 bundled hook이 설치되어 있으면 user hook 부재를 경고하지 않습니다. Watcher는 별도로 시작하는 fallback입니다.
 
 Windows bundled 명령은 shell별 `%PLUGIN_ROOT%` 확장 대신 Python에서 환경변수를 읽습니다. Marketplace cache는 manifest 버전 경로를 사용하며 실행 중인 host가 참조할 수 있는 이전 cache를 보존합니다. 재설치 후 Codex에서 개인 plugin을 갱신/재설치하고, 실제 로드된 버전과 hook을 확인한 다음 이전 cache 정리를 판단하세요.
 
@@ -154,6 +154,6 @@ Thread를 확인한 뒤 선택한 ID를 처리하세요.
   --project-root $AcsRoot --wiki-root $AcsWiki
 ```
 
-필수 항목 실패 시 복구는 wiki 구조, plugin/config, user hook, marketplace asset에 대해 setup을 다시 실행합니다. 모든 경고를 고치거나 누락 도구를 전부 설치하거나 신뢰를 부여하지는 않습니다. 이후 hook 변경을 검토하세요.
+필수 항목 실패 시 복구는 wiki 구조, plugin/config, bundled hook, marketplace asset에 대해 setup을 다시 실행합니다. 기존 ACS user hook 설치도 bundled 기본값으로 전환하며 다른 handler는 보존합니다. 모든 경고를 고치거나 누락 도구를 전부 설치하거나 신뢰를 부여하지는 않습니다. 이후 hook 변경을 검토하세요.
 
 필요하면 Obsidian의 `Open folder as vault`로 `<WIKI_ROOT>`를 여세요. 기본 `packet-only`는 세션 결과를 ACS `data/`에 저장하며 검토한 wiki patch는 선택 사항입니다. 원본 세션, 파생 artifact, 로컬 설정, provenance는 비공개로 취급하고 공유 전에 확인하세요.

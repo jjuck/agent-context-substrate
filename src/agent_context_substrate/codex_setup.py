@@ -120,7 +120,7 @@ def setup_codex(
     project_root: Path | str,
     wiki_root: Path | str | None = None,
     personal_marketplace_root: Path | str | None = None,
-    install_user_hook: bool = True,
+    install_user_hook: bool = False,
     install_marketplace: bool = True,
     overwrite: bool = True,
     dry_run: bool = False,
@@ -135,6 +135,7 @@ def setup_codex(
         (
             "install-codex-plugin "
             f"--codex-home {codex_home_path} --project-root {project_root_path} --wiki-root {wiki_root_path}"
+            + (" --install-user-hook" if install_user_hook else "")
         ),
         f"codex-status --codex-home {codex_home_path}",
         f"doctor-codex --codex-home {codex_home_path} --project-root {project_root_path} --wiki-root {wiki_root_path}",
@@ -209,7 +210,7 @@ def setup_codex_wizard(
         project_root=project_root_path,
         wiki_root=wiki_root_path,
         personal_marketplace_root=personal_marketplace_root,
-        install_user_hook=True,
+        install_user_hook=False,
         install_marketplace=True,
         overwrite=True,
     )
@@ -240,7 +241,14 @@ def doctor_codex(*, codex_home: Path | str | None = None, project_root: Path | s
         wiki_root=wiki_root_path,
         codex_home=codex_home_path,
     )
-    checks["codex_user_hook_installed"] = STATUS_OK if _hooks_json_has_acs_stop_hook(codex_home_path / "hooks.json") else STATUS_WARN
+    bundled_hook_installed = (
+        (plugin_dir / "hooks" / "codex_stop_finalize.py").is_file()
+        and _hooks_json_has_acs_stop_hook(plugin_dir / "hooks" / "hooks.json", bundled=True)
+    )
+    checks["codex_user_hook_installed"] = (
+        STATUS_OK if _hooks_json_has_acs_stop_hook(codex_home_path / "hooks.json")
+        else "not-required" if bundled_hook_installed else STATUS_WARN
+    )
     checks["hook_support"] = STATUS_OK if codex_hook_support_status(codex_home=codex_home_path) == "supported" else STATUS_WARN
     checks["hook_primary_installed"] = (
         STATUS_OK if codex_installed_hook_status(codex_home=codex_home_path) == "installed" else STATUS_MISSING
@@ -284,7 +292,7 @@ def diagnose_codex(
             project_root=project_root_path,
             wiki_root=wiki_root_path,
             personal_marketplace_root=personal_marketplace_root,
-            install_user_hook=True,
+            install_user_hook=False,
             install_marketplace=True,
             overwrite=True,
         )
@@ -363,14 +371,15 @@ def _local_config_status(*, local_config_path: Path, project_root: Path, wiki_ro
     return STATUS_OK
 
 
-def _hooks_json_has_acs_stop_hook(hooks_path: Path) -> bool:
+def _hooks_json_has_acs_stop_hook(hooks_path: Path, *, bundled: bool = False) -> bool:
     if not hooks_path.exists():
         return False
     try:
         payload = json.loads(hooks_path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return False
-    stop_groups = payload.get("hooks", {}).get("Stop", []) if isinstance(payload, dict) else []
+    hooks = payload.get("hooks", {}) if isinstance(payload, dict) else {}
+    stop_groups = hooks.get("Stop", []) if isinstance(hooks, dict) else []
     if not isinstance(stop_groups, list):
         return False
     for group in stop_groups:
@@ -383,7 +392,9 @@ def _hooks_json_has_acs_stop_hook(hooks_path: Path) -> bool:
             if not isinstance(handler, dict):
                 continue
             command_text = f"{handler.get('command', '')} {handler.get('commandWindows', '')}"
-            if CODEX_PLUGIN_NAME in command_text and "codex_stop_finalize.py" in command_text:
+            if "codex_stop_finalize.py" in command_text and (
+                CODEX_PLUGIN_NAME in command_text or (bundled and "PLUGIN_ROOT" in command_text)
+            ):
                 return True
     return False
 
@@ -419,7 +430,7 @@ def _diagnostic_actions(report: CodexDoctorReport) -> list[str]:
     if checks.get("codex_plugin_installed") == STATUS_MISSING or checks.get("codex_local_config_exists") == STATUS_MISSING:
         actions.append("run setup-codex to reinstall the Codex plugin and local_config.json")
     if checks.get("codex_user_hook_installed") == STATUS_WARN:
-        actions.append("if using user-hook mode, run setup-codex to register its single Stop trigger")
+        actions.append("run setup-codex to restore the bundled Stop hook, or use --install-user-hook for user-hook mode")
     if checks.get("codex_state_sqlite_exists") == STATUS_WARN:
         actions.append("start Codex once so %USERPROFILE%\\.codex\\state_5.sqlite exists")
     if checks.get("codex_rollout_jsonl_exists") == STATUS_WARN:

@@ -4,6 +4,12 @@ All notable changes to Agent Context Substrate are summarized here.
 
 ## Unreleased
 
+## v0.2.2
+
+- Default Codex setup, wizard, and repair to the plugin-owned Stop hook; retain the global user hook only as an explicit opt-in.
+- Back up and retire ACS-only global hook files during migration so Codex no longer reports mixed user hook representations alongside other integrations' TOML hooks.
+- Preserve unrelated hook handlers and metadata, and avoid reporting a missing optional user hook as a problem in plugin mode.
+
 ## v0.2.1
 
 ### Fixed

@@ -15,7 +15,7 @@ Use this guide to install ACS, review hook trust, and diagnose local setup. ACS 
 | ACS artifacts | `<PROJECT_ROOT>\data\...` |
 | LLM Wiki | `%USERPROFILE%\Documents\LLM Wiki` |
 | Installed plugin | `<CODEX_HOME>\plugins\agent-context-substrate` |
-| User hook (setup default) | `<CODEX_HOME>\hooks.json` |
+| User hook (explicit opt-in) | `<CODEX_HOME>\hooks.json` |
 
 `project_root` is the ACS artifact scope and the Stop hook's `cwd` filter. The default checkout root does **not** automatically capture work in unrelated repositories. A Stop payload whose `cwd` is outside the configured root is skipped. Select the intended scope deliberately; manual finalize and watcher processing have different selection behavior.
 
@@ -58,9 +58,9 @@ For another wiki or Codex home, supply `-WikiRoot` and `-CodexHome`; `-ProjectRo
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-codex-windows.ps1 -InstallMissingTools -InstallObsidian
 ```
 
-The script creates `.venv`, upgrades pip, installs ACS with `pip install -e .`, and runs `setup-codex --yes` with explicit paths. Setup initializes the wiki, installs plugin/config and a user hook, registers a personal marketplace/cache entry, and runs local diagnostics. `--yes` accepts setup choices; it does not grant hook trust.
+The script creates `.venv`, upgrades pip, installs ACS with `pip install -e .`, and runs `setup-codex --yes` with explicit paths. Setup initializes the wiki, installs plugin/config with its bundled hook, registers a personal marketplace/cache entry, and runs local diagnostics. `--yes` accepts setup choices; it does not grant hook trust.
 
-Starting with 0.2.1, installation selects one Stop trigger. `setup-codex` defaults to the user hook and disables the bundled hook in installed copies. Direct `install-codex-plugin` uses the bundled hook unless `--install-user-hook` is supplied; switching back removes only ACS handlers from user hooks. Other handlers are preserved. The watcher remains a separately started fallback.
+In 0.2.2, installation selects one Stop trigger. `setup-codex`, the wizard, and diagnostic repair default to the bundled plugin hook, avoiding a global ACS user-hook entry. Both `setup-codex` and direct `install-codex-plugin` accept `--install-user-hook` to explicitly select the user hook and disable the bundled hook in installed copies. `setup-codex --no-user-hook` remains a compatibility option for the bundled default and cannot be combined with `--install-user-hook`. Switching back removes only ACS handlers from user hooks. Other handlers are preserved. Doctor does not warn about an absent user hook when the bundled hook is installed. The watcher remains a separately started fallback.
 
 The Windows bundled command reads `PLUGIN_ROOT` inside Python instead of using shell-specific `%PLUGIN_ROOT%` expansion. Marketplace caches use the manifest version; older cached versions remain available to running hosts. After reinstalling, refresh/reinstall the personal plugin in Codex and inspect the loaded version and hooks before removing any old cache.
 
@@ -154,6 +154,6 @@ For required setup failures, request local ACS repair with explicit paths:
   --project-root $AcsRoot --wiki-root $AcsWiki
 ```
 
-When required checks fail, repair reruns setup for the wiki skeleton, plugin/config, user hook, and marketplace assets. It does not fix every warning, install all missing tools, or grant trust. Review hook changes afterward.
+When required checks fail, repair reruns setup for the wiki skeleton, plugin/config, bundled hook, and marketplace assets. This also switches an existing ACS user-hook installation to the bundled default while preserving other handlers. It does not fix every warning, install all missing tools, or grant trust. Review hook changes afterward.
 
 Open `<WIKI_ROOT>` in Obsidian with `Open folder as vault` if desired. Default `packet-only` stores session outputs in ACS `data/`, while reviewed wiki patches are optional. Treat source sessions, derived artifacts, local config, and provenance as private; inspect them before sharing.

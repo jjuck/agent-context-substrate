@@ -394,6 +394,7 @@ def _install_codex_user_stop_hook(*, codex_home: Path, plugin_dir: Path, enabled
 
     retained_acs_handler = False
     changed = False
+    emptied_acs_groups: set[int] = set()
     expected_group = _codex_user_stop_hook_group(plugin_dir=plugin_dir)
     hook_script = plugin_dir / "hooks" / "codex_stop_finalize.py"
     candidates = [
@@ -424,12 +425,29 @@ def _install_codex_user_stop_hook(*, codex_home: Path, plugin_dir: Path, enabled
                     handler = _repair_codex_hook_script_paths(handler, hook_script=hook_script)
                     changed = True
             handlers.append(handler)
+        if group["hooks"] and not handlers and set(group) <= {"hooks", "matcher"}:
+            emptied_acs_groups.add(group_index)
         group["hooks"] = handlers
     if enabled and not retained_acs_handler:
         stop_groups.append(expected_group)
         changed = True
     if not changed:
         return hooks_path if enabled else None
+    if not enabled:
+        # Retire only groups emptied by ACS removal; preserve unknown metadata.
+        hooks["Stop"] = [
+            group for index, group in enumerate(stop_groups)
+            if index not in emptied_acs_groups
+        ]
+        if not hooks["Stop"]:
+            del hooks["Stop"]
+        if payload == {"hooks": {}}:
+            # Even an empty hooks.json can trigger Codex's mixed-representation
+            # warning when config.toml also declares user hooks. Keep a backup.
+            backup = _unique_backup_path(hooks_path, backup_parent=codex_home / "_backups" / "hooks")
+            shutil.copy2(hooks_path, backup)
+            hooks_path.unlink()
+            return None
     hooks_path.parent.mkdir(parents=True, exist_ok=True)
     hooks_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return hooks_path

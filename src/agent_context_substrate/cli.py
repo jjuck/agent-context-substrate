@@ -510,7 +510,15 @@ def build_parser() -> argparse.ArgumentParser:
     setup_codex.add_argument("--yes", action="store_true", help="Accept the displayed defaults for non-interactive setup")
     setup_codex.add_argument("--dry-run", action="store_true", help="Print planned setup actions without writing files")
     setup_codex.add_argument("--json", action="store_true", help="Print JSON instead of text")
-    setup_codex.add_argument("--no-user-hook", action="store_true", help="Do not register ~/.codex/hooks.json fallback")
+    setup_hook_mode = setup_codex.add_mutually_exclusive_group()
+    setup_hook_mode.add_argument(
+        "--install-user-hook",
+        action="store_true",
+        help="Use the user Stop hook instead of the default bundled plugin hook (one active trigger)",
+    )
+    setup_hook_mode.add_argument(
+        "--no-user-hook", action="store_true", help="Use the bundled plugin hook (default; compatibility option)"
+    )
     setup_codex.add_argument("--no-marketplace", action="store_true", help="Do not install personal marketplace/cache entry")
     setup_codex.add_argument("--no-overwrite", action="store_true", help="Do not replace an existing ACS Codex plugin")
     _add_project_root_argument(setup_codex)

@@ -235,6 +235,42 @@ def test_codex_trigger_modes_preserve_mixed_groups_and_are_repeatable(tmp_path: 
         assert len([entry for entry in marketplace["plugins"] if entry["name"] == "agent-context-substrate"]) == 1
 
 
+def test_codex_plugin_migration_retires_acs_only_user_file_with_backup(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    args = dict(codex_home=codex_home, project_root=tmp_path / "project", wiki_root=tmp_path / "wiki")
+    install_codex_plugin(**args, install_user_hook=True)
+    hooks_path = codex_home / "hooks.json"
+    original = hooks_path.read_bytes()
+    config_path = codex_home / "config.toml"
+    config = b'[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "echo interrupt"\n'
+    config_path.write_bytes(config)
+
+    for _ in range(2):
+        install_codex_plugin(**args, overwrite=True)
+        assert not hooks_path.exists()
+        assert config_path.read_bytes() == config
+        bundled = json.loads((codex_home / "plugins/agent-context-substrate/hooks/hooks.json").read_text())
+        assert len(bundled["hooks"]["Stop"]) == 1
+    backups = list((codex_home / "_backups/hooks").glob("hooks.json.bak-*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+
+
+@pytest.mark.parametrize("extra", [{"custom": True}, {"hooks": {"SessionStart": []}}])
+def test_codex_plugin_migration_preserves_unrelated_user_metadata(tmp_path: Path, extra: dict) -> None:
+    codex_home = tmp_path / "codex-home"
+    args = dict(codex_home=codex_home, project_root=tmp_path / "project", wiki_root=tmp_path / "wiki")
+    install_codex_plugin(**args, install_user_hook=True)
+    hooks_path = codex_home / "hooks.json"
+    payload = json.loads(hooks_path.read_text())
+    payload["hooks"].update(extra.get("hooks", {}))
+    payload.update({key: value for key, value in extra.items() if key != "hooks"})
+    hooks_path.write_text(json.dumps(payload))
+    install_codex_plugin(**args, overwrite=True)
+    result = json.loads(hooks_path.read_text())
+    assert result == {"hooks": {}, **extra}
+
+
 @pytest.mark.parametrize("custom_settings", [False, True])
 def test_codex_reinstall_keeps_trusted_user_hook_file_unchanged(tmp_path: Path, custom_settings: bool) -> None:
     codex_home = tmp_path / "codex-home"
