@@ -97,6 +97,35 @@ def test_codex_watcher_selects_idle_threads_once(tmp_path: Path) -> None:
     assert second_due == []
 
 
+def test_codex_finalize_summarizes_request_not_injected_workspace_context(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    rollout = codex_home / "sessions/rollout-test.jsonl"
+    _write_codex_thread(codex_home, thread_id="test", rollout_path=rollout)
+    context = {
+        "type": "response_item",
+        "payload": {"type": "message", "role": "user", "content": [{
+            "type": "input_text",
+            "text": "# AGENTS.md instructions\n<INSTRUCTIONS>Read RTK.md.</INSTRUCTIONS>\n"
+                    "<environment_context><cwd>C:/repo</cwd></environment_context>",
+        }]},
+    }
+    rollout.write_text(json.dumps(context) + "\n" + rollout.read_text(encoding="utf-8"), encoding="utf-8")
+    original = rollout.read_bytes()
+    result = run_codex_thread_finalize_pipeline(
+        thread_id="test", codex_home=codex_home,
+        project_root=tmp_path / "project", wiki_root=tmp_path / "wiki",
+    )
+    packet = json.loads(result.packet_json_path.read_text(encoding="utf-8"))
+    assert packet["micro_summaries"][0]["request"] == "Build Codex support"
+    assert "AGENTS.md" not in json.dumps(packet)
+    assert "RTK.md" not in result.recovery_json_path.read_text(encoding="utf-8")
+    raw = json.loads(result.raw_export_path.read_text(encoding="utf-8"))
+    assert raw["session"]["excluded_context_message_ids"] == [1]
+    assert [m["id"] for m in raw["messages"]] == [2, 3]
+    assert rollout.read_bytes() == original
+
+
 def test_codex_watcher_state_can_record_discovery_fingerprint(tmp_path: Path) -> None:
     codex_home = tmp_path / "codex"
     project_root = tmp_path / "project"

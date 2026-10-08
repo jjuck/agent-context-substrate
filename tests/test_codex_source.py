@@ -4,6 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from agent_context_substrate.codex_source import (
     build_codex_session_bundle,
     discover_codex_threads,
@@ -141,3 +143,77 @@ def test_export_codex_session_bundle_preserves_codex_provenance(tmp_path: Path) 
     assert payload["session"]["source"] == "codex"
     assert payload["session"]["provenance"] == "codex-thread:thread-1#messages=1,2"
     assert format_codex_provenance("thread-1", [1, 2]) == "codex-thread:thread-1#messages=1,2"
+
+
+_INSTRUCTIONS = "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nRun tests.\n</INSTRUCTIONS>"
+_ENVIRONMENT = "<environment_context>\n<cwd>C:/repo</cwd>\n</environment_context>"
+
+
+@pytest.mark.parametrize("context", [
+    _INSTRUCTIONS,
+    _INSTRUCTIONS + "\n" + _ENVIRONMENT,
+    _INSTRUCTIONS.replace("instructions", "instructions for C:/repo"),
+    _ENVIRONMENT,
+])
+def test_codex_excludes_injected_context_and_keeps_original_line_provenance(tmp_path: Path, context: str) -> None:
+    path = tmp_path / "rollout.jsonl"
+    _write_rollout(path, [
+        {"type": "message", "role": "user", "content": [{"text": context}]},
+        {"type": "message", "role": "user", "content": [{"text": "Fix the ACS hook."}]},
+        {"type": "message", "role": "assistant", "content": [{"text": "The hook is fixed."}]},
+    ])
+    original = path.read_bytes()
+    bundle = build_codex_session_bundle(thread_id="test", rollout_path=path)
+    assert [m.content for m in bundle.messages] == ["Fix the ACS hook.", "The hook is fixed."]
+    assert [m.id for m in bundle.messages] == [2, 3]
+    assert bundle.metadata["excluded_context_message_ids"] == [1]
+    assert bundle.to_raw_bundle()["session"]["excluded_context_message_ids"] == [1]
+    assert bundle.metadata["provenance"] == "codex-thread:test#messages=2,3"
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("user_text", [
+    "Please edit AGENTS.md and explain <environment_context>.",
+    "```markdown\n" + _INSTRUCTIONS + "\n```",
+    _INSTRUCTIONS + "\nPlease explain these rules.",
+    _ENVIRONMENT + "\nFix my environment.",
+    _ENVIRONMENT + "\nCompare these environments.\n" + _ENVIRONMENT,
+    _INSTRUCTIONS + "\nCompare these instructions.\n" + _INSTRUCTIONS,
+    "# AGENTS.md instructions\n<INSTRUCTIONS>incomplete",
+    "# AGENTS.md instructions<INSTRUCTIONS>Run tests.</INSTRUCTIONS>",
+    "    <environment_context>indented code example</environment_context>",
+])
+def test_codex_preserves_user_requests_about_instructions(tmp_path: Path, user_text: str) -> None:
+    path = tmp_path / "rollout.jsonl"
+    _write_rollout(path, [{"type": "message", "role": "user", "content": [{"text": user_text}]}])
+    bundle = build_codex_session_bundle(thread_id="test", rollout_path=path)
+    assert [m.content for m in bundle.messages] == [user_text]
+
+
+@pytest.mark.parametrize("event_first", [False, True])
+@pytest.mark.parametrize("event", [
+    {"type": "user_message", "message": _INSTRUCTIONS},
+    {"type": "item_completed", "item": {"type": "UserMessage", "content": [{"text": _INSTRUCTIONS}]}},
+    {"type": "item_completed", "item": {"type": "userMessage", "content": [{"text": _INSTRUCTIONS}]}},
+])
+def test_codex_explicit_user_event_preserves_literal_context_envelope(tmp_path: Path, event: dict, event_first: bool) -> None:
+    path = tmp_path / "rollout.jsonl"
+    events = [
+        {"type": "message", "role": "user", "content": [{"text": _INSTRUCTIONS}]},
+        event,
+    ]
+    _write_rollout(path, list(reversed(events)) if event_first else events)
+    bundle = build_codex_session_bundle(thread_id="test", rollout_path=path)
+    assert any(m.metadata["codex_event_type"] == "message" and m.content == _INSTRUCTIONS for m in bundle.messages)
+    assert "excluded_context_message_ids" not in bundle.metadata
+
+
+def test_codex_preserves_envelope_text_with_image_attachment(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    _write_rollout(path, [{"type": "message", "role": "user", "content": [
+        {"type": "input_text", "text": _INSTRUCTIONS},
+        {"type": "input_image", "image_url": "data:image/png;base64,test"},
+    ]}])
+    bundle = build_codex_session_bundle(thread_id="test", rollout_path=path)
+    assert len(bundle.messages) == 1
+    assert bundle.messages[0].content == _INSTRUCTIONS

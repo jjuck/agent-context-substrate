@@ -15,6 +15,13 @@ from .session_bundle import SessionBundle, SessionMessage
 DEFAULT_MAX_TOOL_OUTPUT_CHARS = 12_000
 _SENSITIVE_KEY_RE = re.compile(r"(?i)(api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*([^\s,\"]+)")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_INJECTED_USER_CONTEXT_RE = re.compile(
+    r"(?:# AGENTS\.md instructions(?: for [^\r\n]+)?[ \t]*\r?\n\s*"
+    r"<INSTRUCTIONS>(?:(?!</INSTRUCTIONS>).)*</INSTRUCTIONS>\s*"
+    r"(?:<environment_context>(?:(?!</environment_context>).)*</environment_context>)?"
+    r"|<environment_context>(?:(?!</environment_context>).)*</environment_context>)",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -64,8 +71,15 @@ def build_codex_session_bundle(
     max_tool_output_chars: int = DEFAULT_MAX_TOOL_OUTPUT_CHARS,
 ) -> SessionBundle:
     record = _resolve_thread_record(thread_id=thread_id, codex_home=codex_home, rollout_path=rollout_path)
+    # Codex also encodes injected workspace instructions with role=user. Explicit
+    # user events disambiguate literal requests containing the same envelope.
+    authored_user_texts: set[str] = set()
+    context_candidates: dict[int, str] = {}
     messages: list[SessionMessage] = []
     for line_number, timestamp, payload in _iter_rollout_payloads(record.rollout_path):
+        authored_text = _authored_user_text(payload)
+        if authored_text is not None:
+            authored_user_texts.add(authored_text)
         message = _message_from_payload(
             line_number=line_number,
             timestamp=timestamp,
@@ -74,12 +88,23 @@ def build_codex_session_bundle(
         )
         if message is not None:
             messages.append(message)
+            if (payload.get("type") == "message" and payload.get("role") == "user"
+                    and _is_text_only_content(payload.get("content"))):
+                text = _flatten_content(payload.get("content"))
+                if _INJECTED_USER_CONTEXT_RE.fullmatch(text.rstrip()):
+                    context_candidates[line_number] = text
+
+    context_message_ids = [line for line, text in context_candidates.items() if text not in authored_user_texts]
+    excluded = set(context_message_ids)
+    messages = [message for message in messages if message.id not in excluded]
 
     message_ids = [message.id for message in messages]
     metadata: dict[str, Any] = {
         "rollout_path": str(record.rollout_path),
         "provenance": format_codex_provenance(thread_id, message_ids),
     }
+    if context_message_ids:
+        metadata["excluded_context_message_ids"] = context_message_ids
     if record.cwd:
         metadata["cwd"] = record.cwd
     return SessionBundle(
@@ -93,6 +118,27 @@ def build_codex_session_bundle(
         slice_end_message_id=(message_ids[-1] if message_ids else None),
         metadata=metadata,
     )
+
+
+def _authored_user_text(payload: dict[str, Any]) -> str | None:
+    if _is_encrypted_payload(payload):
+        return None
+    if payload.get("type") == "user_message":
+        return str(payload.get("message") or "")
+    if payload.get("type") == "item_completed":
+        item = payload.get("item")
+        if isinstance(item, dict) and item.get("type") in {"UserMessage", "userMessage"}:
+            return _flatten_content(item.get("content"))
+    return None
+
+
+def _is_text_only_content(content: Any) -> bool:
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        return bool(content) and all(_is_text_only_content(item) for item in content)
+    return (isinstance(content, dict) and content.get("type") in {None, "text", "input_text"}
+            and isinstance(content.get("text"), str))
 
 
 def export_codex_session_bundle(*, bundle: SessionBundle, project_root: Path | str) -> Path:

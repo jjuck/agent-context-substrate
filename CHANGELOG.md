@@ -4,6 +4,11 @@ All notable changes to Agent Context Substrate are summarized here.
 
 ## Unreleased
 
+## v0.2.3
+
+- Exclude injected Codex workspace-instruction and environment messages from conversation summaries while retaining original rollout line provenance.
+- Preserve literal instruction examples when explicit user-input events identify them, and retain mixed or quoted requests.
+
 ## v0.2.2
 
 - Default Codex setup, wizard, and repair to the plugin-owned Stop hook; retain the global user hook only as an explicit opt-in.

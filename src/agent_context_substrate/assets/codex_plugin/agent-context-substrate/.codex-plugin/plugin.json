@@ -1,6 +1,6 @@
 {
   "name": "agent-context-substrate",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Non-MCP Codex integration for exporting local Codex threads into Agent Context Substrate artifacts.",
   "author": {
     "name": "Agent Context Substrate"
