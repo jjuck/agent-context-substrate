@@ -1,3 +1,5 @@
+https://github.com/user-attachments/assets/204ec6ac-6c3a-4b5b-900c-09080860d7ef
+
 # Agent Context Substrate
 
 **Hermes와 Codex 대화의 결정·진행·원문 근거를 남겨, 다음 작업에서 필요한 맥락을 다시 꺼내 쓰는 도구입니다.**
