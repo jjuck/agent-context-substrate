@@ -1,3 +1,5 @@
+https://github.com/user-attachments/assets/80d7ef10-3f25-4326-b252-558b0b4d26e5
+
 # Agent Context Substrate
 
 **Keep decisions, progress, and source evidence from Hermes and Codex conversations so the next task can resume with useful context.**
