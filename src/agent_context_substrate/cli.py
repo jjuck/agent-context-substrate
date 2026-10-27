@@ -31,6 +31,13 @@ from .commands.build_context_packet import (
     export_v2_summary_artifacts,
     handle_build_context_packet_command,
 )
+from .commands.claude import (
+    handle_claude_finalize_command,
+    handle_claude_jobs_command,
+    handle_claude_status_command,
+    handle_claude_worker_command,
+    handle_setup_claude_command,
+)
 from .commands.codex import (
     default_wiki_root,
     handle_codex_finalize_command,
@@ -87,6 +94,80 @@ def _add_project_root_argument(parser: argparse.ArgumentParser) -> None:
         default=str(Path.cwd()),
         help="Project root containing the local data/ directory",
     )
+
+
+def _add_claude_parsers(subparsers: argparse._SubParsersAction) -> None:
+    config_help = "Claude adapter config; default ~/.claude/agent-context-substrate/local_config.json"
+
+    setup_claude = subparsers.add_parser(
+        "setup-claude",
+        help="Write the Claude Code adapter config (does not touch ~/.claude/settings.json)",
+    )
+    setup_claude.add_argument("--config", default=None, help=config_help)
+    setup_claude.add_argument("--claude-home", default=None, help="Claude config directory, usually ~/.claude")
+    setup_claude.add_argument("--codex-home", default=None, help="Codex home to copy shared ACS policy from")
+    setup_claude.add_argument(
+        "--from-codex",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help="Copy summary/wiki/worker policy from the installed Codex ACS config",
+    )
+    setup_claude.add_argument("--wiki-root", default=None, help="LLM Wiki root override")
+    setup_claude.add_argument("--python-executable", default=None, help="Python used by the hook and worker")
+    setup_claude.add_argument("--yes", action="store_true", help="Write the config instead of printing a dry run")
+    _add_project_root_argument(setup_claude)
+
+    claude_status = subparsers.add_parser("claude-status", help="Inspect Claude Code sessions and the durable queue")
+    claude_status.add_argument("--config", default=None, help=config_help)
+    claude_status.add_argument("--claude-home", default=None, help="Claude config directory, usually ~/.claude")
+
+    claude_worker = subparsers.add_parser("claude-worker", help="Drain durable Claude Stop jobs with a singleton worker")
+    claude_worker.add_argument("--config", default=None, help=config_help)
+    claude_worker.add_argument("--worker-id", default=None, help="Optional worker identity override")
+    claude_worker.add_argument("--max-jobs", type=int, default=None, help="Optional maximum jobs to claim before exiting")
+
+    claude_jobs = subparsers.add_parser("claude-jobs", help="Inspect or requeue durable Claude jobs")
+    claude_jobs.add_argument("--config", default=None, help=config_help)
+    claude_job_actions = claude_jobs.add_subparsers(dest="jobs_action", required=True)
+    claude_jobs_list = claude_job_actions.add_parser("list", help="List recent durable jobs")
+    claude_jobs_list.add_argument(
+        "--status",
+        choices=["queued", "leased", "retry", "completed", "dead_letter", "superseded"],
+        default=None,
+    )
+    claude_jobs_list.add_argument("--limit", type=int, default=20)
+    claude_jobs_list.add_argument("--json", action="store_true")
+    claude_jobs_retry = claude_job_actions.add_parser("retry", help="Requeue one dead-letter job")
+    claude_jobs_retry.add_argument("--job-id", type=int, required=True)
+
+    claude_finalize = subparsers.add_parser("claude-finalize", help="Finalize one Claude Code session into ACS artifacts")
+    claude_finalize.add_argument("--session-id", required=True, help="Claude Code session id")
+    claude_finalize.add_argument("--transcript-path", default=None, help="Transcript JSONL; discovered when omitted")
+    claude_finalize.add_argument("--claude-home", default=None, help="Claude config directory, usually ~/.claude")
+    claude_finalize.add_argument("--wiki-root", required=True, help="Obsidian/LLM Wiki root")
+    claude_finalize.add_argument("--task-title", help="Optional packet task title override")
+    claude_finalize.add_argument("--unit-title", help="Optional unit title override")
+    claude_finalize.add_argument("--goal", help="Optional unit goal override")
+    claude_finalize.add_argument("--related-page", action="append", dest="related_pages", default=[])
+    claude_finalize.add_argument("--max-tool-output-chars", type=int, default=12_000)
+    claude_finalize.add_argument("--summary-mode", choices=["heuristic", "custom-command", "codex-cli", "auto"])
+    claude_finalize.add_argument("--summarizer-command")
+    claude_finalize.add_argument("--summary-cache", choices=["on", "off"], default="off")
+    claude_finalize.add_argument("--summary-model")
+    claude_finalize.add_argument("--summary-budget")
+    claude_finalize.add_argument("--codex-cli-command", help="Codex executable used as the summary LLM backend")
+    claude_finalize.add_argument("--codex-timeout-seconds", type=int, default=None)
+    claude_finalize.add_argument("--llm-redact", choices=["on", "off"], default="on")
+    claude_finalize.add_argument("--llm-max-input-chars", type=int, default=12_000)
+    claude_finalize.add_argument("--llm-allow-code-snippets", choices=["on", "off"], default="off")
+    claude_finalize.add_argument("--llm-path-policy", choices=["redact", "allow"], default="redact")
+    claude_finalize.add_argument("--expected-transcript-path", default=None, help=argparse.SUPPRESS)
+    claude_finalize.add_argument("--expected-transcript-mtime-ns", type=int, default=None, help=argparse.SUPPRESS)
+    claude_finalize.add_argument("--expected-transcript-size", type=int, default=None, help=argparse.SUPPRESS)
+    claude_finalize.add_argument("--runtime-config-path", default=None, help=argparse.SUPPRESS)
+    claude_finalize.add_argument("--expected-config-digest", default=None, help=argparse.SUPPRESS)
+    _add_wiki_auto_arguments(claude_finalize)
+    _add_project_root_argument(claude_finalize)
 
 
 def _add_wiki_auto_arguments(parser: argparse.ArgumentParser) -> None:
@@ -741,6 +822,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_wiki_auto_arguments(codex_watch)
     _add_project_root_argument(codex_watch)
 
+    _add_claude_parsers(subparsers)
+
     search_parser = subparsers.add_parser("search-knowledge", help="Search wiki, packets, recovery, graph, and optional raw messages")
     search_parser.add_argument("--query", required=True, help="Search query")
     search_parser.add_argument("--wiki-root", default=default_wiki_root(), help="Obsidian/LLM Wiki root")
@@ -805,6 +888,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "codex-jobs":
         return handle_codex_jobs_command(args=args)
+
+    if args.command == "setup-claude":
+        return handle_setup_claude_command(args=args)
+
+    if args.command == "claude-status":
+        return handle_claude_status_command(args=args)
+
+    if args.command == "claude-worker":
+        return handle_claude_worker_command(args=args)
+
+    if args.command == "claude-jobs":
+        return handle_claude_jobs_command(args=args)
+
+    if args.command == "claude-finalize":
+        return handle_claude_finalize_command(args=args)
 
     paths = HarnessPaths(project_root=Path(args.project_root).resolve())
 

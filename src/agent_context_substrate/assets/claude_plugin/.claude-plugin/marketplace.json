@@ -1,0 +1,13 @@
+{
+  "name": "acs-local",
+  "owner": {
+    "name": "Agent Context Substrate"
+  },
+  "plugins": [
+    {
+      "name": "agent-context-substrate",
+      "source": "./agent-context-substrate",
+      "description": "Durable Stop-hook finalization of Claude Code sessions into Agent Context Substrate artifacts."
+    }
+  ]
+}

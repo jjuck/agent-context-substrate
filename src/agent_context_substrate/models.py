@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+_SOURCE_REF_PREFIXES = {"codex": "codex-thread", "claude-code": "claude-session"}
+
+
 @dataclass(frozen=True)
 class RawSessionReference:
     session_id: str
@@ -15,7 +18,7 @@ class RawSessionReference:
 
     def source_ref(self) -> str:
         message_ids = ",".join(str(message_id) for message_id in self.message_ids)
-        prefix = "codex-thread" if self.source == "codex" else "hermes-session"
+        prefix = _SOURCE_REF_PREFIXES.get(self.source, "hermes-session")
         return f"{prefix}:{self.session_id}#messages={message_ids}"
 
     def to_dict(self) -> dict[str, Any]:

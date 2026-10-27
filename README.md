@@ -16,7 +16,7 @@ Agent Context Substrate reads local agent session stores without modifying them 
 - read-only knowledge, recovery, and graph retrieval;
 - lint, ledger, and hook event artifacts for auditability.
 
-Packaged adapters currently support Hermes Agent and the Windows Codex app. The core pipeline is source-neutral after each adapter produces a typed `SessionBundle`.
+Packaged adapters currently support Hermes Agent, the Windows Codex app, and Claude Code (CLI and desktop Code tab). The core pipeline is source-neutral after each adapter produces a typed `SessionBundle`.
 
 ## Default Codex Behavior
 
@@ -150,6 +150,25 @@ trigger_strategy=hook-enqueue
 
 See [Windows Codex App Setup](./docs/WINDOWS_CODEX_APP_SETUP.md) for trust, smoke-test, diagnosis, and fallback details.
 
+## Claude Code Install
+
+The Claude Code adapter uses the same Stop hook → durable queue → worker flow. Its queue is
+`data/index/claude_jobs.sqlite3`, and it shares the finalize lock with Codex.
+
+```bash
+agent-context-substrate setup-claude --project-root . --yes
+```
+
+Then install the plugin from the bundled local marketplace in `claude`:
+
+```text
+/plugin marketplace add <ACS_CHECKOUT>/src/agent_context_substrate/assets/claude_plugin
+/plugin install agent-context-substrate@acs-local
+```
+
+Check it with `agent-context-substrate claude-status`. See [Claude Code Setup](./docs/CLAUDE_CODE_SETUP.md) for the desktop-app
+`settings.json` route, config keys, and recovery commands.
+
 ## Hermes Install
 
 ```bash
@@ -263,6 +282,7 @@ inspect the scope and use a conservative idle window before running it.
 - [English user guide](./docs/USER_GUIDE.en.md)
 - [Korean user guide](./docs/USER_GUIDE.md)
 - [Windows Codex setup](./docs/WINDOWS_CODEX_APP_SETUP.md)
+- [Claude Code setup](./docs/CLAUDE_CODE_SETUP.md)
 - [Operations guide](./docs/OPERATIONS.md)
 - [Pipeline and architecture](./docs/PIPELINE.md)
 - [Release checklist](./docs/RELEASE_CHECKLIST.md)

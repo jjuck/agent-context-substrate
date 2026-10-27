@@ -9,6 +9,7 @@ Agent Context Substrate documentation is organized by audience. When documents d
 | Product overview and quick start | [README.ko.md](../README.ko.md) | [README.md](../README.md) |
 | Complete user guide | [USER_GUIDE.md](./USER_GUIDE.md) | [USER_GUIDE.en.md](./USER_GUIDE.en.md) |
 | Windows Codex installation | [WINDOWS_CODEX_APP_SETUP.ko.md](./WINDOWS_CODEX_APP_SETUP.ko.md) | [WINDOWS_CODEX_APP_SETUP.md](./WINDOWS_CODEX_APP_SETUP.md) |
+| Claude Code installation | [CLAUDE_CODE_SETUP.ko.md](./CLAUDE_CODE_SETUP.ko.md) | [CLAUDE_CODE_SETUP.md](./CLAUDE_CODE_SETUP.md) |
 
 ## Maintainer References
 
