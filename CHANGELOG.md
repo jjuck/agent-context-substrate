@@ -20,6 +20,7 @@ All notable changes to Agent Context Substrate are summarized here.
 - Typed `WikiPageIntent`, shared `SessionBundle` finalization services, isolated Codex execution helpers, and a thin installed Stop-hook bootstrap.
 - Windows Codex live-write validation workflow using isolated temporary project and wiki roots.
 - Lightweight Ruff lint gate for release checks.
+- Claude Code adapter: `claude_source` transcript parsing, a non-blocking plugin Stop hook, a durable `claude_jobs.sqlite3` queue drained by the shared worker loop, `setup-claude`/`claude-status`/`claude-jobs`/`claude-worker`/`claude-finalize` commands, and a local `acs-local` Claude Code marketplace.
 
 ### Changed
 

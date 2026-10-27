@@ -2,7 +2,7 @@
 
 This guide explains `agent-context-substrate` from a user point of view: what it does, when it helps, where data is stored, how to install it into Hermes Agent or the Windows Codex app, and how to use the CLI and Telegram commands.
 
-The current release packages **Hermes Agent integration** and a **non-MCP Codex local session source**. Codex sources are read-only; the plugin Stop hook is the primary trigger and writes jobs to a durable local SQLite queue. `codex-watch` is retained for explicit history recovery/backfill. The project name reflects the longer-term goal of supporting additional agent adapters; Claude Code/OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
+The current release packages **Hermes Agent integration** and a **non-MCP Codex local session source**. Codex sources are read-only; the plugin Stop hook is the primary trigger and writes jobs to a durable local SQLite queue. `codex-watch` is retained for explicit history recovery/backfill. A **Claude Code adapter** follows the same flow: its plugin Stop hook reads the hook's `transcript_path` (`~/.claude/projects/<encoded cwd>/<session_id>.jsonl`), queues a durable job in `data/index/claude_jobs.sqlite3`, and a worker finalizes it (see [Claude Code Setup](./CLAUDE_CODE_SETUP.md)). The project name reflects the longer-term goal of supporting additional agent adapters; OpenCode/Gemini adapters are not included yet. The former project name was `hermes-llm-wiki-harness`.
 
 [한국어 사용자 가이드](./USER_GUIDE.md) · [Windows Codex App Setup](./WINDOWS_CODEX_APP_SETUP.md) · [English README](../README.md) · [한국어 README](../README.ko.md)
 

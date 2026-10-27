@@ -1,0 +1,16 @@
+{
+  "name": "agent-context-substrate",
+  "version": "0.2.0",
+  "description": "Queue every stopped Claude Code session for Agent Context Substrate finalization into wiki and retrieval artifacts.",
+  "author": {
+    "name": "Agent Context Substrate"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "context",
+    "retrieval",
+    "memory",
+    "wiki"
+  ]
+}

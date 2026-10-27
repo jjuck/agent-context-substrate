@@ -38,6 +38,8 @@ package-dir = {"" = "src"}
 agent_context_substrate = [
   "assets/**/*",
   "assets/codex_plugin/agent-context-substrate/.codex-plugin/plugin.json",
+  "assets/claude_plugin/.claude-plugin/marketplace.json",
+  "assets/claude_plugin/agent-context-substrate/.claude-plugin/plugin.json",
 ]
 
 [tool.setuptools.exclude-package-data]

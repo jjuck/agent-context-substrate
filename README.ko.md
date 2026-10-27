@@ -16,7 +16,7 @@ ACS는 로컬 agent session 저장소를 수정하지 않고 읽어서 다음 co
 - knowledge, recovery, graph read-only 검색
 - lint, ledger, hook event artifact
 
-현재 packaged adapter는 Hermes Agent와 Windows Codex 앱을 지원합니다. 각 adapter가 typed `SessionBundle`을 만든 뒤에는 공통 pipeline을 사용합니다.
+현재 packaged adapter는 Hermes Agent, Windows Codex 앱, Claude Code(CLI와 데스크톱 Code 탭)를 지원합니다. 각 adapter가 typed `SessionBundle`을 만든 뒤에는 공통 pipeline을 사용합니다.
 
 ## Codex 기본 동작
 
@@ -150,6 +150,25 @@ trigger_strategy=hook-enqueue
 
 Hook 승인, smoke test, 진단, fallback은 [Windows Codex 앱 설치 가이드](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)를 참고하세요.
 
+## Claude Code 설치
+
+Claude Code 어댑터도 Stop hook → durable queue → worker 흐름을 그대로 씁니다. 큐는
+`data/index/claude_jobs.sqlite3`이고, finalize lock은 Codex와 공유합니다.
+
+```bash
+agent-context-substrate setup-claude --project-root . --yes
+```
+
+그다음 `claude`에서 번들된 로컬 marketplace로 plugin을 설치합니다.
+
+```text
+/plugin marketplace add <ACS_CHECKOUT>/src/agent_context_substrate/assets/claude_plugin
+/plugin install agent-context-substrate@acs-local
+```
+
+`agent-context-substrate claude-status`로 확인하세요. 데스크톱 앱용 `settings.json` 설정, 설정 키, 복구 명령은
+[Claude Code 설치 가이드](./docs/CLAUDE_CODE_SETUP.ko.md)를 참고하세요.
+
 ## Hermes 설치
 
 ```bash
@@ -263,6 +282,7 @@ rollout history를 scan해서 오래된 eligible thread를 대량 처리할 수 
 - [한국어 사용자 가이드](./docs/USER_GUIDE.md)
 - [English User Guide](./docs/USER_GUIDE.en.md)
 - [Windows Codex 설치](./docs/WINDOWS_CODEX_APP_SETUP.ko.md)
+- [Claude Code 설치](./docs/CLAUDE_CODE_SETUP.ko.md)
 - [운영 가이드](./docs/OPERATIONS.md)
 - [Pipeline과 아키텍처](./docs/PIPELINE.md)
 - [Release checklist](./docs/RELEASE_CHECKLIST.md)

@@ -117,7 +117,8 @@ The alpha scope is intentionally split into **Implemented**, **MVP to implement*
 | Semantic lint | **Structural blocking + advisory quality checks** | Provenance/graph safety blocks apply success; language, structure, category, and related-link quality remain advisory. |
 | Native Windows support | **Implemented release gate** | Native Windows `pytest` and `ruff` are now required because Codex desktop usage is Windows-heavy. |
 | Codex local integration | **Implemented MVP** | Codex reads `~/.codex/state_5.sqlite` and rollout JSONL read-only, uses a plugin-bundled Stop hook as the primary trigger, and keeps watcher fallback available. |
-| Other non-Hermes adapters | **Future before expansion** | Claude Code/OpenCode/Gemini remain future adapters; see `docs/AGENT_PORTABILITY_NOTES.md` before claiming broader support. |
+| Claude Code local integration | **Implemented MVP** | A plugin Stop hook reads `transcript_path`, queues a durable job in `claude_jobs.sqlite3`, and reuses the Codex worker loop and finalize pipeline through a source adapter. |
+| Other non-Hermes adapters | **Future before expansion** | OpenCode/Gemini remain future adapters; see `docs/AGENT_PORTABILITY_NOTES.md` before claiming broader support. |
 
 ## 5. Target Architecture
 

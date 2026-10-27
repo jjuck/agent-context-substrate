@@ -15,6 +15,7 @@ import time
 
 from .codex_hook import (
     CodexHookCommandRunnerResult,
+    CodexStopFinalizeDecision,
     _append_hook_event,
     _mark_watcher_state_processed,
     _subprocess_environment,
@@ -49,6 +50,24 @@ class CodexWorkerResult:
     refreshed_count: int = 0
 
 
+@dataclass(frozen=True)
+class DurableWorkerAdapter:
+    """Source-specific hooks that let one worker loop drain Codex or Claude jobs."""
+
+    label: str
+    jobs_path: Callable[[Path], Path]
+    lock_path: Callable[[Path], Path]
+    status_path: Callable[[Path], Path]
+    load_config: Callable[[], dict[str, Any]]
+    validate_config: Callable[[dict[str, Any], Path], None]
+    current_fingerprint: Callable[[CodexJob, dict[str, Any]], dict[str, int | str]]
+    build_decision: Callable[[dict[str, Any], dict[str, Any]], Any]
+    hook_payload: Callable[[CodexJob], dict[str, Any]]
+    append_event: Callable[..., None]
+    mark_processed: Callable[..., None]
+    finalize_args: Callable[[CodexJob, dict[str, int | str]], list[str]]
+
+
 def default_codex_worker_status_path(project_root: Path | str) -> Path:
     return Path(project_root) / "data" / "index" / "codex_worker_status.json"
 
@@ -69,16 +88,64 @@ def run_codex_worker(
     max_jobs: int | None = None,
     command_runner: CodexWorkerCommandRunner | None = None,
 ) -> CodexWorkerResult:
+    plugin_root_path = Path(plugin_root).expanduser().resolve(strict=False)
+    return run_durable_worker(
+        adapter=codex_worker_adapter(plugin_root_path),
+        worker_id=worker_id,
+        max_jobs=max_jobs,
+        command_runner=command_runner,
+    )
+
+
+def codex_worker_adapter(plugin_root: Path) -> DurableWorkerAdapter:
+    def build_decision(payload: dict[str, Any], config: dict[str, Any]) -> CodexStopFinalizeDecision:
+        return build_codex_stop_finalize_decision(
+            payload=payload,
+            plugin_root=plugin_root,
+            python_executable=str(config.get("python_executable") or sys.executable),
+            config=config,
+        )
+
+    def finalize_args(job: CodexJob, expected: dict[str, int | str]) -> list[str]:
+        args: list[str] = []
+        _append_expected_fingerprint_args(args, expected)
+        args.extend(["--runtime-plugin-root", str(plugin_root), "--expected-config-digest", job.config_digest])
+        return args
+
+    return DurableWorkerAdapter(
+        label="Codex",
+        jobs_path=default_codex_jobs_path,
+        lock_path=lambda project_root: project_root / "data" / "index" / "codex_worker.lock",
+        status_path=default_codex_worker_status_path,
+        load_config=lambda: load_codex_runtime_config(plugin_root),
+        validate_config=lambda config, project_root: _validate_runtime_config(
+            config, expected_project_root=project_root
+        ),
+        current_fingerprint=lambda job, config: _find_thread(job.thread_id, config).fingerprint,
+        build_decision=build_decision,
+        hook_payload=_hook_payload,
+        append_event=lambda config, **kwargs: _append_hook_event(config, **kwargs),
+        mark_processed=lambda decision, **kwargs: _mark_watcher_state_processed(decision, **kwargs),
+        finalize_args=finalize_args,
+    )
+
+
+def run_durable_worker(
+    *,
+    adapter: DurableWorkerAdapter,
+    worker_id: str | None = None,
+    max_jobs: int | None = None,
+    command_runner: CodexWorkerCommandRunner | None = None,
+) -> CodexWorkerResult:
     if max_jobs is not None and max_jobs <= 0:
         raise ValueError("max_jobs must be greater than zero")
-    plugin_root_path = Path(plugin_root).expanduser().resolve(strict=False)
-    config = load_codex_runtime_config(plugin_root_path)
+    config = adapter.load_config()
     project_root = _required_path(config, "project_root")
-    queue = CodexJobQueue(default_codex_jobs_path(project_root))
+    queue = CodexJobQueue(adapter.jobs_path(project_root))
     worker_identity = worker_id or f"{os.getpid()}-{uuid4().hex}"
     lock_timeout = _config_float(config, "worker_lock_timeout_seconds", 5.0, minimum=0.0)
     lock = InterProcessFileLock(
-        project_root / "data" / "index" / "codex_worker.lock",
+        adapter.lock_path(project_root),
         timeout_seconds=lock_timeout,
     )
     try:
@@ -93,7 +160,7 @@ def run_codex_worker(
         "dead_letter_count": 0,
         "refreshed_count": 0,
     }
-    status_path = default_codex_worker_status_path(project_root)
+    status_path = adapter.status_path(project_root)
     try:
         _write_worker_status(
             status_path,
@@ -102,7 +169,7 @@ def run_codex_worker(
             queue=queue,
         )
         _drain_queue(
-            plugin_root=plugin_root_path,
+            adapter=adapter,
             project_root=project_root,
             queue=queue,
             worker_id=worker_identity,
@@ -133,7 +200,7 @@ def run_codex_worker(
 
 def _drain_queue(
     *,
-    plugin_root: Path,
+    adapter: DurableWorkerAdapter,
     project_root: Path,
     queue: CodexJobQueue,
     worker_id: str,
@@ -144,7 +211,7 @@ def _drain_queue(
 ) -> None:
     empty_since: float | None = None
     while max_jobs is None or counts["claimed_count"] < max_jobs:
-        config = load_codex_runtime_config(plugin_root)
+        config = adapter.load_config()
         lease_seconds = _config_float(config, "worker_lease_seconds", 600.0, minimum=1.0)
         job = queue.claim(worker_id=worker_id, lease_seconds=lease_seconds)
         if job is None:
@@ -177,7 +244,7 @@ def _drain_queue(
             current_thread_id=job.thread_id,
         )
         outcome = _process_job(
-            plugin_root=plugin_root,
+            adapter=adapter,
             project_root=project_root,
             config=config,
             queue=queue,
@@ -200,7 +267,7 @@ def _drain_queue(
 
 def _process_job(
     *,
-    plugin_root: Path,
+    adapter: DurableWorkerAdapter,
     project_root: Path,
     config: dict[str, Any],
     queue: CodexJobQueue,
@@ -211,13 +278,12 @@ def _process_job(
     status_path: Path,
 ) -> str:
     lease_token = job.lease_token
-    payload = _hook_payload(job)
+    payload = adapter.hook_payload(job)
     try:
-        current_config = load_codex_runtime_config(plugin_root)
-        _validate_runtime_config(current_config, expected_project_root=project_root)
+        current_config = adapter.load_config()
+        adapter.validate_config(current_config, project_root)
         current_digest = codex_config_digest(current_config)
-        current_thread = _find_thread(job.thread_id, current_config)
-        current_fingerprint = encode_rollout_fingerprint(current_thread.fingerprint)
+        current_fingerprint = encode_rollout_fingerprint(adapter.current_fingerprint(job, current_config))
         if job.config_digest != current_digest or job.rollout_fingerprint != current_fingerprint:
             queue.enqueue(
                 thread_id=job.thread_id,
@@ -227,7 +293,7 @@ def _process_job(
             )
             if not queue.complete(job.id, lease_token):
                 raise RuntimeError(f"lost lease while refreshing job {job.id}")
-            _append_hook_event(
+            adapter.append_event(
                 current_config,
                 payload=payload,
                 status="refreshed",
@@ -235,16 +301,11 @@ def _process_job(
             )
             return "refreshed"
 
-        decision = build_codex_stop_finalize_decision(
-            payload=payload,
-            plugin_root=plugin_root,
-            python_executable=str(current_config.get("python_executable") or sys.executable),
-            config=current_config,
-        )
+        decision = adapter.build_decision(payload, current_config)
         if not decision.should_finalize:
             if not queue.complete(job.id, lease_token):
                 raise RuntimeError(f"lost lease while skipping job {job.id}")
-            _append_hook_event(
+            adapter.append_event(
                 current_config,
                 payload=payload,
                 status="skipped",
@@ -256,23 +317,15 @@ def _process_job(
         if _has_durable_completion_receipt(project_root=project_root, job=job):
             if not queue.complete(job.id, lease_token):
                 raise RuntimeError(f"lost lease while accepting completion receipt for job {job.id}")
-            _mark_watcher_state_processed(decision, fingerprint=expected)
-            _append_hook_event(
+            adapter.mark_processed(decision, fingerprint=expected)
+            adapter.append_event(
                 current_config,
                 payload=payload,
                 status="finalized",
                 detail=f"worker recovered durable completion receipt; job_id={job.id}",
             )
             return "completed"
-        _append_expected_fingerprint_args(decision.command, expected)
-        decision.command.extend(
-            [
-                "--runtime-plugin-root",
-                str(plugin_root),
-                "--expected-config-digest",
-                job.config_digest,
-            ]
-        )
+        decision.command.extend(adapter.finalize_args(job, expected))
         if not queue.renew(job.id, lease_token, lease_seconds=lease_seconds):
             raise RuntimeError(f"lost lease before running job {job.id}")
         timeout_seconds = _config_float(current_config, "worker_job_timeout_seconds", 600.0, minimum=1.0)
@@ -302,6 +355,7 @@ def _process_job(
             )
         if _is_finalize_lock_contention(result):
             return _defer_lock_contention_job(
+                adapter=adapter,
                 config=current_config,
                 queue=queue,
                 job=job,
@@ -314,10 +368,9 @@ def _process_job(
             raise RuntimeError(detail)
         if not queue.renew(job.id, lease_token, lease_seconds=lease_seconds):
             raise RuntimeError(f"lost lease after running job {job.id}")
-        latest_config = load_codex_runtime_config(plugin_root)
-        _validate_runtime_config(latest_config, expected_project_root=project_root)
-        latest_thread = _find_thread(job.thread_id, latest_config)
-        latest_fingerprint = encode_rollout_fingerprint(latest_thread.fingerprint)
+        latest_config = adapter.load_config()
+        adapter.validate_config(latest_config, project_root)
+        latest_fingerprint = encode_rollout_fingerprint(adapter.current_fingerprint(job, latest_config))
         latest_digest = codex_config_digest(latest_config)
         if latest_fingerprint != job.rollout_fingerprint or latest_digest != job.config_digest:
             queue.enqueue(
@@ -328,7 +381,7 @@ def _process_job(
             )
             if not queue.complete(job.id, lease_token):
                 raise RuntimeError(f"lost lease while refreshing completed job {job.id}")
-            _append_hook_event(
+            adapter.append_event(
                 latest_config,
                 payload=payload,
                 status="refreshed",
@@ -337,8 +390,8 @@ def _process_job(
             return "refreshed"
         if not queue.complete(job.id, lease_token):
             raise RuntimeError(f"lost lease while completing job {job.id}")
-        _mark_watcher_state_processed(decision, fingerprint=expected)
-        _append_hook_event(
+        adapter.mark_processed(decision, fingerprint=expected)
+        adapter.append_event(
             current_config,
             payload=payload,
             status="finalized",
@@ -348,7 +401,7 @@ def _process_job(
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         if _refresh_failed_job_if_inputs_changed(
-            plugin_root=plugin_root,
+            adapter=adapter,
             project_root=project_root,
             queue=queue,
             job=job,
@@ -357,6 +410,7 @@ def _process_job(
         ):
             return "refreshed"
         return _transition_failed_job(
+            adapter=adapter,
             config=config,
             queue=queue,
             job=job,
@@ -368,7 +422,7 @@ def _process_job(
 
 def _refresh_failed_job_if_inputs_changed(
     *,
-    plugin_root: Path,
+    adapter: DurableWorkerAdapter,
     project_root: Path,
     queue: CodexJobQueue,
     job: CodexJob,
@@ -376,10 +430,9 @@ def _refresh_failed_job_if_inputs_changed(
     payload: dict[str, Any],
 ) -> bool:
     try:
-        current_config = load_codex_runtime_config(plugin_root)
-        _validate_runtime_config(current_config, expected_project_root=project_root)
-        current_thread = _find_thread(job.thread_id, current_config)
-        current_fingerprint = encode_rollout_fingerprint(current_thread.fingerprint)
+        current_config = adapter.load_config()
+        adapter.validate_config(current_config, project_root)
+        current_fingerprint = encode_rollout_fingerprint(adapter.current_fingerprint(job, current_config))
         current_digest = codex_config_digest(current_config)
     except Exception:
         return False
@@ -393,7 +446,7 @@ def _refresh_failed_job_if_inputs_changed(
     )
     if not queue.complete(job.id, lease_token):
         return False
-    _append_hook_event(
+    adapter.append_event(
         current_config,
         payload=payload,
         status="refreshed",
@@ -404,6 +457,7 @@ def _refresh_failed_job_if_inputs_changed(
 
 def _transition_failed_job(
     *,
+    adapter: DurableWorkerAdapter,
     config: dict[str, Any],
     queue: CodexJobQueue,
     job: CodexJob,
@@ -415,7 +469,7 @@ def _transition_failed_job(
     if job.attempt_count >= max_attempts:
         if not queue.dead_letter(job.id, lease_token, error=error):
             raise RuntimeError(f"lost lease while dead-lettering job {job.id}: {error}")
-        _append_hook_event(
+        adapter.append_event(
             config,
             payload=payload,
             status="dead-letter",
@@ -427,7 +481,7 @@ def _transition_failed_job(
     delay = min(max_delay, base_delay * (2 ** max(0, job.attempt_count - 1)))
     if not queue.retry(job.id, lease_token, error=error, delay_seconds=delay):
         raise RuntimeError(f"lost lease while retrying job {job.id}: {error}")
-    _append_hook_event(
+    adapter.append_event(
         config,
         payload=payload,
         status="retry",
@@ -443,6 +497,7 @@ def _is_finalize_lock_contention(result: CodexHookCommandRunnerResult) -> bool:
 
 def _defer_lock_contention_job(
     *,
+    adapter: DurableWorkerAdapter,
     config: dict[str, Any],
     queue: CodexJobQueue,
     job: CodexJob,
@@ -461,7 +516,7 @@ def _defer_lock_contention_job(
     error = f"temporary finalize lock contention: {detail}"
     if not queue.defer(job.id, lease_token, error=error, delay_seconds=delay):
         raise RuntimeError(f"lost lease while deferring lock-contended job {job.id}: {error}")
-    _append_hook_event(
+    adapter.append_event(
         config,
         payload=payload,
         status="deferred",
@@ -503,7 +558,7 @@ def _run_command_with_lease_heartbeat(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(f"Codex finalize job timed out after {timeout_seconds:g}s")
+                raise TimeoutError(f"finalize job timed out after {timeout_seconds:g}s")
             try:
                 stdout, stderr = process.communicate(timeout=min(heartbeat_seconds, remaining))
                 return CodexHookCommandRunnerResult(returncode=process.returncode, stdout=stdout, stderr=stderr)
@@ -682,6 +737,9 @@ def _write_worker_status(
 
 __all__ = [
     "CodexWorkerResult",
+    "DurableWorkerAdapter",
+    "codex_worker_adapter",
+    "run_durable_worker",
     "codex_config_digest",
     "default_codex_worker_status_path",
     "read_codex_worker_status",

@@ -34,6 +34,10 @@ data/index/codex_jobs.sqlite3*
 data/index/codex_worker.lock
 data/index/codex_worker_status.json
 data/index/codex_finalize.lock
+data/index/claude_hook_events.jsonl
+data/index/claude_jobs.sqlite3*
+data/index/claude_worker.lock
+data/index/claude_worker_status.json
 data/index/wiki_writer.lock
 data/logs/
 

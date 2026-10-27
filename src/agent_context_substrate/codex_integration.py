@@ -32,6 +32,7 @@ from .paths import HarnessPaths
 from .process_lock import InterProcessFileLock
 from .recovery import build_recovery_brief
 from .safe_paths import safe_artifact_stem, safe_child_path
+from .session_bundle import SessionBundle
 from .summary_pipeline import SummaryArtifactResult
 from .wiki_patches import (
     WikiPatchApplyResult,
@@ -285,7 +286,10 @@ def _run_codex_thread_finalize_pipeline_unlocked(
     freshness_guard: Callable[[], None] | None,
     source_fingerprint: dict[str, int | str],
     config_digest: str | None,
+    session_loader: Callable[[Path], tuple[SessionBundle, Path]] | None = None,
+    macro_context: str | None = None,
 ) -> IntegrationResult:
+    """Finalize one agent session; ``session_loader`` swaps the Codex source for another adapter."""
     related_pages = list(related_pages or [])
     wiki_auto_mode = normalize_wiki_auto_mode(wiki_auto_mode)
     wiki_write_judge_mode = normalize_wiki_write_judge_mode(wiki_write_judge_mode)
@@ -301,12 +305,15 @@ def _run_codex_thread_finalize_pipeline_unlocked(
         try:
             if freshness_guard is not None:
                 freshness_guard()
-            session_bundle = build_codex_session_bundle(
-                thread_id=thread_id,
-                codex_home=codex_home_path,
-                max_tool_output_chars=max_tool_output_chars,
-            )
-            raw_export_path = export_codex_session_bundle(bundle=session_bundle, project_root=paths.project_root)
+            if session_loader is None:
+                session_bundle = build_codex_session_bundle(
+                    thread_id=thread_id,
+                    codex_home=codex_home_path,
+                    max_tool_output_chars=max_tool_output_chars,
+                )
+                raw_export_path = export_codex_session_bundle(bundle=session_bundle, project_root=paths.project_root)
+            else:
+                session_bundle, raw_export_path = session_loader(paths.project_root)
             finalize_artifacts = build_finalize_artifacts(
                 session_bundle=session_bundle,
                 raw_export_path=raw_export_path,
@@ -317,7 +324,8 @@ def _run_codex_thread_finalize_pipeline_unlocked(
                     task_title=task_title,
                     unit_title=unit_title,
                     goal=goal,
-                    macro_context=f"Recover Codex thread {thread_id} without replaying the full raw transcript.",
+                    macro_context=macro_context
+                    or f"Recover Codex thread {thread_id} without replaying the full raw transcript.",
                     related_pages=tuple(related_pages),
                     summary_mode=summary_mode,
                     summarizer_command=summarizer_command,

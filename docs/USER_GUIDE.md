@@ -4,7 +4,7 @@
 
 이 문서는 `agent-context-substrate`를 실제 사용자 관점에서 설명합니다. 핵심은 **무엇이 어디에 저장되는지**, **Obsidian과 어떻게 분리되는지**, **언어 설정을 어떻게 쓰는지**, **Hermes에서 어떻게 켜고 끄는지**입니다.
 
-현재 릴리스에서 packaged integration은 **Hermes Agent**와 **비-MCP Codex 로컬 세션 source**를 포함합니다. Codex 경로는 `~/.codex/state_5.sqlite`와 `~/.codex/sessions/**/rollout-*.jsonl`을 read-only로 읽고, plugin Stop hook은 durable SQLite queue에 작업을 넣는 primary trigger입니다. `codex-watch`는 명시적인 history 복구/backfill용으로 유지합니다. 이전 프로젝트 이름은 `hermes-llm-wiki-harness`입니다.
+현재 릴리스에서 packaged integration은 **Hermes Agent**와 **비-MCP Codex 로컬 세션 source**를 포함합니다. Codex 경로는 `~/.codex/state_5.sqlite`와 `~/.codex/sessions/**/rollout-*.jsonl`을 read-only로 읽고, plugin Stop hook은 durable SQLite queue에 작업을 넣는 primary trigger입니다. `codex-watch`는 명시적인 history 복구/backfill용으로 유지합니다. **Claude Code 어댑터**도 같은 흐름입니다. plugin Stop hook이 hook 입력의 `transcript_path`(`~/.claude/projects/<인코딩된 cwd>/<session_id>.jsonl`)를 읽어 `data/index/claude_jobs.sqlite3`에 durable job을 넣고 worker가 finalize합니다([Claude Code 설치](./CLAUDE_CODE_SETUP.ko.md) 참고). OpenCode/Gemini 어댑터는 아직 포함되지 않습니다. 이전 프로젝트 이름은 `hermes-llm-wiki-harness`입니다.
 
 ## 1. 무엇을 해주는가
 
